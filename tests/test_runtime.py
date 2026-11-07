@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import numpy as np
 import pytest
 
@@ -237,3 +239,187 @@ def test_trace_summarizes_arrays_provider_frame_and_failure_code() -> None:
     assert trace.provider == "contact_graspnet"
     assert trace.failure_code == ErrorCode.NO_GRASP.value
     assert trace.inputs_summary["positional"][1]["type"] == "list"
+
+
+# ---------------------------------------------------------------------------
+# Sandbox escapes that the private-name rule alone did not stop.
+# ---------------------------------------------------------------------------
+
+
+class _HostSecret:
+    def __init__(self) -> None:
+        self.object_xyz = [0.123, -0.456, 0.789]
+
+
+class _HostApi:
+    """Stands in for CapApi: a bound-method tool whose owner holds privileged state."""
+
+    def __init__(self) -> None:
+        self._adapter = _HostSecret()
+
+    def get_task_context(self) -> dict[str, object]:
+        return {"language": "demo"}
+
+
+def _host_registry(api: _HostApi) -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(
+        api.get_task_context,
+        name="get_task_context",
+        layer="shared",
+        capability="task",
+        public=True,
+    )
+    return registry
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "result = '{0.__closure__}'.format(get_task_context)",
+        "result = str.format('{0.__closure__}', get_task_context)",
+        "result = '{f.__closure__}'.format_map({'f': get_task_context})",
+        "template = '{0.__closure__}'\nfmt = template.format\nresult = fmt(get_task_context)",
+        "result = '{0:{1.__class__}}'.format(1, get_task_context)",
+    ],
+)
+def test_str_format_cannot_traverse_private_attributes(code: str) -> None:
+    result = ProgramExecutor(_host_registry(_HostApi())).execute_program(code)
+
+    assert not result.ok
+    assert "format fields" in result.error.message
+
+
+def test_str_format_still_formats_ordinary_values() -> None:
+    code = (
+        "pose = Pose((0.1, 0.2, 0.3), (1.0, 0.0, 0.0, 0.0), 'robot_base')\n"
+        "result = (\n"
+        "    '{:.2f}'.format(3.14159),\n"
+        "    '{} {}'.format('a', 2),\n"
+        "    '{0[k]}'.format({'k': 7}),\n"
+        "    '{x}'.format_map({'x': 'y'}),\n"
+        "    '{0.frame}'.format(pose),\n"
+        "    str.format('{}-{}', 1, 2),\n"
+        ")\n"
+    )
+    result = ProgramExecutor(ToolRegistry()).execute_program(code)
+
+    assert result.ok, result.error
+    assert result.result == ("3.14", "a 2", "7", "y", "robot_base", "1-2")
+
+
+def test_generator_frames_cannot_reach_host_locals() -> None:
+    """``gi_frame.f_back.f_locals`` used to hand a program the host's live adapter."""
+    adapter = _HostSecret()  # a host local, like ``adapter`` in run.run_program
+    code = (
+        "def walk(frame):\n"
+        "    while frame is not None:\n"
+        "        if 'adapter' in frame.f_locals:\n"
+        "            return frame.f_locals['adapter']\n"
+        "        frame = frame.f_back\n"
+        "frames = (walk(gen.gi_frame) for i in range(1))\n"
+        "gen = frames\n"
+        "for found in frames:\n"
+        "    found.object_xyz[0] = 99.0\n"
+    )
+
+    result = ProgramExecutor(ToolRegistry()).execute_program(code)
+
+    assert not result.ok
+    assert "gi_frame" in result.error.message or "f_locals" in result.error.message
+    assert adapter.object_xyz[0] == 0.123
+
+
+@pytest.mark.parametrize(
+    "attribute", ["gi_frame", "f_back", "f_locals", "f_globals", "tb_frame", "tofile", "ctypes"]
+)
+def test_introspection_and_numpy_io_attributes_are_rejected(attribute: str) -> None:
+    result = ProgramExecutor(ToolRegistry()).execute_program(
+        f"value = 1\nresult = value.{attribute}"
+    )
+
+    assert not result.ok
+    assert attribute in result.error.message
+
+
+def test_bare_except_still_handles_ordinary_errors() -> None:
+    code = "try:\n    raise ValueError('x')\nexcept:\n    result = 'handled'\n"
+
+    result = ProgramExecutor(ToolRegistry()).execute_program(code)
+
+    assert result.ok
+    assert result.result == "handled"
+
+
+# ---------------------------------------------------------------------------
+# Step budget: a program must stop once the run cannot advance any more.
+# ---------------------------------------------------------------------------
+
+
+class _BudgetRecorder:
+    """The slice of RunRecorder that ProgramExecutor touches."""
+
+    def __init__(self, max_steps: int) -> None:
+        self.max_steps = max_steps
+        self.step_count = 0
+        self.terminal_reason: str | None = None
+
+    def keyframe(self, name: str) -> None:
+        del name
+
+    @contextlib.contextmanager
+    def span(self, name: str, *, category: str, inputs: object):
+        del name, category, inputs
+
+        class _Span:
+            @staticmethod
+            def output(result: object, *, ok: bool) -> object:
+                del ok
+                return result
+
+        yield _Span()
+
+
+def _budget_registry(recorder: _BudgetRecorder) -> tuple[ToolRegistry, list[int]]:
+    attempts: list[int] = []
+    registry = ToolRegistry()
+
+    def step(action: object) -> dict[str, object]:
+        del action
+        attempts.append(1)
+        # What CapApi.step does with the adapter's StepLimitReached: a failed result.
+        if recorder.step_count >= recorder.max_steps:
+            recorder.terminal_reason = "step_limit"
+            return {"ok": False}
+        recorder.step_count += 1
+        return {"ok": True}
+
+    registry.register(step, name="step", layer="shared", capability="control", public=True)
+    return registry, attempts
+
+
+@pytest.mark.parametrize("handler", ["except Exception:\n        pass", "except:\n        pass"])
+def test_program_stops_when_step_budget_is_exhausted(handler: str) -> None:
+    """A retry loop used to spin forever: StepLimitReached arrived as a failed result."""
+    recorder = _BudgetRecorder(max_steps=3)
+    registry, attempts = _budget_registry(recorder)
+    code = f"while True:\n    try:\n        step(None)\n    {handler}\n"
+
+    result = ProgramExecutor(registry, recorder=recorder).execute_program(code)
+
+    assert not result.ok
+    assert result.error.code is ErrorCode.TRUNCATED
+    assert "max_steps=3" in result.error.message
+    assert len(attempts) == 4  # three steps, then the refused fourth
+
+
+def test_program_that_finishes_inside_the_budget_is_unaffected() -> None:
+    recorder = _BudgetRecorder(max_steps=3)
+    registry, _ = _budget_registry(recorder)
+
+    result = ProgramExecutor(registry, recorder=recorder).execute_program(
+        "for i in range(3):\n    step(None)\nresult = 'done'\n"
+    )
+
+    assert result.ok
+    assert result.result == "done"

@@ -18,6 +18,15 @@ Generated programs cannot import modules and do not receive NumPy, filesystem, n
 simulator, reward, or success-predicate access. Arrays returned by contracts are read-only. Pass
 ordinary lists or tuples when constructing array-valued inputs.
 
+The validator rejects `_`-prefixed names and attributes. It also rejects frame, code, and
+traceback introspection (`gi_frame`, `f_back`, `f_locals`, `tb_frame`, ...) and NumPy I/O
+(`tofile`, `dump`, `ctypes`); see `cap_harness.runtime.FORBIDDEN_ATTRIBUTES`. `str.format` and
+`format_map` work as usual, but their format fields obey the same attribute rules. A bare
+`except:` is treated as `except Exception:`.
+
+Once the run's step budget (`--max-steps`) is spent, the next tool call ends the program with a
+`truncated` error. Retry loops cannot keep a finished episode running.
+
 ## Shared generated-program tools
 
 `shared_atomic` calls expose one primitive capability. `shared_high_level` calls are local

@@ -61,7 +61,12 @@ def test_doctor_runs_the_behavior_checks_in_unit_mode(monkeypatch, tmp_path) -> 
         "behavior_environment",
     ]
     by_name = {check.name: check for check in report.checks}
-    assert by_name["behavior_source"].status == "pass", by_name["behavior_source"].details
+    behavior_checkout = doctor.DoctorConfig().repository_root / "third_party/BEHAVIOR-1K"
+    if (behavior_checkout / ".git").exists():
+        assert by_name["behavior_source"].status == "pass", by_name["behavior_source"].details
+    else:  # BEHAVIOR-1K is optional and large; a CPU/dev clone may not initialize it.
+        assert by_name["behavior_source"].status == "fail"
+        assert "not an initialized submodule" in by_name["behavior_source"].details["error"]
     assert by_name["behavior_datasets"].status == "warn"
     assert by_name["behavior_datasets"].required is False
 

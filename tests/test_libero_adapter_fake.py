@@ -250,6 +250,30 @@ def test_saved_init_mode_rejects_a_task_with_no_saved_states(tmp_path) -> None:
         adapter.reset(("libero_goal_task", 2), seed=1)
 
 
+def test_saved_init_mode_accepts_an_ndarray_init_state_bank(tmp_path) -> None:
+    """LIBERO's loader returns the bank as an ndarray (``torch.load`` of an .init file).
+
+    ``not init_states`` raised "truth value of an array ... is ambiguous" for every
+    real task in saved mode, which is the CLI default.
+    """
+    bank = np.linspace(-0.1, 0.1, 3 * 7, dtype=np.float64).reshape(3, 7)
+    adapter, env, _ = _build_adapter(tmp_path, init_mode="saved", init_states=bank)
+
+    observation = adapter.reset(("libero_goal_task", 2), seed=5)
+
+    assert observation.task_context.metadata["init_state_index"] == (5 - 1) % 3
+    np.testing.assert_array_equal(env.selected_init_state, bank[(5 - 1) % 3])
+
+
+def test_saved_init_mode_rejects_an_empty_ndarray_bank(tmp_path) -> None:
+    adapter, _, _ = _build_adapter(
+        tmp_path, init_mode="saved", init_states=np.empty((0, 7), dtype=np.float64)
+    )
+
+    with pytest.raises(ValueError, match="no saved init states"):
+        adapter.reset(("libero_goal_task", 2), seed=1)
+
+
 def test_init_mode_rejects_unknown_value(tmp_path) -> None:
     with pytest.raises(ValueError, match="init_mode"):
         _build_adapter(tmp_path, init_mode="procedural")

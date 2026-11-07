@@ -566,12 +566,7 @@ def check_robosuite_source(config: DoctorConfig) -> CheckResult:
         expected = json.loads(lock.read_text(encoding="utf-8"))["dependencies"]["robosuite"][
             "commit"
         ]
-        actual = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        actual = _submodule_head(checkout)
     except (OSError, KeyError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         error = f"{type(exc).__name__}: {exc}"
     return _result(
@@ -582,6 +577,32 @@ def check_robosuite_source(config: DoctorConfig) -> CheckResult:
         "Robosuite checkout is missing or does not match the dependency lock",
         {"path": str(checkout), "expected": expected, "actual": actual, "error": error},
     )
+
+
+def _submodule_head(checkout: Path) -> str:
+    """HEAD of a submodule checkout, refusing to answer for an uninitialized one.
+
+    An uninitialized submodule is an empty directory, and ``git rev-parse HEAD``
+    inside it silently resolves the *parent* repository's HEAD, so the check
+    reported a bogus commit mismatch instead of "not initialized".
+    """
+    toplevel = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "--show-toplevel"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if Path(toplevel).resolve() != checkout.resolve():
+        raise OSError(
+            f"{checkout} is not an initialized submodule checkout; run "
+            f"`git submodule update --init {checkout.name}`"
+        )
+    return subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def check_behavior_packages(config: DoctorConfig) -> CheckResult:
@@ -673,12 +694,7 @@ def check_behavior_source(config: DoctorConfig) -> CheckResult:
         expected = json.loads(lock.read_text(encoding="utf-8"))["dependencies"]["behavior_1k"][
             "commit"
         ]
-        actual = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        actual = _submodule_head(checkout)
     except (OSError, KeyError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         error = f"{type(exc).__name__}: {exc}"
     return _result(

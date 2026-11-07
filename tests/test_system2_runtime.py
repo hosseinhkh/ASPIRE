@@ -3,9 +3,14 @@
 import threading
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import numpy as np
 import pytest
+
+# Optional `agent` + `yam-real` extras; skip rather than break collection elsewhere.
+pytest.importorskip("fastapi")
+pytest.importorskip("mcp")
+pytest.importorskip("mink")
+from fastapi.testclient import TestClient
 
 from cap_harness.agent.mcp import CapMcpBridge
 from cap_harness.agent.server import build_yam_runtime, create_app

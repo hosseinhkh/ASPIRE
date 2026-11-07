@@ -365,7 +365,8 @@ extend-ignore = [
 "!tests/**" = ["PT"]
 # Same exemptions the root grants tests/**, restated because this package's
 # config is now the one in force for it.
-"tests/**" = ["ARG001", "ARG002", "ARG005", "BLE001", "PLR1722", "PT017", "S108", "SLF001", "T201"]
+# E402: `pytest.importorskip` guards for optional extras must precede those imports.
+"tests/**" = ["ARG001", "ARG002", "ARG005", "BLE001", "E402", "PLR1722", "PT017", "S108", "SLF001", "T201"]
 # Read-only diagnostics run by hand from a shell; they print their findings,
 # which is their entire purpose.
 "scripts/**" = ["T201"]

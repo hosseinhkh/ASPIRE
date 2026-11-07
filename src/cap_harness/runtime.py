@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import _string  # CPython's field-name parser; the same one string.Formatter uses
 import ast
 from collections.abc import Callable, Mapping
 import contextlib
 from dataclasses import dataclass
 import importlib
 import io
+import string
 import time
 from types import MappingProxyType
 
@@ -34,6 +36,92 @@ from cap_harness.registry import ToolRegistry
 
 ALLOWED_IMPORTS = frozenset({"math"})
 """Modules a generated program may import; everything else is injected or forbidden."""
+
+FORBIDDEN_ATTRIBUTES = frozenset(
+    {
+        # Frame and code introspection. None of these start with an underscore, so the
+        # private-name rule alone let a program walk ``(g.gi_frame for i in ...)`` ->
+        # ``f_back`` -> ``f_locals`` up into the host's frames and take the live adapter
+        # (and through it the native simulator) out of ``run_program``.
+        "ag_await",
+        "ag_code",
+        "ag_frame",
+        "cr_await",
+        "cr_code",
+        "cr_frame",
+        "cr_origin",
+        "f_back",
+        "f_builtins",
+        "f_code",
+        "f_globals",
+        "f_locals",
+        "f_trace",
+        "gi_code",
+        "gi_frame",
+        "gi_yieldfrom",
+        "tb_frame",
+        "tb_next",
+        # NumPy escape hatches on the read-only arrays every contract returns:
+        # arbitrary file writes and raw memory access.
+        "ctypes",
+        "dump",
+        "dumps",
+        "tofile",
+    }
+)
+"""Public-looking attribute names a generated program may not read (beyond ``_*``)."""
+
+_FORMAT_ATTRIBUTES = frozenset({"format", "format_map"})
+_FORMAT_HELPER_NAME = "_cap_format_attribute"
+
+
+def is_forbidden_attribute(name: str) -> bool:
+    """Whether generated programs may not access attribute ``name``."""
+    return name.startswith("_") or name in FORBIDDEN_ATTRIBUTES
+
+
+class ProgramAborted(BaseException):
+    """Stops a generated program at a tool boundary.
+
+    Derives from ``BaseException`` so a program's own ``except Exception`` cannot
+    swallow it (bare ``except:`` is rewritten to ``except Exception:``).
+    """
+
+
+class _SafeFormatter(string.Formatter):
+    """``str.format`` with the same attribute policy as the AST validator.
+
+    ``'{0.__closure__[0].cell_contents.__self__._adapter}'.format(tool)`` performs
+    attribute traversal at runtime, where the AST validator never sees it.
+    """
+
+    def get_field(self, field_name: str, args: object, kwargs: object) -> object:
+        _, rest = _string.formatter_field_name_split(field_name)
+        for is_attribute, key in rest:
+            if is_attribute and is_forbidden_attribute(str(key)):
+                raise ValueError(
+                    "private, dunder, and introspection attributes are not allowed "
+                    "in generated-program format fields"
+                )
+        return super().get_field(field_name, args, kwargs)  # type: ignore[arg-type]
+
+
+_SAFE_FORMATTER = _SafeFormatter()
+
+
+def _format_attribute(value: object, name: str) -> object:
+    """Runtime stand-in for ``value.format`` / ``value.format_map`` in programs."""
+    if isinstance(value, str):
+        if name == "format":
+            return lambda *args, **kwargs: _SAFE_FORMATTER.vformat(value, args, kwargs)
+        return lambda mapping: _SAFE_FORMATTER.vformat(value, (), mapping)
+    if value is str:
+        if name == "format":
+            return lambda template, *args, **kwargs: _SAFE_FORMATTER.vformat(
+                str(template), args, kwargs
+            )
+        return lambda template, mapping: _SAFE_FORMATTER.vformat(str(template), (), mapping)
+    return getattr(value, name)
 
 
 def _restricted_import(name: str, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
@@ -192,12 +280,46 @@ class _ProgramValidator(ast.NodeVisitor):
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr.startswith("_"):
             raise ValueError("private and dunder attribute access is not allowed")
+        if node.attr in FORBIDDEN_ATTRIBUTES:
+            raise ValueError(
+                f"attribute {node.attr!r} is not allowed in generated programs "
+                "(frame/code introspection and raw NumPy I/O are forbidden)"
+            )
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id.startswith("_"):
             raise ValueError("private and dunder names are not allowed")
         self.generic_visit(node)
+
+
+class _ProgramRewriter(ast.NodeTransformer):
+    """Applied after validation; may therefore introduce private helper names.
+
+    * ``x.format`` / ``x.format_map`` become ``_cap_format_attribute(x, name)`` so
+      format-field attribute traversal obeys the validator's attribute policy.
+    * A bare ``except:`` becomes ``except Exception:`` so a program cannot swallow
+      :class:`ProgramAborted` (or ``KeyboardInterrupt``).
+    """
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+        self.generic_visit(node)
+        if node.attr in _FORMAT_ATTRIBUTES and isinstance(node.ctx, ast.Load):
+            return ast.copy_location(
+                ast.Call(
+                    func=ast.Name(id=_FORMAT_HELPER_NAME, ctx=ast.Load()),
+                    args=[node.value, ast.Constant(node.attr)],
+                    keywords=[],
+                ),
+                node,
+            )
+        return node
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> ast.AST:
+        self.generic_visit(node)
+        if node.type is None:
+            node.type = ast.copy_location(ast.Name(id="Exception", ctx=ast.Load()), node)
+        return node
 
 
 class ProgramExecutor:
@@ -238,6 +360,7 @@ class ProgramExecutor:
         try:
             tree = ast.parse(code, mode="exec")
             _ProgramValidator().visit(tree)
+            tree = ast.fix_missing_locations(_ProgramRewriter().visit(tree))
             compiled = compile(tree, "<generated-program>", "exec")
         except (SyntaxError, ValueError) as exc:
             return self._failure(
@@ -249,6 +372,7 @@ class ProgramExecutor:
             "__builtins__": _SAFE_BUILTINS,
             **_SAFE_CONSTRUCTORS,
             **self.public_namespace(),
+            _FORMAT_HELPER_NAME: _format_attribute,
         }
         output = io.StringIO()
         try:
@@ -256,6 +380,18 @@ class ProgramExecutor:
                 # Execute AST-validated programs; process isolation is still required for untrusted code.
                 exec(compiled, environment, environment)
             result = _public_value(environment.get("result"))
+        except ProgramAborted as exc:
+            return ProgramExecutionResult(
+                ok=False,
+                result=None,
+                stdout=output.getvalue(),
+                calls=tuple(self._calls),
+                error=ApiError(
+                    code=ErrorCode.TRUNCATED,
+                    message=f"program stopped: {exc}",
+                    details={"reason": "step_limit"},
+                ),
+            )
         # Report generated-program failures as unsuccessful execution results.
         except Exception as exc:
             return ProgramExecutionResult(
@@ -278,11 +414,30 @@ class ProgramExecutor:
 
     def _wrapped_tool(self, name: str, function: Callable[..., object]) -> Callable[..., object]:
         def invoke(*args: object, **kwargs: object) -> object:
+            self._stop_if_step_budget_exhausted(name)
             if self._recorder is not None:
-                return self._recorded_tool_call(name, function, args, kwargs)
-            return self._invoke_tool(name, function, args, kwargs)
+                result = self._recorded_tool_call(name, function, args, kwargs)
+            else:
+                result = self._invoke_tool(name, function, args, kwargs)
+            self._stop_if_step_budget_exhausted(name)
+            return result
 
         return invoke
+
+    def _stop_if_step_budget_exhausted(self, name: str) -> None:
+        """End the program once the run's step budget is spent.
+
+        The adapter's step hook raises ``StepLimitReached``, but every API layer
+        between it and the program converts exceptions into failed results, so the
+        program used to keep running -- a retry loop spun forever against a budget
+        that could not grow.
+        """
+        if getattr(self._recorder, "terminal_reason", None) == "step_limit":
+            max_steps = getattr(self._recorder, "max_steps", None)
+            raise ProgramAborted(
+                f"the run's step budget (max_steps={max_steps}) is exhausted; "
+                f"{name}() and every later tool call cannot advance the episode"
+            )
 
     def _recorded_tool_call(
         self,
@@ -531,4 +686,12 @@ def _result_failure_code(value: object) -> str | None:
 
 ProgramResult = ProgramExecutionResult
 
-__all__ = ["CallTrace", "ProgramExecutionResult", "ProgramExecutor", "ProgramResult"]
+__all__ = [
+    "FORBIDDEN_ATTRIBUTES",
+    "CallTrace",
+    "ProgramAborted",
+    "ProgramExecutionResult",
+    "ProgramExecutor",
+    "ProgramResult",
+    "is_forbidden_attribute",
+]

@@ -1,8 +1,11 @@
 """Validate pose JSON locally; these tests start no MCP server or robot session."""
 
-import jsonschema
 import numpy as np
 import pytest
+
+# Optional `agent` extra; skip rather than break collection in simulator-only venvs.
+jsonschema = pytest.importorskip("jsonschema")
+pytest.importorskip("mcp")
 
 from cap_harness.agent.mcp import _pose_input_schema
 from cap_harness.geometry import pose_from_mapping

@@ -435,7 +435,9 @@ class LiberoAdapter:
             # randomization -- which is what previously pinned all 50 seeds to one
             # scene -- so seeded mode applies no saved state at all.
             state_index = None
-        elif not init_states:
+        elif len(init_states) == 0:
+            # ``len`` rather than truthiness: LIBERO's loader returns the init-state
+            # bank as an ndarray, whose truth value is ambiguous and raises.
             raise ValueError(
                 f"{metadata.task_ref} ships no saved init states, so init_mode "
                 "'saved' cannot select a layout; use init_mode 'seeded'"

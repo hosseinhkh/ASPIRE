@@ -191,6 +191,21 @@ verified final tightness. Re-ground the current scene and verify the actual outc
 > [!WARNING]
 > ASPIRE executes language-model-generated Python with full import access. Trial processes and watchdogs are not a security sandbox. Run generated code on an isolated host without credentials or sensitive mounts, restrict network access, and never grant a simulation agent access to physical hardware. Real-robot work requires the controls in [`aspire/real/AGENTS.md`](https://github.com/NVlabs/ASPIRE/blob/v0.1/aspire/real/AGENTS.md) and separate operator authorization.
 
+## Documentation
+
+| Topic | Guide |
+| --- | --- |
+| Host prerequisites (GPU, uv, Hugging Face token) | [`docs/host-setup.md`](docs/host-setup.md) |
+| Simulator/provider topology, venvs, profiles | [`docs/environments.md`](docs/environments.md) |
+| Generated-program API | [`docs/api-reference.md`](docs/api-reference.md) |
+| Run artifacts and traces | [`docs/run-artifacts.md`](docs/run-artifacts.md) |
+| LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
+| Robosuite | [`docs/robosuite.md`](docs/robosuite.md) |
+| BEHAVIOR-1K | [`docs/behavior.md`](docs/behavior.md) |
+| Optional backends | [`docs/optional-backends.md`](docs/optional-backends.md) |
+| CPU-only development setup (no GPU) | [`docs/cpu-dev-setup.md`](docs/cpu-dev-setup.md) |
+| Code review, known issues, and extension roadmap | [`docs/review/README.md`](docs/review/README.md) |
+
 ## Contribution Guidelines
 
 Start with [CONTRIBUTING.md](https://github.com/NVlabs/ASPIRE/blob/v0.1/CONTRIBUTING.md). Third-party contributions must include a Developer Certificate of Origin sign-off.

@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import urllib.request
 
-import msgspec
 import numpy as np
 import pytest
-import viser
+
+# Optional `agent` extra (viser); skip rather than break collection elsewhere.
+msgspec = pytest.importorskip("msgspec")
+viser = pytest.importorskip("viser")
 from websockets.sync.client import connect
 
 from cap_harness.agent.session import SessionBusyError

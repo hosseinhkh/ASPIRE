@@ -18,6 +18,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+# Optional `yam-real` extra; skip rather than break collection elsewhere.
+pytest.importorskip("mink")
+
 from cap_harness.api import CapApi
 from cap_harness.contracts import Pose
 from cap_harness.providers.yam_kinematics import YamKinematicsIKProvider
