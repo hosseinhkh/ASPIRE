@@ -26,17 +26,32 @@ def main() -> int:
     elapsed_ms = (time.perf_counter() - started) * 1000
     gl_renderer = "unknown"
     try:
+        context = getattr(renderer, "_gl_context", None)
+        if context is not None:
+            context.make_current()  # render() may leave no context current
         from OpenGL import GL
 
-        raw = GL.glGetString(GL.GL_RENDERER)  # the renderer's context is current here
-        gl_renderer = raw.decode() if raw else "unknown"
+        raw = GL.glGetString(GL.GL_RENDERER)
+        if raw:
+            gl_renderer = raw.decode()
     except Exception as exc:  # report, never fail on the vendor query alone
         gl_renderer = f"unknown ({type(exc).__name__})"
+    if gl_renderer.startswith("unknown") and os.environ.get("MUJOCO_GL") == "egl":
+        try:  # fall back to the EGL vendor of the display MuJoCo opened
+            import mujoco.egl as mujoco_egl
+            from OpenGL import EGL
+
+            vendor = EGL.eglQueryString(mujoco_egl.EGL_DISPLAY, EGL.EGL_VENDOR)
+            if vendor:
+                gl_renderer = f"EGL vendor {vendor.decode()}"
+        except Exception:
+            pass
     backend = os.environ.get("MUJOCO_GL", "?")
     if float(image.mean()) <= 0.0:
         print(f"FAIL MUJOCO_GL={backend}: rendered an all-black frame ({gl_renderer})")
         return 1
-    software = any(word in gl_renderer.lower() for word in ("llvmpipe", "softpipe", "swrast"))
+    lowered = gl_renderer.lower()
+    software = any(word in lowered for word in ("llvmpipe", "softpipe", "swrast", "vendor mesa"))
     status = "WARN" if software else "PASS"
     note = " (software rendering: slow; NVIDIA EGL not in use)" if software else ""
     print(

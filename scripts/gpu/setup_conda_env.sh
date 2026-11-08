@@ -156,9 +156,11 @@ conda env config vars set -n "$ENV_NAME" \
   EGL_PLATFORM=device \
   LIBERO_CONFIG_PATH="$REPO_ROOT/.libero" \
   TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 \
-  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  PYTORCH_ALLOC_CONF=expandable_segments:True \
   CAP_HARNESS_VENDOR_ROOT="$REPO_ROOT/third_party" \
   CAP_HARNESS_CUROBO_MODEL_CACHE="$HOME/.cache/aspire/curobo-models" >/dev/null
+# torch 2.9 renamed PYTORCH_CUDA_ALLOC_CONF; an older run of this script stored the old name.
+conda env config vars unset -n "$ENV_NAME" PYTORCH_CUDA_ALLOC_CONF >/dev/null 2>&1 || true
 conda env config vars list -n "$ENV_NAME"
 
 if [[ "$RUN_TESTS" -eq 1 ]]; then

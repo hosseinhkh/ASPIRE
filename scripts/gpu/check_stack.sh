@@ -56,6 +56,12 @@ record() {  # record STATUS NAME DETAIL
 section() { printf '\n\033[1m[%s]\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 last_line() { tail -n 1 "$1" 2>/dev/null; }
+# A check prints its verdict on stdout; library warnings go to stderr, kept in a separate file
+# so they can never be mistaken for the verdict.
+result_line() {
+  grep -m1 -E '^(PASS|WARN|FAIL|GRANTED|PENDING|NO_ACCESS|NO_TOKEN|ERROR)( |$)' "$1" 2>/dev/null \
+    || echo "FAIL no verdict printed (see ${1%.txt}.err)"
+}
 
 # 1 ---------------------------------------------------------------------------------------------
 section "1 env"
@@ -79,7 +85,10 @@ fi
 if [[ -f third_party/robosuite/robosuite/macros_private.py ]]; then
   record PASS "robosuite /tmp log fix" "macros_private.py present"
 else
-  record WARN "robosuite /tmp log fix" "missing: 'import robosuite' fails if another user owns /tmp/robosuite.log (git pull; re-run setup)"
+  record WARN "robosuite /tmp log fix" "missing; fix: bash -c 'source scripts/lib/robosuite_macros.sh && write_robosuite_private_macros \$PWD'"
+fi
+if [[ -n "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
+  record WARN "torch allocator variable" "PYTORCH_CUDA_ALLOC_CONF is deprecated in torch 2.9; fix: scripts/gpu/setup_conda_env.sh --gpu $GPU --no-tests"
 fi
 
 # 2 ---------------------------------------------------------------------------------------------
@@ -126,25 +135,26 @@ fi
 section "4 torch on GPU $GPU"
 for venv in .venv-sam3 .venv-graspnet .venv-curobo .venv-libero; do
   [[ -x "$venv/bin/python" ]] || continue
-  CUDA_VISIBLE_DEVICES="$GPU" "$venv/bin/python" scripts/gpu/checks/gpu_torch.py > "$OUT/torch-$venv.txt" 2>&1
-  line="$(last_line "$OUT/torch-$venv.txt")"
+  CUDA_VISIBLE_DEVICES="$GPU" "$venv/bin/python" scripts/gpu/checks/gpu_torch.py \
+    > "$OUT/torch-$venv.txt" 2> "$OUT/torch-$venv.err"
+  line="$(result_line "$OUT/torch-$venv.txt")"
   case "$line" in PASS*) record PASS "$venv" "${line#PASS }" ;; *) record FAIL "$venv" "$line" ;; esac
 done
 
 # 5 ---------------------------------------------------------------------------------------------
 section "5 egl"
-.venv-robosuite/bin/python scripts/gpu/checks/egl_render.py > "$OUT/egl.txt" 2>&1
-line="$(last_line "$OUT/egl.txt")"
+.venv-robosuite/bin/python scripts/gpu/checks/egl_render.py > "$OUT/egl.txt" 2> "$OUT/egl.err"
+line="$(result_line "$OUT/egl.txt")"
 case "$line" in
   PASS*) record PASS "MuJoCo rendering" "${line#PASS }" ;;
   WARN*) record WARN "MuJoCo rendering" "${line#WARN }" ;;
-  *) record FAIL "MuJoCo rendering" "$line (see $OUT/egl.txt)" ;;
+  *) record FAIL "MuJoCo rendering" "$line (see $OUT/egl.err)" ;;
 esac
 
 # 6 ---------------------------------------------------------------------------------------------
 section "6 sam3 access"
-.venv-sam3/bin/python scripts/gpu/checks/hf_access.py > "$OUT/hf.txt" 2>&1
-line="$(last_line "$OUT/hf.txt")"
+.venv-sam3/bin/python scripts/gpu/checks/hf_access.py > "$OUT/hf.txt" 2> "$OUT/hf.err"
+line="$(result_line "$OUT/hf.txt")"
 SAM3_STATUS="${line%% *}"
 case "$SAM3_STATUS" in
   GRANTED) record PASS "facebook/sam3" "${line#GRANTED }" ;;
@@ -164,10 +174,10 @@ else
     elif ((rc == 2)); then record FAIL "API key" "$line (renew: scripts/gpu/set_credentials.sh --api-key)"
     else record WARN "API key" "$line"; fi
   fi
-  if "$PY" scripts/gpu/checks/bedrock_sample.py > "$OUT/bedrock.txt" 2>&1; then
+  if "$PY" scripts/gpu/checks/bedrock_sample.py > "$OUT/bedrock.txt" 2> "$OUT/bedrock.err"; then
     record PASS "boto3 Converse + stream" "$(head -n 1 "$OUT/bedrock.txt")"
   else
-    record FAIL "boto3 Converse + stream" "$(last_line "$OUT/bedrock.txt")"
+    record FAIL "boto3 Converse + stream" "$(result_line "$OUT/bedrock.txt")"
   fi
   if command -v claude >/dev/null; then
     reply="$(timeout 180 claude -p "Reply with exactly the word OK." --max-turns 1 2>&1 | tail -n 1)"
