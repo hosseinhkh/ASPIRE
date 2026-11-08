@@ -77,7 +77,8 @@ start_holder() {  # start_holder GPU GIB
 import json, sys
 status = json.load(open(sys.argv[1]))
 held, asked = status["held_gib"], status["requested_gib"]
-note = "" if held >= asked else f"  (only {held:g} GiB was free; the rest was not available)"
+# The holder takes quarter-GiB blocks, rounded down; only a shortfall beyond that is news.
+note = "" if held >= int(asked * 4) / 4 else f"  (only {held:g} GiB was free; the rest was not available)"
 print(f"holding {held:g} GiB on GPU {sys.argv[2]} (pid {status['pid']}){note}")
 PY
 }
@@ -100,6 +101,18 @@ sys.path.insert(0, sys.argv[2])
 from check_gpu import PLANNED_MIB  # noqa: E402
 
 total = sum(max(mib, PLANNED_MIB.get(role, 0)) for role, mib in roles.items() if role != "reservation")
+# A running service that has not allocated yet (cuRobo builds its planner on the first request)
+# still needs its share; services moved to CPU (ASPIRE_CPU_PROVIDERS) do not.
+import os, urllib.request  # noqa: E401,E402
+on_cpu = set(filter(None, os.environ.get("ASPIRE_CPU_PROVIDERS", "").split(",")))
+for role, port in (("sam3", 8114), ("contact_graspnet", 8115), ("curobo", 8118)):
+    if role in roles or role in on_cpu:
+        continue
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/openapi.json", timeout=2).close()
+    except OSError:
+        continue
+    total += PLANNED_MIB.get(role, 0)
 print(round(total / 1024, 2))
 PY
   rm -f "$tmp"

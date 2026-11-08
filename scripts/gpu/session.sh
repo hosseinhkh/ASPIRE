@@ -6,10 +6,11 @@
 #                              [--llm BENCHMARK:SUITE:TASK_ID]... [--llm-budget USD]
 #                              [--llm-max-turns N] [--llm-dev-seeds "51 52"]
 #                              [--llm-heldout-seeds "1 2 3"] [--no-preflight] [--no-curobo]
-#                              [--keep-services] [--reserve GIB] [--wandb offline|online|off]
-#                              [--gpu N]
+#                              [--keep-services] [--graspnet-cpu] [--reserve GIB]
+#                              [--wandb offline|online|off] [--gpu N]
 #   scripts/gpu/session.sh report SESSION_DIR [--wandb offline|online|off]
 #   scripts/gpu/session.sh claude-logs SESSION_DIR [--all]
+#   scripts/gpu/session.sh why SESSION_DIR
 #   scripts/gpu/session.sh tasks
 #
 # run          preflight checks, environment snapshot, model services, a GPU timeline, each task
@@ -18,6 +19,8 @@
 # report       rebuild the HTML report (and W&B runs) for a session directory.
 # claude-logs  copy Claude Code transcripts (with subagents) from ~/.claude/projects into the
 #              session; use after an interactive campaign (scripts/gpu/demo.sh campaign).
+# why          for each episode that did not succeed: how it ended, failed calls, the
+#              program's result and its last printed lines (plain text, easy to share).
 # tasks        print the task presets.
 #
 # Sessions land in outputs/sessions/<date>-<time>-<name>/ (report/index.html is the entry point).
@@ -31,7 +34,7 @@ SERVICE_LOG_DIR="${CAP_HARNESS_SERVICE_LOG_DIR:-$REPO_ROOT/validation-artifacts/
 TOOLS_VENV="${ASPIRE_TOOLS_VENV:-$REPO_ROOT/.venv-tools}"
 declare -A PORTS=([sam3]=8114 [contact_graspnet]=8115 [pyroki]=8116 [curobo]=8118)
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 now() { printf '%s' "${EPOCHREALTIME:-$(date +%s.%N)}"; }
@@ -382,6 +385,7 @@ on_exit() {
 
 cmd_run() {
   local name="tasks" tasks="standard" seeds="1" preflight=1 curobo=1 wandb_mode=offline
+  local graspnet_cpu=0
   local -a llm=()
   KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
   while (($#)); do
@@ -397,6 +401,7 @@ cmd_run() {
       --no-preflight) preflight=0; shift ;;
       --no-curobo) curobo=0; shift ;;
       --keep-services) KEEP_SERVICES=1; shift ;;
+      --graspnet-cpu) graspnet_cpu=1; shift ;;
       --reserve) RESERVE="$2"; shift 2 ;;
       --wandb) wandb_mode="$2"; shift 2 ;;
       --gpu) GPU="$2"; shift 2 ;;
@@ -470,6 +475,7 @@ cmd_run() {
   else
     local start_args=(--gpu "$GPU")
     ((curobo)) || start_args+=(--no-curobo)
+    ((graspnet_cpu)) && start_args+=(--graspnet-cpu)
     LOG_OFFSETS=()  # the supervisor rewrites each log from the start
     if scripts/gpu/services.sh start "${start_args[@]}"; then
       STARTED_SERVICES=1
@@ -527,6 +533,8 @@ main() {
     run) shift; cmd_run "$@" ;;
     report) shift; cmd_report "$@" ;;
     claude-logs) shift; cmd_claude_logs "$@" ;;
+    why) shift; [[ -d "${1:-}" ]] || { echo "error: session directory required" >&2; exit 2; }
+      "$PY" scripts/gpu/episode_summary.py --unsolved "$1" ;;
     tasks) cmd_tasks ;;
     -h|--help|"") usage ;;
     *) echo "error: unknown command: $1" >&2; usage >&2; exit 2 ;;

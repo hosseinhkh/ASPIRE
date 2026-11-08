@@ -2,8 +2,8 @@
 #
 # Calls every model service through the public API, without needing SAM3:
 #   PyRoki IK + interpolated motion, cuRobo IK + c-space planning + integrated pose planning,
-#   Contact-GraspNet on an image-centre mask (SAM3 would normally supply the mask),
-#   and one SAM3 call whose outcome only reports whether SAM3 is up.
+#   SAM3 text segmentation of the cube, and Contact-GraspNet on SAM3's best cube mask (on an
+#   image-centre mask when SAM3 is not available).
 # Each check records ok / failure code; check_stack.sh decides what was expected from which
 # services are running. The program never raises, so one failure cannot hide the others.
 report = {"checks": {}, "errors": {}, "details": {}}
@@ -46,19 +46,30 @@ record(
     plan_motion(up, strategy=MotionStrategy(pose_planner="curobo-integrated")),
 )
 
-# Contact-GraspNet on the centre third of the agent-view image (cube and table around it).
-camera = get_observation("agentview").cameras["agentview"]
-mask = camera.depth_m < 0.0
-rows = len(mask)
-cols = len(mask[0])
-mask[rows // 3 : 2 * rows // 3, cols // 3 : 2 * cols // 3] = True
+# SAM3 first: its cube mask is what a real program hands to Contact-GraspNet.
+segmentation = segment_text("agentview", "red cube")
+mask = None
+if record("sam3_segment_text", segmentation):
+    report["details"]["sam3_masks"] = len(segmentation.segmentations)
+    if segmentation.segmentations:
+        best = segmentation.segmentations[0]
+        for candidate in segmentation.segmentations:
+            if float(candidate.score) > float(best.score):
+                best = candidate
+        mask = best.mask
+        report["details"]["grasp_mask"] = "sam3 red cube, score " + str(round(float(best.score), 3))
+
+# Contact-GraspNet. Without SAM3, use the centre third of the image (the cube and table around
+# it): a large, mostly flat region, so expect few grasps and several service-side retries.
+if mask is None:
+    camera = get_observation("agentview").cameras["agentview"]
+    mask = camera.depth_m < 0.0
+    rows = len(mask)
+    cols = len(mask[0])
+    mask[rows // 3 : 2 * rows // 3, cols // 3 : 2 * cols // 3] = True
+    report["details"]["grasp_mask"] = "image centre third (no SAM3)"
 grasps = generate_grasps("agentview", mask, max_candidates=5)
 if record("contact_graspnet", grasps):
     report["details"]["grasp_candidates"] = len(grasps.grasps)
-
-# SAM3: only tells whether the service is up and the weights load.
-segmentation = segment_text("agentview", "red cube")
-if record("sam3_segment_text", segmentation):
-    report["details"]["sam3_masks"] = len(segmentation.segmentations)
 
 result = report

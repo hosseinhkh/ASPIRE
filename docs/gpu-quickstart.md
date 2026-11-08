@@ -602,6 +602,16 @@ scripts/gpu/session.sh report outputs/sessions/<session>
 Your own task list uses the columns that `session.sh tasks` prints, one task per line. Pass it
 with `--tasks FILE`.
 
+To see why episodes did not succeed, print a plain-text summary of each one: how it ended,
+every failed call with its error, the program's `result`, and its last printed lines:
+
+```bash
+scripts/gpu/session.sh why outputs/sessions/<session>
+```
+
+Add `--graspnet-cpu` to `session.sh run` to run Contact-GraspNet on the CPU (see
+Troubleshooting).
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -615,6 +625,8 @@ with `--tasks FILE`.
 | SAM3 fails to start with a 401 | The HF token lacks access to `facebook/sam3`. Request access, then re-run `set_credentials.sh`. |
 | `on-demand throughput isn't supported` | You passed the bare model ID. Use the inference profile (`us.` / `eu.` / `global.` + `anthropic.claude-opus-4-6-v1`). |
 | `AccessDeniedException` from Bedrock | Enable Opus 4.6 in Bedrock model access. The IAM principal needs `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, `bedrock:ListInferenceProfiles`. |
+| `probe: contact_graspnet` fails with `Read timed out (read timeout=120.0)` | Contact-GraspNet is very slow on a GPU that another user keeps at 100 % utilization (its PointNet++ is thousands of tiny GPU kernels, each waiting for a time slice). Measure it with `scripts/gpu/check_graspnet.sh`. If the CPU wins, run it there: `services.sh start --graspnet-cpu`, or permanently with `conda env config vars set -n aspire ASPIRE_CPU_PROVIDERS=contact_graspnet`. That also frees about 2.4 GiB of GPU memory. |
+| `services` stage FAILs although every service is up | Fixed: `services.sh` exited non-zero while printing reservation status (`git pull`). |
 | Services died with the terminal | Use `scripts/gpu/services.sh start`. It runs them under `setsid`, so closing SSH does not kill them. |
 | conda asks to accept Terms of Service | The setup uses `--override-channels -c conda-forge`. If your base conda still prompts, run `conda config --remove channels defaults`. |
 | `claude` refuses `--permission-mode bypassPermissions` | Run the demos as your normal user, not root. |

@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -109,12 +110,21 @@ def _predict(
     def run_in_frame(
         full_points: np.ndarray, segment_points: np.ndarray
     ) -> tuple[dict[int, Any], dict[int, Any], dict[int, Any]]:
+        started = time.perf_counter()
         grasps, scores, contacts, _ = _ESTIMATOR.predict_scene_grasps(
             full_points,
             pc_segments={segment_id: segment_points},
             local_regions=request.local_regions,
             filter_grasps=request.filter_grasps,
             forward_passes=request.forward_passes,
+        )
+        LOGGER.info(
+            "inference on %s: %d scene / %d segment points, %.2f s, %d grasps",
+            getattr(_ESTIMATOR, "device", "?"),
+            len(full_points),
+            len(segment_points),
+            time.perf_counter() - started,
+            len(grasps.get(segment_id, [])),
         )
         return grasps, scores, contacts
 
@@ -183,6 +193,28 @@ def _vendor_root() -> Path:
     return Path(__file__).resolve().parents[3] / "third_party"
 
 
+@contextlib.contextmanager
+def _load_tensors_onto(device: Any) -> Any:
+    """Map the checkpoint's tensors onto ``device`` while the vendored loader runs.
+
+    The weights were saved from CUDA and the loader calls torch.load without map_location,
+    which fails in a CPU-only process.
+    """
+    import torch
+
+    original = torch.load
+
+    def load(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("map_location", device)
+        return original(*args, **kwargs)
+
+    torch.load = load
+    try:
+        yield
+    finally:
+        torch.load = original
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the cap-harness Contact-GraspNet service")
     parser.add_argument("--device", default="cuda")
@@ -190,6 +222,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8115)
     args = parser.parse_args()
 
+    if args.device == "cpu":
+        # The vendored estimator picks CUDA whenever it is visible; hide it before torch loads.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     vendor = _vendor_root() / "contact_graspnet_pytorch"
     pointnet = vendor / "Pointnet_Pointnet2_pytorch"
     sys.path.extend([str(pointnet), str(vendor)])
@@ -206,9 +241,9 @@ def main() -> None:
     checkpoint_io = CheckpointIO(
         checkpoint_dir=checkpoint_root / "checkpoints", model=_ESTIMATOR.model
     )
-    with contextlib.suppress(FileExistsError):
+    with contextlib.suppress(FileExistsError), _load_tensors_onto(_ESTIMATOR.device):
         checkpoint_io.load("model.pt")
-    LOGGER.info("Contact-GraspNet loaded on %s", args.device)
+    LOGGER.info("Contact-GraspNet loaded on %s", _ESTIMATOR.device)
     uvicorn.run(app, host=args.host, port=args.port)
 
 

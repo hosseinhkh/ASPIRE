@@ -109,6 +109,9 @@ trap shutdown INT TERM EXIT
 for row in "${PLAN[@]}"; do
   IFS='|' read -r name venv module port gpu conc <<< "$row"
   [[ -n "$gpu" && -n "$GPU_OVERRIDE" ]] && gpu="$GPU_OVERRIDE"
+  # CAP_HARNESS_CPU_PROVIDERS=contact_graspnet,...: run these on CPU (no visible GPU), e.g. when
+  # another user's job keeps the GPU at 100 % and launch-heavy models crawl there.
+  [[ ",${CAP_HARNESS_CPU_PROVIDERS:-}," == *",$name,"* ]] && gpu=""
   venv_python="$REPO_ROOT/$venv/bin/python"
   [[ -x "$venv_python" ]] || {
     printf 'error: provider %s venv is missing: %s (bootstrap it first)\n' "$name" "$venv_python" >&2

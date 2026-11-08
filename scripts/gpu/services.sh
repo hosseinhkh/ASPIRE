@@ -5,7 +5,8 @@
 # with setsid, so the stack survives a closed SSH session. One supervisor at a time; its process
 # group is what `stop` kills.
 #
-#   scripts/gpu/services.sh start [--gpu N] [--no-curobo] [--no-graspnet] [--providers CSV]
+#   scripts/gpu/services.sh start [--gpu N] [--no-curobo] [--no-graspnet] [--graspnet-cpu]
+#                                 [--providers CSV]
 #   scripts/gpu/services.sh status
 #   scripts/gpu/services.sh logs [sam3|contact_graspnet|pyroki|curobo|supervisor]
 #   scripts/gpu/services.sh stop
@@ -19,7 +20,7 @@ PID_FILE="$LOG_DIR/supervisor.pid"
 PYTHON_BIN="${CAP_HARNESS_PYTHON:-python3}"
 declare -A PORTS=([sam3]=8114 [contact_graspnet]=8115 [pyroki]=8116 [curobo]=8118)
 
-usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
 
 running_pid() {
   [[ -f "$PID_FILE" ]] || return 1
@@ -54,7 +55,7 @@ cmd_status() {
   done
   if reservation_target_gpu >/dev/null; then
     echo
-    "$REPO_ROOT/scripts/gpu/reserve.sh" status | head -n 2
+    "$REPO_ROOT/scripts/gpu/reserve.sh" status | sed -n "1,2p"  # sed reads it all: no SIGPIPE
   fi
   if command -v nvidia-smi >/dev/null; then
     echo
@@ -64,8 +65,12 @@ cmd_status() {
 
 cmd_start() {
   local providers="sam3,pyroki,contact_graspnet,curobo"
+  # Providers to run on CPU; set ASPIRE_CPU_PROVIDERS=contact_graspnet in the conda env to make
+  # --graspnet-cpu the default (scripts/gpu/check_graspnet.sh tells whether it helps).
+  local cpu_providers="${ASPIRE_CPU_PROVIDERS:-}"
   while (($#)); do
     case "$1" in
+      --graspnet-cpu) cpu_providers="${cpu_providers:+$cpu_providers,}contact_graspnet"; shift ;;
       --no-curobo) providers="${providers/,curobo/}"; shift ;;
       --no-graspnet) providers="${providers/,contact_graspnet/}"; shift ;;
       --providers) providers="$2"; shift 2 ;;
@@ -88,7 +93,7 @@ cmd_start() {
   fi
   # SAM3's first start downloads ~3.4 GB of gated weights; give readiness enough time.
   echo "starting [$providers] on GPU $GPU, profile $PROFILE (logs: $LOG_DIR)"
-  CAP_HARNESS_GPU_OVERRIDE="$GPU" \
+  CAP_HARNESS_GPU_OVERRIDE="$GPU" CAP_HARNESS_CPU_PROVIDERS="$cpu_providers" \
   CAP_HARNESS_SERVICE_READY_TIMEOUT_S="${CAP_HARNESS_SERVICE_READY_TIMEOUT_S:-1800}" \
   CAP_HARNESS_SERVICE_LOG_DIR="$LOG_DIR" \
     setsid nohup "$REPO_ROOT/scripts/supervise_services.sh" \

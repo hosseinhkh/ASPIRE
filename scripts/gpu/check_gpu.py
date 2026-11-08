@@ -201,7 +201,12 @@ def cmd_budget(args: argparse.Namespace) -> int:
     already_mine = sum(
         p.used_mib for p in list_processes(gpus) if p.mine and p.gpu_index == target.index
     )
-    plan = planned_footprint(not args.no_curobo, not args.no_graspnet, args.sim_workers)
+    on_cpu = set(filter(None, os.environ.get("ASPIRE_CPU_PROVIDERS", "").split(",")))
+    plan = planned_footprint(
+        not args.no_curobo and "curobo" not in on_cpu,
+        not args.no_graspnet and "contact_graspnet" not in on_cpu,
+        args.sim_workers,
+    )
     need = sum(plan.values()) + SAFETY_MARGIN_MIB
     # Memory our own running services already hold counts as available to us.
     available = target.free_mib + already_mine
