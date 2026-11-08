@@ -77,7 +77,7 @@ if [[ "$INSTALL_SYSTEM_DEPS" -eq 1 ]]; then
   DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq \
     libosmesa6 libegl1 libegl-mesa0 libgl1 libglu1-mesa ffmpeg git-lfs
 fi
-if ! ldconfig -p 2>/dev/null | grep -q libOSMesa; then
+if ! ldconfig -p 2>/dev/null | grep libOSMesa >/dev/null; then
   printf 'warning: libOSMesa not found; MuJoCo cameras need it without a GPU.\n' >&2
   printf '         re-run with --install-system-deps, or: apt-get install libosmesa6\n' >&2
 fi

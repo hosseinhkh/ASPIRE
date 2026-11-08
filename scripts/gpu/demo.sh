@@ -9,6 +9,7 @@
 #   scripts/gpu/demo.sh llm       [--benchmark libero-pro|robosuite] [--suite S] [--task-id N]
 #                                 [--dev-seeds "51 52 53"] [--heldout-seeds "1 2 3"]
 #                                 [--max-versions 4] [--max-turns 120] [--budget-usd 20]
+#                                 [--out DIR]
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
 #
@@ -25,7 +26,7 @@ GPU="${ASPIRE_GPU:-0}"
 PY="${CAP_HARNESS_PYTHON:-python3}"
 cd "$REPO_ROOT"
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 
@@ -197,7 +198,7 @@ set_claude_flags() {  # set_claude_flags MINUTES_NEEDED; sets CLAUDE_FLAGS for b
 
 cmd_llm() {
   local benchmark="libero-pro" suite="" task_id=0 dev="" heldout="1 2 3"
-  local max_versions=4 max_turns=120 budget=20 max_steps="" init_mode=""
+  local max_versions=4 max_turns=120 budget=20 max_steps="" init_mode="" out=""
   while (($#)); do
     case "$1" in
       --benchmark) benchmark="$2"; shift 2 ;;
@@ -208,6 +209,7 @@ cmd_llm() {
       --max-versions) max_versions="$2"; shift 2 ;;
       --max-turns) max_turns="$2"; shift 2 ;;
       --budget-usd) budget="$2"; shift 2 ;;
+      --out) out="$2"; shift 2 ;;
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
@@ -223,8 +225,9 @@ cmd_llm() {
   require_runtime_env
   require_services
   set_claude_flags 75
-  local ws="$OUT_BASE/llm-$benchmark-$suite-$task_id-$STAMP"
+  local ws="${out:-$OUT_BASE/llm-$benchmark-$suite-$task_id-$STAMP}"
   mkdir -p "$ws"
+  ws="$(cd "$ws" && pwd)"
   local curobo_note=""
   ((CUROBO_UP)) && curobo_note=", cuRobo :8118 (first plan ~50 s while it warms up)"
   render scripts/gpu/prompts/llm_quick_demo.md "$ws/prompt.md" \
@@ -233,7 +236,8 @@ cmd_llm() {
     "INIT_MODE=$init_mode" "MAX_STEPS=$max_steps" "MAX_VERSIONS=$max_versions" \
     "CUROBO_NOTE=$curobo_note"
   local extra=(--max-turns "$max_turns")
-  if claude --help 2>/dev/null | grep -q -- "--max-budget-usd"; then
+  # Capture first: `| grep -q` under pipefail fails when grep exits before the writer.
+  if [[ "$(claude --help 2>/dev/null)" == *--max-budget-usd* ]]; then
     extra+=(--max-budget-usd "$budget")
   fi
 

@@ -12,6 +12,7 @@ The demos are deliberately small. Each one proves that one layer works.
 | `demo.sh smoke` | Simulators, GPU rendering, SAM3, Contact-GraspNet, PyRoki (and cuRobo) work end to end | none | 10–20 min | $0 |
 | `demo.sh llm` | Claude Opus 4.6 on Bedrock can write, run and debug a program on 3 dev seeds, then evaluate it on 3 held-out seeds | Opus 4.6 | 20–60 min | roughly $3–15 |
 | `demo.sh campaign` | The full ASPIRE loop: coordinator, worker sub-agent, held-out validation, verifier, skill library | Opus 4.6 | about 1 h | roughly $10–30 |
+| `session.sh run` | Many tasks with everything recorded: videos, trajectories, every model call, the agent's conversation, the GPU timeline; HTML report and W&B ([section 8](#8-recorded-test-sessions-videos-every-decision-wb)) | optional | 5 min–1 h | $0 without `--llm` |
 
 The cost figures are estimates. For scale, the paper's full-size Opus 4.6 runs average about
 $24 per LIBERO-Pro task, on 15 dev seeds plus 50 held-out seeds. Bedrock bills at its own rates.
@@ -482,6 +483,118 @@ Without `--run`, the script prints the exact `claude` command instead. Check pro
 ```bash
 python .claude/skills/iterative-debugging/scripts/gen_progress.py --print
 ```
+
+## 8. Recorded test sessions (videos, every decision, W&B)
+
+`session.sh run` runs a list of simulator tasks, and optionally Opus 4.6 agents, with everything
+recorded in one directory. It then builds an HTML report and Weights & Biases runs. Use it when
+you want to look back at what happened: what each camera saw, every trajectory, every call to
+SAM3 / Contact-GraspNet / PyRoki / cuRobo and its output, and the agent's whole conversation.
+
+```bash
+scripts/gpu/session.sh tasks
+```
+
+```bash
+scripts/gpu/session.sh run --tasks quick --reserve 30
+```
+
+```bash
+scripts/gpu/session.sh run --tasks standard --llm libero-pro:libero_object_swap:0 --llm-budget 10 --reserve 30
+```
+
+| Preset | Episodes per seed | Wall time (estimate) |
+| --- | --- | --- |
+| `quick` | 3: cube lift, microwave, object swap | 5–10 min |
+| `standard` (default) | 7: adds the cuRobo cube lift, two-arm lift, two-arm handover and the drawer | 20–30 min |
+| `full` | 14: every Robosuite and LIBERO-Pro example program | about 1 h |
+
+In order, a session:
+
+1. records the git commit and diff, `nvidia-smi`, versions, the package list of every venv and
+   the ASPIRE environment variables. Credential values are never written, only `<set, N chars>`;
+2. runs `check_stack.sh --quick` (skip with `--no-preflight`);
+3. starts a GPU timeline: memory, utilization, temperature and power every 2 s, plus each process
+   with its role (SAM3, cuRobo, simulator, reservation, other users);
+4. starts the model services if they are not running. A reservation on the GPU is handed over
+   automatically. Services that were already running are used as they are and never stopped;
+5. runs each task once per seed (`--seeds "1 2 3"`). A task whose service is down is skipped;
+6. runs each `--llm BENCHMARK:SUITE:TASK_ID` agent (the same agent as `demo.sh llm`, with
+   `--llm-budget`, `--llm-max-turns`, `--llm-dev-seeds` and `--llm-heldout-seeds`);
+7. stops the services it started, then holds `--reserve GIB` on the GPU for you;
+8. scrubs credential values from every file, builds the report, and logs to W&B.
+
+Ctrl-C stops a session cleanly. The services are stopped, the reservation returns, and a
+report of what finished is still written.
+
+Each session lands in `outputs/sessions/<date>-<time>-<name>/`:
+
+| Path | Contents |
+| --- | --- |
+| `report/index.html` | **start here**: stages with timing and your GPU peak per stage, GPU charts with the stages shaded, links to every episode and agent page |
+| `report/episode-NNN.html` | one episode: outcome, every camera's video, joint / gripper / end-effector trajectories, keyframes before and after each motion, SAM3 mask overlays, timing, and the tool-call tree (program call → API stage → model service) with each call's input, output and error, plus the program and its stdout |
+| `report/agent-NNN.html` | one agent conversation: the prompt; Opus 4.6's text and thinking; every tool call (shell commands, file reads) and its result; every image it was shown; turns, minutes and cost; its report and the programs it wrote |
+| `episodes/` | the raw run directories (`outcome.json`, `trace/`, `media/videos/*.mp4`, `episode/steps.jsonl`), and `logs/` with each episode's console |
+| `agents/llm-*/` | each agent's workspace: `prompt.md`, `transcript.jsonl`, `program_v*.py`, `dev_v*/` and `heldout/` runs, `REPORT.md` |
+| `claude-sessions/` | Claude Code's own transcripts of sub-agents (and of interactive sessions, see below) |
+| `gpu/` | `gpu.csv` and `processes.csv` (the timeline) |
+| `service-logs/` | what each model service logged during the session |
+| `preflight/`, `env/` | the quick check and the environment snapshot |
+| `stages.tsv`, `session.json`, `session.log` | stage results with start and end times, session metadata, the whole console |
+| `wandb/` | offline W&B runs |
+
+To view the report on the shared server, serve the session directory. Then open an SSH tunnel
+from your laptop and browse to `http://localhost:8000/report/`:
+
+```bash
+cd outputs/sessions/<session> && python -m http.server 8000 --bind 127.0.0.1
+```
+
+```bash
+ssh -L 8000:localhost:8000 <you>@<server>
+```
+
+**Weights & Biases.** By default the runs are written offline. The first session installs wandb
+into `.venv-tools`, so no account is needed to record. Each episode, agent and session is one W&B
+run, grouped by session name:
+
+- episode runs log the joint, gripper, end-effector and commanded trajectories as charts, the
+  videos, keyframes and SAM3 overlays, and a `tool_calls` table with inputs and outputs;
+- agent runs log the transcript as a table and the images the agent saw;
+- the session run logs the GPU timeline and the stage table;
+- the raw directories are uploaded as artifacts.
+
+To upload, log in once (the key is read at a hidden prompt), then sync:
+
+```bash
+.venv-tools/bin/wandb login
+```
+
+```bash
+.venv-tools/bin/wandb sync outputs/sessions/<session>/wandb/wandb/offline-run-*
+```
+
+Or log straight to W&B with `--wandb online`. `--wandb off` skips it; the HTML report is
+complete on its own. To rebuild the report and W&B runs for an existing session:
+
+```bash
+scripts/gpu/session.sh report outputs/sessions/<session> --wandb offline
+```
+
+**Interactive campaigns.** `demo.sh campaign --run` is interactive, so it runs outside
+`session.sh`. Afterwards, copy its Claude Code transcripts, sub-agents included, into a session
+and rebuild the report:
+
+```bash
+scripts/gpu/session.sh claude-logs outputs/sessions/<session>
+```
+
+```bash
+scripts/gpu/session.sh report outputs/sessions/<session>
+```
+
+Your own task list uses the columns that `session.sh tasks` prints, one task per line. Pass it
+with `--tasks FILE`.
 
 ## Troubleshooting
 

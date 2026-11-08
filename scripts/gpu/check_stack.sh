@@ -35,7 +35,7 @@ while (($#)); do
     *) echo "error: unknown option: $1" >&2; exit 2 ;;
   esac
 done
-OUT="$REPO_ROOT/outputs/gpu-check/$(date +%Y%m%d-%H%M%S)"
+OUT="${ASPIRE_CHECK_OUT:-$REPO_ROOT/outputs/gpu-check/$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$OUT"
 declare -a ROWS=()
 SAM3_STATUS="UNKNOWN"
@@ -281,7 +281,7 @@ template, out, ws = sys.argv[1:]
 Path(out).write_text(Path(template).read_text().replace("{{WS}}", ws))
 PY
     extra=()
-    claude --help 2>/dev/null | grep -q -- "--max-budget-usd" && extra+=(--max-budget-usd 3)
+    [[ "$(claude --help 2>/dev/null)" == *--max-budget-usd* ]] && extra+=(--max-budget-usd 3)
     claude -p "$(cat "$ws/prompt.md")" --model "$ANTHROPIC_MODEL" --permission-mode bypassPermissions \
       --max-turns 30 "${extra[@]}" --output-format stream-json --verbose 2> "$ws/claude.stderr" \
       | "$PY" scripts/gpu/stream_view.py --raw "$ws/transcript.jsonl" --summary "$ws/result.json"

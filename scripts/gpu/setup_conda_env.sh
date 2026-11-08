@@ -77,7 +77,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 set -u
 # --override-channels keeps the Anaconda 'defaults' channel (and its ToS prompt) out of it.
 CONDA_PACKAGES=(python=3.11 uv git git-lfs ffmpeg "nodejs>=22" boto3 curl)
-if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
+if conda env list | awk -v name="$ENV_NAME" '$1 == name {found = 1} END {exit !found}'; then
   echo "env exists; making sure its packages are present"
   conda install -y -n "$ENV_NAME" --override-channels -c conda-forge "${CONDA_PACKAGES[@]}"
 else
@@ -183,4 +183,5 @@ Setup complete. Next steps (docs/gpu-quickstart.md has the full walkthrough):
   scripts/gpu/services.sh start                 # SAM3, Contact-GraspNet, PyRoki$([[ "$WITH_CUROBO" -eq 1 ]] && echo ", cuRobo")
   scripts/gpu/demo.sh smoke                     # simulator + perception demo, no LLM
   scripts/gpu/demo.sh llm                       # Claude Opus 4.6 writes and debugs a program
+  scripts/gpu/session.sh run --tasks quick      # recorded run: videos, traces, report, W&B
 EOF
