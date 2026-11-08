@@ -132,7 +132,7 @@ wait_for_endpoint() {
   local deadline=$((SECONDS + READY_TIMEOUT_S))
   while ((SECONDS < deadline)); do
     kill -0 "$pid" 2>/dev/null || { printf 'error: %s exited before ready; see %s/%s.log\n' "$name" "$LOG_DIR" "$name" >&2; return 1; }
-    if curl --fail --silent --show-error --max-time 2 "http://$SERVICE_HOST:$port/openapi.json" >/dev/null; then
+    if curl --fail --silent --max-time 2 "http://$SERVICE_HOST:$port/openapi.json" >/dev/null; then
       printf 'ready: %s on %s:%s\n' "$name" "$SERVICE_HOST" "$port"; return 0
     fi
     sleep 2

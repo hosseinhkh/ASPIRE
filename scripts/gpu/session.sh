@@ -193,7 +193,7 @@ tools_python() {  # prints a Python with wandb installed (.venv-tools), creating
   fi
   echo "installing wandb into $TOOLS_VENV (first use only)" >&2
   UV_CACHE_DIR="$REPO_ROOT/.uv-cache" uv venv --allow-existing --python "$PY" "$TOOLS_VENV" >&2 \
-    && UV_CACHE_DIR="$REPO_ROOT/.uv-cache" uv pip install --python "$TOOLS_VENV/bin/python" \
+    && UV_CACHE_DIR="$REPO_ROOT/.uv-cache" uv pip install -q --python "$TOOLS_VENV/bin/python" \
       "wandb>=0.19" pillow numpy >&2 \
     && printf '%s\n' "$TOOLS_VENV/bin/python"
 }

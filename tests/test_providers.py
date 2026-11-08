@@ -22,7 +22,7 @@ from cap_harness.errors import ErrorCode
 from cap_harness.providers.curobo import CuRoboProvider
 from cap_harness.providers.curobo.dual import build_dual_panda_config
 from cap_harness.providers.graspnet import ContactGraspNetProvider
-from cap_harness.providers.http import HttpProviderClient
+from cap_harness.providers.http import HttpProviderClient, ProviderHttpError
 from cap_harness.providers.pyroki import PyRokiProvider
 from cap_harness.providers.sam3 import Sam3Provider
 
@@ -124,6 +124,34 @@ def test_http_retries_only_up_to_configured_bound() -> None:
     assert len(session.calls) == 3
     assert sleeps == [0.25, 0.5]
     assert session.calls[-1]["timeout"] == 30.0
+
+
+def test_http_unavailable_error_keeps_the_service_reason() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                500,
+                {"detail": "Grasp planning failed: CUDA out of memory"},
+                text='{"detail": "Grasp planning failed: CUDA out of memory"}',
+            )
+        ]
+        * 3
+    )
+    client = HttpProviderClient(
+        "http://service.test/",
+        max_retries=2,
+        retry_backoff_s=0.0,
+        session=session,  # type: ignore[arg-type]
+        sleep=lambda _: None,
+    )
+
+    with pytest.raises(ProviderHttpError) as raised:
+        client.post_json("/plan_point_clouds", {})
+
+    error = raised.value.error
+    assert error.code == ErrorCode.PROVIDER_UNAVAILABLE
+    assert "CUDA out of memory" in error.message
+    assert "CUDA out of memory" in error.details["error"]
 
 
 def test_sam3_decodes_text_mask_with_camera_identity() -> None:

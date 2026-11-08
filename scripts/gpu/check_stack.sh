@@ -266,6 +266,25 @@ PY
       if [[ "$status" == INFO ]]; then printf '          %-28s %s\n' "$name" "$detail"
       else record "$status" "probe: $name" "${detail:-ok}"; fi
     done < "$OUT/probe.tsv"
+    # Keep this run's service logs (the next services.sh start rewrites them) and show the
+    # service's own error for each failed probe.
+    log_dir="${CAP_HARNESS_SERVICE_LOG_DIR:-$REPO_ROOT/validation-artifacts/service-logs}"
+    mkdir -p "$OUT/service-logs"
+    cp "$log_dir"/*.log "$OUT/service-logs/" 2>/dev/null || true
+    while IFS=$'\t' read -r status name _; do
+      [[ "$status" == FAIL ]] || continue
+      case "$name" in
+        contact_graspnet*) svc=contact_graspnet ;;
+        *curobo*) svc=curobo ;;
+        *pyroki*) svc=pyroki ;;
+        sam3*) svc=sam3 ;;
+        *) continue ;;
+      esac
+      [[ -f "$OUT/service-logs/$svc.log" ]] || continue
+      echo "          last errors in $OUT/service-logs/$svc.log:"
+      grep -E "Traceback|Error|error|failed|Killed|out of memory" "$OUT/service-logs/$svc.log" \
+        | tail -n 8 | cut -c1-200 | sed 's/^/            /'
+    done < "$OUT/probe.tsv"
   else
     record FAIL "probe" "no program result (see $OUT/stack-probe.log)"
   fi

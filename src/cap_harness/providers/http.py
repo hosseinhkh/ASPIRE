@@ -108,8 +108,11 @@ class HttpProviderClient:
                 ) from exc
 
             if response.status_code in _TRANSIENT_STATUS_CODES:
+                # Keep the service's own explanation (e.g. a 500's "Grasp planning failed:
+                # CUDA out of memory"): without it the final error only says "unavailable".
                 last_error = requests.HTTPError(
-                    f"transient HTTP {response.status_code}", response=response
+                    f"transient HTTP {response.status_code}: {response.text[:512]}",
+                    response=response,
                 )
                 if attempt + 1 < total_attempts:
                     self._backoff(attempt)
@@ -176,10 +179,11 @@ class HttpProviderClient:
     def _unavailable_error(
         url: str, attempts: int, error: BaseException | None
     ) -> ProviderHttpError:
+        reason = f" (last error: {str(error)[:300]})" if error is not None else ""
         return ProviderHttpError(
             ApiError(
                 code=ErrorCode.PROVIDER_UNAVAILABLE,
-                message=f"Provider unavailable after {attempts} attempts: {url}",
+                message=f"Provider unavailable after {attempts} attempts: {url}{reason}",
                 details={"url": url, "attempts": attempts, "error": str(error)},
             )
         )

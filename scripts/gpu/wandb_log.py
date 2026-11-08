@@ -67,6 +67,7 @@ def init(args: argparse.Namespace, session: Path, name: str, job_type: str, conf
         dir=str(session / "wandb"),
         mode=args.mode,
         reinit="finish_previous",
+        settings=wandb.Settings(silent=True),  # one summary line at the end, not per-run tables
     )
 
 
