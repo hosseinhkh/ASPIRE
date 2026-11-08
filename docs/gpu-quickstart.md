@@ -170,6 +170,44 @@ conda deactivate
 conda activate aspire
 ```
 
+### If you use a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`)
+
+This is the same credential AWS's own Python example uses: `boto3.client("bedrock-runtime",
+region_name="us-east-1").converse(...)`, with the key in `AWS_BEARER_TOKEN_BEDROCK`. Claude Code
+accepts it directly. Choose **2** in the menu, or skip the menu:
+
+```bash
+scripts/gpu/set_credentials.sh --method 2
+```
+
+With a key, the script does three extra things:
+
+- **Region.** It reads the key's region and uses that region, because a short-term key only works
+  in the region it was created in.
+- **Expiry.** It prints when the key expires. Short-term keys
+  (`bedrock-api-key-...`) last at most **12 hours**. `demo.sh llm` and `demo.sh campaign` refuse
+  to start if the key won't outlive the run.
+- **Two checks.** It calls Bedrock directly through boto3 Converse, as in AWS's example but with
+  Opus 4.6. This separates "the key or model access is wrong" from "Claude Code is misconfigured".
+  Then it verifies Claude Code.
+
+With a key there is no account call to discover the model ID, so it uses
+`us.anthropic.claude-opus-4-6-v1` (or `eu.` / `apac.` for keys from those regions). Pass
+`--model-id` to override.
+
+When the key expires, replace only the key:
+
+```bash
+scripts/gpu/set_credentials.sh --api-key
+```
+
+```bash
+conda deactivate && conda activate aspire
+```
+
+A key is a password: don't paste it into chats, issues or commits. For runs longer than a few
+hours, use a long-term API key or IAM access keys (option 1).
+
 ### Option B: plain commands
 
 This is the same result as option A, but the keys end up in your shell history.
@@ -208,7 +246,7 @@ account can use:
 python -c "import boto3; print([p['inferenceProfileId'] for p in boto3.client('bedrock', region_name='us-east-1').list_inference_profiles(maxResults=1000)['inferenceProfileSummaries'] if 'opus-4-6' in p['inferenceProfileId']])"
 ```
 
-## 4. Start the model services on GPU 0
+## 4. Start the model services
 
 ```bash
 python scripts/gpu/check_gpu.py budget
@@ -233,6 +271,36 @@ Other service commands:
 | `scripts/gpu/services.sh status` | ports plus GPU memory of your services |
 | `scripts/gpu/services.sh logs sam3` | follow one service's log |
 | `scripts/gpu/services.sh stop` | stop everything |
+
+### Keep GPU memory for yourself (optional)
+
+On a busy server you can hold memory on a card until you need it, e.g. 30 GiB on GPU 1:
+
+```bash
+scripts/gpu/reserve.sh hold 30 --gpu 1
+```
+
+```bash
+scripts/gpu/reserve.sh status
+```
+
+```bash
+scripts/gpu/reserve.sh release
+```
+
+A small detached process holds the memory, so it survives closing the terminal. It takes as much
+as is free if the card has less than you asked for.
+
+`services.sh` hands the memory over automatically:
+
+- **`services.sh start` on the same GPU:** releases the hold, starts the services, then re-holds
+  your target minus what the services need at peak, leaving about 2 GiB free for the simulator.
+  Your total stays near 30 GiB.
+- **`services.sh stop`:** restores the full hold.
+
+Memory is unheld for the minute or so the services take to start, so on a busy card someone may
+take part of it. Holding idle memory also blocks colleagues, so agree on it with whoever shares
+the machine.
 
 ## 5. Demo 1: smoke test, no LLM
 
@@ -338,6 +406,7 @@ python .claude/skills/iterative-debugging/scripts/gen_progress.py --print
 
 | Symptom | Fix |
 | --- | --- |
+| Bedrock `ExpiredTokenException` / `UnrecognizedClientException` mid-run | The short-term API key expired (12 h max). Run `scripts/gpu/set_credentials.sh --api-key`, reload the env, and re-run. |
 | `budget` says it does not fit | Use `--no-curobo`, wait for other users' jobs, or move to the emptier card with `scripts/gpu/use_gpu.sh N` |
 | `qt-main_activate.sh: QT_XCB_GL_INTEGRATION: unbound variable` | A conda activation hook that breaks under `set -u`. Fixed in the scripts; `git pull` and re-run. |
 | `PermissionError: '/tmp/robosuite.log'` | robosuite logs to a fixed `/tmp` file that another user owns. Setup now writes `third_party/robosuite/robosuite/macros_private.py`, which turns that log off. `git pull` and re-run `setup_conda_env.sh`; you don't need to delete anyone's file. |

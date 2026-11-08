@@ -28,6 +28,12 @@ running_pid() {
   printf '%s\n' "$pid"
 }
 
+reservation_target_gpu() {  # prints the GPU of an active reservation target, if any
+  local target="${ASPIRE_STATE_DIR:-$HOME/.cache/aspire}/reservation.target"
+  [[ -f "$target" ]] || return 1
+  awk '{print $1; exit}' "$target"
+}
+
 port_up() {
   curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null
 }
@@ -46,6 +52,10 @@ cmd_status() {
       printf '  %-17s down  :%s\n' "$name" "${PORTS[$name]}"
     fi
   done
+  if reservation_target_gpu >/dev/null; then
+    echo
+    "$REPO_ROOT/scripts/gpu/reserve.sh" status | head -n 2
+  fi
   if command -v nvidia-smi >/dev/null; then
     echo
     "$PYTHON_BIN" "$REPO_ROOT/scripts/gpu/check_gpu.py" measure --gpu "$GPU" || true
@@ -69,6 +79,13 @@ cmd_start() {
     exit 0
   fi
   mkdir -p "$LOG_DIR"
+  # A memory reservation on this GPU (scripts/gpu/reserve.sh) is handed to the services:
+  # released now, and topped back up once they are running.
+  local reservation_here=0
+  if reservation_gpu="$(reservation_target_gpu)" && [[ "$reservation_gpu" == "$GPU" ]]; then
+    reservation_here=1
+    "$REPO_ROOT/scripts/gpu/reserve.sh" pause
+  fi
   # SAM3's first start downloads ~3.4 GB of gated weights; give readiness enough time.
   echo "starting [$providers] on GPU $GPU, profile $PROFILE (logs: $LOG_DIR)"
   CAP_HARNESS_GPU_OVERRIDE="$GPU" \
@@ -86,6 +103,7 @@ cmd_start() {
         echo "note: cuRobo builds its planner on the first plan request (~50 s); the first"
         echo "      cuRobo call in a run is slow, later ones take tens of milliseconds."
       fi
+      ((reservation_here)) && "$REPO_ROOT/scripts/gpu/reserve.sh" resume
       echo
       cmd_status
       return 0
@@ -115,6 +133,10 @@ cmd_stop() {
     echo "stopped"
   else
     echo "not running"
+  fi
+  # Give a paused or shrunken reservation its full size back.
+  if reservation_target_gpu >/dev/null; then
+    "$REPO_ROOT/scripts/gpu/reserve.sh" resume
   fi
 }
 

@@ -13,12 +13,14 @@
 # time to change keys; --unset removes everything it set.
 #
 # Usage: scripts/gpu/set_credentials.sh [--env aspire] [--region us-east-1] [--model-id ID]
-#                                       [--1m] [--skip-hf] [--skip-verify] [--unset]
+#                                       [--method 1|2|3] [--1m] [--skip-hf] [--skip-verify] [--unset]
+#        scripts/gpu/set_credentials.sh --api-key     # just replace an expired Bedrock API key
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_NAME="${ASPIRE_CONDA_ENV:-aspire}"
 REGION=""
+METHOD=""
 MODEL_ID=""
 ONE_M=0
 SKIP_HF=0
@@ -31,6 +33,8 @@ while (($#)); do
     --region) REGION="$2"; shift 2 ;;
     --model-id) MODEL_ID="$2"; shift 2 ;;
     --1m) ONE_M=1; shift ;;
+    --method) METHOD="$2"; shift 2 ;;
+    --api-key) METHOD=2; SKIP_HF=1; shift ;;   # quick refresh of a short-term Bedrock API key
     --skip-hf) SKIP_HF=1; shift ;;
     --skip-verify) SKIP_VERIFY=1; shift ;;
     --unset) UNSET=1; shift ;;
@@ -64,11 +68,13 @@ if [[ -z "$REGION" ]]; then
   read -r -p "AWS region with Bedrock access [us-east-1]: " REGION
   REGION="${REGION:-us-east-1}"
 fi
-echo "Authentication:"
-echo "  1) access key ID + secret access key (+ optional session token)"
-echo "  2) Bedrock API key (AWS_BEARER_TOKEN_BEDROCK)"
-echo "  3) a named AWS profile from ~/.aws (e.g. SSO; run 'aws sso login' yourself)"
-read -r -p "Choose 1/2/3 [1]: " METHOD
+if [[ -z "$METHOD" ]]; then
+  echo "Authentication:"
+  echo "  1) access key ID + secret access key (+ optional session token)"
+  echo "  2) Bedrock API key (AWS_BEARER_TOKEN_BEDROCK)"
+  echo "  3) a named AWS profile from ~/.aws (e.g. SSO; run 'aws sso login' yourself)"
+  read -r -p "Choose 1/2/3 [1]: " METHOD
+fi
 METHOD="${METHOD:-1}"
 
 declare -a SET_VARS=(CLAUDE_CODE_USE_BEDROCK=1 "AWS_REGION=$REGION")
@@ -95,6 +101,14 @@ case "$METHOD" in
     [[ -n "$BEARER" ]] || { echo "error: empty API key" >&2; exit 1; }
     SET_VARS+=("AWS_BEARER_TOKEN_BEDROCK=$BEARER"); export AWS_BEARER_TOKEN_BEDROCK="$BEARER"
     CLEAR_VARS+=(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE)
+    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE || true
+    # A short-term key is scoped to the region it was created in; use that region.
+    KEY_REGION="$(python "$REPO_ROOT/scripts/gpu/bedrock_key_info.py" --region-only 2>/dev/null || true)"
+    if [[ -n "$KEY_REGION" && "$KEY_REGION" != "$REGION" ]]; then
+      echo "note: this API key was issued for $KEY_REGION, not $REGION; using $KEY_REGION"
+      REGION="$KEY_REGION"; export AWS_REGION="$REGION"; SET_VARS[1]="AWS_REGION=$REGION"
+    fi
+    python "$REPO_ROOT/scripts/gpu/bedrock_key_info.py" || true
     ;;
   3)
     read -r -p "AWS profile name: " PROFILE_NAME
@@ -190,6 +204,29 @@ export CLAUDE_CODE_USE_BEDROCK=1 ANTHROPIC_MODEL="$MODEL_ID" ANTHROPIC_DEFAULT_O
 
 # ---------------------------------------------------------------------------------------------
 if [[ "$SKIP_VERIFY" -eq 0 ]]; then
+  echo
+  echo "== Checking Bedrock directly (boto3 Converse) -> ${MODEL_ID%\[1m\]}"
+  # Separates "credentials or model access are wrong" from "Claude Code is misconfigured".
+  python - "${MODEL_ID%\[1m\]}" "$REGION" <<'PY' || echo "error: Bedrock rejected the request (see above); fix this before Claude Code can work" >&2
+import sys
+
+import boto3
+import botocore
+
+model, region = sys.argv[1:3]
+try:
+    client = boto3.client("bedrock-runtime", region_name=region)
+    reply = client.converse(
+        modelId=model,
+        messages=[{"role": "user", "content": [{"text": "Reply with exactly the word OK."}]}],
+        inferenceConfig={"maxTokens": 16},
+    )
+except botocore.exceptions.NoCredentialsError:
+    sys.exit(f"no credentials found (boto3 {boto3.__version__}; API keys need boto3 >= 1.39)")
+except botocore.exceptions.ClientError as exc:
+    sys.exit(f"{exc.response['Error'].get('Code')}: {exc.response['Error'].get('Message')}")
+print("Bedrock replied:", reply["output"]["message"]["content"][0]["text"].strip())
+PY
   echo
   echo "== Verifying Claude Code -> Bedrock -> $MODEL_ID"
   if command -v claude >/dev/null; then

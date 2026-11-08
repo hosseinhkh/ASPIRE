@@ -136,6 +136,8 @@ def _role(cmdline: str) -> str | None:
         return "curobo"
     if "cap_harness.providers.pyroki" in cmdline:
         return "pyroki"
+    if "gpu_reserve.py" in cmdline:
+        return "reservation"
     if "cap-harness" in cmdline or "cap_harness" in cmdline or str(REPO_ROOT) in cmdline:
         return "simulator_worker"
     return None

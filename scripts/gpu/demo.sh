@@ -173,11 +173,22 @@ cmd_smoke() {
 }
 
 # --------------------------------------------------------------------------------------- llm --
-set_claude_flags() {  # sets CLAUDE_FLAGS, shared by both LLM demos
+set_claude_flags() {  # set_claude_flags MINUTES_NEEDED; sets CLAUDE_FLAGS for both LLM demos
+  local minutes="${1:-60}"
   if [[ -z "${ANTHROPIC_MODEL:-}" || "${CLAUDE_CODE_USE_BEDROCK:-}" != "1" ]]; then
     echo "error: Bedrock is not configured; run scripts/gpu/set_credentials.sh, then" >&2
     echo "       'conda deactivate && conda activate ${ASPIRE_CONDA_ENV:-aspire}'" >&2
     exit 1
+  fi
+  if [[ -n "${AWS_BEARER_TOKEN_BEDROCK:-}" ]]; then
+    # Short-term Bedrock API keys last at most 12 h; a run that outlives one dies midway.
+    local status=0
+    "$PY" "$REPO_ROOT/scripts/gpu/bedrock_key_info.py" --min-minutes "$minutes" || status=$?
+    if ((status == 2)); then
+      echo "error: renew the key first: scripts/gpu/set_credentials.sh --api-key" >&2
+      echo "       then: conda deactivate && conda activate ${ASPIRE_CONDA_ENV:-aspire}" >&2
+      exit 1
+    fi
   fi
   command -v claude >/dev/null || { echo "error: claude CLI not found" >&2; exit 1; }
   # bypassPermissions: the demo runs unattended and launches simulator processes itself.
@@ -211,7 +222,7 @@ cmd_llm() {
   esac
   require_runtime_env
   require_services
-  set_claude_flags
+  set_claude_flags 75
   local ws="$OUT_BASE/llm-$benchmark-$suite-$task_id-$STAMP"
   mkdir -p "$ws"
   local curobo_note=""
@@ -266,7 +277,7 @@ cmd_campaign() {
   done
   require_runtime_env
   require_services
-  set_claude_flags
+  set_claude_flags 120
   if [[ -z "$tasks" ]]; then
     tasks="$OUT_BASE/campaign-tasks-$STAMP.json"
     mkdir -p "$OUT_BASE"
