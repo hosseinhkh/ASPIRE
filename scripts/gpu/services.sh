@@ -5,7 +5,7 @@
 # with setsid, so the stack survives a closed SSH session. One supervisor at a time; its process
 # group is what `stop` kills.
 #
-#   scripts/gpu/services.sh start [--no-curobo] [--no-graspnet] [--providers CSV] [--profile NAME]
+#   scripts/gpu/services.sh start [--gpu N] [--no-curobo] [--no-graspnet] [--providers CSV]
 #   scripts/gpu/services.sh status
 #   scripts/gpu/services.sh logs [sam3|contact_graspnet|pyroki|curobo|supervisor]
 #   scripts/gpu/services.sh stop
@@ -60,6 +60,7 @@ cmd_start() {
       --no-graspnet) providers="${providers/,contact_graspnet/}"; shift ;;
       --providers) providers="$2"; shift 2 ;;
       --profile) PROFILE="$2"; shift 2 ;;
+      --gpu) GPU="$2"; shift 2 ;;
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
@@ -69,7 +70,8 @@ cmd_start() {
   fi
   mkdir -p "$LOG_DIR"
   # SAM3's first start downloads ~3.4 GB of gated weights; give readiness enough time.
-  echo "starting [$providers] with profile $PROFILE (logs: $LOG_DIR)"
+  echo "starting [$providers] on GPU $GPU, profile $PROFILE (logs: $LOG_DIR)"
+  CAP_HARNESS_GPU_OVERRIDE="$GPU" \
   CAP_HARNESS_SERVICE_READY_TIMEOUT_S="${CAP_HARNESS_SERVICE_READY_TIMEOUT_S:-1800}" \
   CAP_HARNESS_SERVICE_LOG_DIR="$LOG_DIR" \
     setsid nohup "$REPO_ROOT/scripts/supervise_services.sh" \

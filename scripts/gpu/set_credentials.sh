@@ -40,9 +40,12 @@ while (($#)); do
 done
 
 command -v conda >/dev/null 2>&1 || { echo "error: conda not found" >&2; exit 1; }
+# conda's activation hooks are not `set -u` safe; relax it while they run.
+set +u
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
+set -u
 
 ALL_VARS=(CLAUDE_CODE_USE_BEDROCK AWS_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
   AWS_SESSION_TOKEN AWS_BEARER_TOKEN_BEDROCK AWS_PROFILE ANTHROPIC_MODEL

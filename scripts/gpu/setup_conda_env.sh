@@ -69,8 +69,12 @@ if ! command -v conda >/dev/null 2>&1; then
   echo "  https://github.com/conda-forge/miniforge#install" >&2
   exit 1
 fi
+# conda's own activation hooks are not written for `set -u` (e.g. qt-main's activate.d script
+# reads QT_XCB_GL_INTEGRATION unguarded), so relax it around anything that sources them.
+set +u
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
+set -u
 # --override-channels keeps the Anaconda 'defaults' channel (and its ToS prompt) out of it.
 CONDA_PACKAGES=(python=3.11 uv git git-lfs ffmpeg "nodejs>=22" boto3 curl)
 if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
@@ -79,7 +83,9 @@ if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
 else
   conda create -y -n "$ENV_NAME" --override-channels -c conda-forge "${CONDA_PACKAGES[@]}"
 fi
+set +u
 conda activate "$ENV_NAME"
+set -u
 PY="$CONDA_PREFIX/bin/python"
 "$PY" --version
 
@@ -102,6 +108,11 @@ step "Fetching submodules (BEHAVIOR-1K is skipped: it needs Isaac Sim)"
 git -C "$REPO_ROOT" submodule update --init --depth 1 \
   third_party/LIBERO-PRO third_party/robosuite third_party/sam3 \
   third_party/contact_graspnet_pytorch
+
+step "robosuite: turning off its shared /tmp/robosuite.log file (multi-user machine)"
+# shellcheck source=../lib/robosuite_macros.sh
+source "$REPO_ROOT/scripts/lib/robosuite_macros.sh"
+write_robosuite_private_macros "$REPO_ROOT"
 
 # ---------------------------------------------------------------------------------------------
 export CAP_HARNESS_PYTHON="$PY"
@@ -131,7 +142,8 @@ VIRTUAL_ENV="$REPO_ROOT/.venv-dev" UV_PROJECT_ENVIRONMENT="$REPO_ROOT/.venv-dev"
 step "Storing runtime variables in the conda env (active on every 'conda activate $ENV_NAME')"
 # EGL_PLATFORM=device + MUJOCO_EGL_DEVICE_ID pin MuJoCo rendering to the chosen card: EGL device
 # enumeration ignores CUDA_VISIBLE_DEVICES. expandable_segments limits torch fragmentation on a
-# card shared with other users.
+# card shared with other users. The cuRobo model cache defaults to a shared /tmp path that
+# another user may already own, so give it a per-user home.
 conda env config vars set -n "$ENV_NAME" \
   ASPIRE_REPO="$REPO_ROOT" \
   ASPIRE_GPU="$GPU" \
@@ -145,7 +157,8 @@ conda env config vars set -n "$ENV_NAME" \
   LIBERO_CONFIG_PATH="$REPO_ROOT/.libero" \
   TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-  CAP_HARNESS_VENDOR_ROOT="$REPO_ROOT/third_party" >/dev/null
+  CAP_HARNESS_VENDOR_ROOT="$REPO_ROOT/third_party" \
+  CAP_HARNESS_CUROBO_MODEL_CACHE="$HOME/.cache/aspire/curobo-models" >/dev/null
 conda env config vars list -n "$ENV_NAME"
 
 if [[ "$RUN_TESTS" -eq 1 ]]; then
@@ -162,6 +175,7 @@ Setup complete. Next steps (docs/gpu-quickstart.md has the full walkthrough):
   conda activate $ENV_NAME                      # re-activate to load the stored variables
   scripts/gpu/set_credentials.sh                # AWS Bedrock keys + Hugging Face token
   python scripts/gpu/check_gpu.py budget        # does the stack fit on GPU $GPU right now?
+  scripts/gpu/use_gpu.sh N                      # move everything to GPU N if another has more room
   scripts/gpu/services.sh start                 # SAM3, Contact-GraspNet, PyRoki$([[ "$WITH_CUROBO" -eq 1 ]] && echo ", cuRobo")
   scripts/gpu/demo.sh smoke                     # simulator + perception demo, no LLM
   scripts/gpu/demo.sh llm                       # Claude Opus 4.6 writes and debugs a program

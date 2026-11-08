@@ -19,6 +19,12 @@ LOG_DIR="${CAP_HARNESS_SERVICE_LOG_DIR:-$REPO_ROOT/validation-artifacts/service-
 READY_TIMEOUT_S="${CAP_HARNESS_SERVICE_READY_TIMEOUT_S:-300}"
 SERVICE_HOST="${CAP_HARNESS_SERVICE_HOST:-127.0.0.1}"
 PROVIDERS_CSV="${CAP_HARNESS_PROVIDERS:-sam3,pyroki,curobo}"
+# Optional: put every GPU provider on this physical GPU instead of the profile's placement.
+# For shared workstations where the card with free memory changes from day to day.
+GPU_OVERRIDE="${CAP_HARNESS_GPU_OVERRIDE:-}"
+[[ -z "$GPU_OVERRIDE" || "$GPU_OVERRIDE" =~ ^[0-9]+$ ]] || {
+  printf 'error: CAP_HARNESS_GPU_OVERRIDE must be a GPU index, got %s\n' "$GPU_OVERRIDE" >&2; exit 2
+}
 
 usage() {
   cat <<'EOF'
@@ -102,6 +108,7 @@ trap shutdown INT TERM EXIT
 
 for row in "${PLAN[@]}"; do
   IFS='|' read -r name venv module port gpu conc <<< "$row"
+  [[ -n "$gpu" && -n "$GPU_OVERRIDE" ]] && gpu="$GPU_OVERRIDE"
   venv_python="$REPO_ROOT/$venv/bin/python"
   [[ -x "$venv_python" ]] || {
     printf 'error: provider %s venv is missing: %s (bootstrap it first)\n' "$name" "$venv_python" >&2

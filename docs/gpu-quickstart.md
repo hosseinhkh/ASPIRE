@@ -40,6 +40,16 @@ python scripts/gpu/check_gpu.py budget            # exit code 0 = fits, 1 = does
 python scripts/gpu/check_gpu.py budget --no-curobo
 ```
 
+If another card has more room today, move everything there with one command. It sets the
+rendering GPU in the env, and `services.sh` places every model service on the same card:
+
+```bash
+scripts/gpu/use_gpu.sh 1
+```
+
+Then reload the env with `conda deactivate && conda activate aspire`. You can also choose the card
+at setup time with `scripts/gpu/setup_conda_env.sh --gpu 1`.
+
 ## 1. Get the code
 
 ```bash
@@ -328,7 +338,9 @@ python .claude/skills/iterative-debugging/scripts/gen_progress.py --print
 
 | Symptom | Fix |
 | --- | --- |
-| `budget` says it does not fit | Use `--no-curobo`, wait for other users' jobs, or `setup_conda_env.sh --gpu N` (then edit `gpus` in `configs/profiles/rtxpro6000.json`) |
+| `budget` says it does not fit | Use `--no-curobo`, wait for other users' jobs, or move to the emptier card with `scripts/gpu/use_gpu.sh N` |
+| `qt-main_activate.sh: QT_XCB_GL_INTEGRATION: unbound variable` | A conda activation hook that breaks under `set -u`. Fixed in the scripts; `git pull` and re-run. |
+| `PermissionError: '/tmp/robosuite.log'` | robosuite logs to a fixed `/tmp` file that another user owns. Setup now writes `third_party/robosuite/robosuite/macros_private.py`, which turns that log off. `git pull` and re-run `setup_conda_env.sh`; you don't need to delete anyone's file. |
 | CUDA OOM in a service log | Another user's job grew. Run `services.sh stop`, `check_gpu.py budget`, then restart, without cuRobo if needed. |
 | `EGLError` / blank images | Make sure the env is active (`MUJOCO_GL=egl`, `EGL_PLATFORM=device`, `MUJOCO_EGL_DEVICE_ID=0`). An NVIDIA EGL vendor file must exist (`ls /usr/share/glvnd/egl_vendor.d/`). |
 | SAM3 fails to start with a 401 | The HF token lacks access to `facebook/sam3`. Request access, then re-run `set_credentials.sh`. |

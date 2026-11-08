@@ -88,6 +88,12 @@ git -C "$REPO_ROOT" submodule update --init --depth 1 \
   third_party/LIBERO-PRO third_party/robosuite third_party/sam3 \
   third_party/contact_graspnet_pytorch
 
+# robosuite logs to a hard-coded /tmp/robosuite.log, which breaks `import robosuite` for every
+# user but the first on a shared machine; scripts/lib/robosuite_macros.sh turns that file off.
+# shellcheck source=lib/robosuite_macros.sh
+source "$REPO_ROOT/scripts/lib/robosuite_macros.sh"
+write_robosuite_private_macros "$REPO_ROOT"
+
 export CAP_HARNESS_ROBOSUITE_CACHE="${CAP_HARNESS_ROBOSUITE_CACHE:-$REPO_ROOT/.uv-cache}"
 skipped robosuite || "$REPO_ROOT/scripts/bootstrap_robosuite.sh"
 skipped libero || "$REPO_ROOT/scripts/bootstrap_libero.sh" --python "$PYTHON_BIN"
