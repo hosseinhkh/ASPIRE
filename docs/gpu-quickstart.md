@@ -17,6 +17,87 @@ The cost figures are estimates. For scale, the paper's full-size Opus 4.6 runs a
 $24 per LIBERO-Pro task, on 15 dev seeds plus 50 held-out seeds. Bedrock bills at its own rates.
 `demo.sh llm` caps spend with `--budget-usd` (default 20).
 
+## Already set up? Update, then check everything
+
+If the `aspire` env already exists from an earlier version:
+
+```bash
+git pull
+```
+
+```bash
+scripts/gpu/setup_conda_env.sh --gpu 1 --no-tests
+```
+
+```bash
+conda deactivate && conda activate aspire
+```
+
+The re-run is quick: finished venvs are skipped. It adds:
+
+- the robosuite `/tmp/robosuite.log` fix;
+- the GPU choice (use the card with free memory);
+- the per-user cuRobo cache.
+
+Your Bedrock and Hugging Face settings stay as they are.
+
+Then check the whole stack. The check needs no SAM3, so it works while the access request is
+pending:
+
+```bash
+scripts/gpu/check_stack.sh --quick
+```
+
+```bash
+scripts/gpu/check_stack.sh
+```
+
+```bash
+scripts/gpu/check_stack.sh --with-llm
+```
+
+| Command | What it covers | Time / cost |
+| --- | --- | --- |
+| `--quick` | sections 1–7 | about 2 min, $0.01 |
+| (no flag) | everything except the agent check | about 10 min |
+| `--with-llm` | everything, including a small agent coding task | about $1–3 |
+
+| # | Check | Passes when |
+| --- | --- | --- |
+| 1 | env | the conda env variables are loaded and point rendering at your GPU |
+| 2 | gpu | the driver answers and the stack fits in the GPU's free memory right now |
+| 3 | reserve | `reserve.sh` can hold 1 GiB, `nvidia-smi` shows it, and release frees it |
+| 4 | torch | every torch venv runs a CUDA kernel on the Blackwell card (catches a wrong CUDA build) |
+| 5 | egl | MuJoCo renders through NVIDIA EGL; it warns if it fell back to slow software rendering |
+| 6 | sam3 | Hugging Face access to `facebook/sam3`: **BLOCKED** while your request is pending |
+| 7 | bedrock | API-key expiry; Opus 4.6 answers through boto3 Converse and ConverseStream; Claude Code answers |
+| 8 | services | PyRoki, Contact-GraspNet and cuRobo start and answer (SAM3 too once granted) |
+| 9 | sims | a Robosuite two-arm episode (no services) and a LIBERO close-microwave episode (PyRoki IK) |
+| 10 | probe | one Robosuite episode calls every service through the robot API: PyRoki IK and motion, cuRobo IK and both planners, Contact-GraspNet grasps from an image-region mask, and a SAM3 call |
+| 11 | agent | `--with-llm` only: Opus 4.6 writes a small program (lift the arm 8 cm and back), runs it, reads the result and reports |
+
+Statuses:
+
+| Status | Meaning |
+| --- | --- |
+| PASS | works |
+| WARN | works, with a caveat |
+| FAIL | something on this machine needs fixing; the summary lists each with a hint |
+| BLOCKED | waiting on something outside this machine |
+| SKIP | not run (e.g. `--no-curobo`) |
+
+The exit code is 1 if anything FAILed. Logs go to `outputs/gpu-check/<time>/`. The check stops
+any services it started; add `--keep-services` to keep them running for the demos.
+
+**While SAM3 is pending,** expect BLOCKED only for SAM3 (sections 6, 8 and 10) and PASS
+elsewhere. Every demo needs SAM3 except the two-arm smoke and the microwave episode, which section
+9 already runs. Once Hugging Face approves the request, re-run the check: SAM3 turns PASS, and
+the services start it automatically. To download its weights (~3.4 GB) ahead of time:
+
+```bash
+.venv-sam3/bin/python -c "from huggingface_hub import hf_hub_download as d; print(d('facebook/sam3', 'sam3.pt'))"
+```
+
 ## 0. Will it fit in about 20 GB on GPU 0?
 
 Yes, with margin. Planned peak memory:

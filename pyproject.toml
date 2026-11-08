@@ -202,6 +202,7 @@ extend-exclude = [
   "src/cap_harness/agent/programs",
   "third_party",
   ".claude/skills/iterative-debugging/scripts/scene_snapshot.py",
+  "scripts/gpu/checks/stack_probe.py",
 ]
 line-length = 100
 target-version = "py310"

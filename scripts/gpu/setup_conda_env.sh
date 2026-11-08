@@ -174,6 +174,8 @@ Setup complete. Next steps (docs/gpu-quickstart.md has the full walkthrough):
 
   conda activate $ENV_NAME                      # re-activate to load the stored variables
   scripts/gpu/set_credentials.sh                # AWS Bedrock keys + Hugging Face token
+  scripts/gpu/check_stack.sh --quick            # env, GPU, reservation, torch, EGL, SAM3 access, Bedrock
+  scripts/gpu/check_stack.sh                    # + services, LIBERO/Robosuite episodes, API probe
   python scripts/gpu/check_gpu.py budget        # does the stack fit on GPU $GPU right now?
   scripts/gpu/use_gpu.sh N                      # move everything to GPU N if another has more room
   scripts/gpu/services.sh start                 # SAM3, Contact-GraspNet, PyRoki$([[ "$WITH_CUROBO" -eq 1 ]] && echo ", cuRobo")
