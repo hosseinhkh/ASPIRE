@@ -46,6 +46,8 @@ def failed_calls(run: Path) -> list[str]:
         if span.get("ok") is False or isinstance(error, dict) or isinstance(failure, dict):
             if isinstance(error, dict):
                 why = f"{error.get('code')}: {error.get('message')}"
+                if error.get("details"):  # e.g. joint_error_rad per arm for a "did not converge"
+                    why += " " + json.dumps(error["details"], default=str)
             elif isinstance(failure, dict):
                 why = f"{failure.get('type')}: {failure.get('message')}"
             else:
