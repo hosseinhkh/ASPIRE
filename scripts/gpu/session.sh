@@ -81,8 +81,10 @@ EOF
 }
 
 # ------------------------------------------------------------------------------- recording --
-stage_begin() { STAGE_NAME="$1"; STAGE_T="$(now)"; }
+STAGE_OPEN=0
+stage_begin() { STAGE_NAME="$1"; STAGE_T="$(now)"; STAGE_OPEN=1; }
 stage_end() {  # stage_end STATUS DETAIL
+  STAGE_OPEN=0
   printf '%s\t%s\t%s\t%s\t%s\n' "$STAGE_NAME" "$1" "${2//$'\t'/ }" "$(since_t0 "$STAGE_T")" \
     "$(since_t0 "$(now)")" >> "$SESSION/stages.tsv"
   printf '  %-7s %-36s %s\n' "$1" "$STAGE_NAME" "$2"
@@ -350,8 +352,8 @@ PY
   fi
 }
 
-STARTED_SERVICES=0 SERVICES_STOPPED=0 FINISHED=0 MONITOR_PID=""
-finish() {  # stop the monitor and the services this session started; restore the reservation
+STARTED_SERVICES=0 SERVICES_STOPPED=0 FINISHED=0 MONITOR_PID="" RESERVE=""
+finish() {  # stop the monitor and the services this session started, then hold --reserve GiB
   stop_monitor
   copy_service_logs
   if ((STARTED_SERVICES && ! KEEP_SERVICES && ! SERVICES_STOPPED)); then
@@ -359,10 +361,18 @@ finish() {  # stop the monitor and the services this session started; restore th
     scripts/gpu/services.sh stop || true
     SERVICES_STOPPED=1
   fi
+  if [[ -n "$RESERVE" ]]; then
+    step "Reserving ${RESERVE} GiB on GPU $GPU for later"
+    stage_begin "reserve"
+    if scripts/gpu/reserve.sh hold "$RESERVE" --gpu "$GPU"; then stage_end PASS "holding up to $RESERVE GiB"
+    else stage_end WARN "could not hold the reservation (scripts/gpu/reserve.sh status)"; fi
+    RESERVE=""
+  fi
 }
 on_exit() {
   ((FINISHED)) && return
   echo; echo "session interrupted; cleaning up (the partial session is kept)" >&2
+  ((STAGE_OPEN)) && stage_end INTERRUPTED "stopped before it finished"
   finish
   write_meta status=interrupted "finished=$(date -Iseconds)"
   "$PY" scripts/gpu/redact_session.py "$SESSION" >/dev/null 2>&1
@@ -371,7 +381,7 @@ on_exit() {
 }
 
 cmd_run() {
-  local name="tasks" tasks="standard" seeds="1" preflight=1 curobo=1 reserve="" wandb_mode=offline
+  local name="tasks" tasks="standard" seeds="1" preflight=1 curobo=1 wandb_mode=offline
   local -a llm=()
   KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
   while (($#)); do
@@ -387,7 +397,7 @@ cmd_run() {
       --no-preflight) preflight=0; shift ;;
       --no-curobo) curobo=0; shift ;;
       --keep-services) KEEP_SERVICES=1; shift ;;
-      --reserve) reserve="$2"; shift 2 ;;
+      --reserve) RESERVE="$2"; shift 2 ;;
       --wandb) wandb_mode="$2"; shift 2 ;;
       --gpu) GPU="$2"; shift 2 ;;
       *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -417,7 +427,7 @@ cmd_run() {
     "git_commit=$(git rev-parse --short HEAD 2>/dev/null)" \
     "git_dirty=$([[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]] && echo true || echo false)" \
     "tasks=$tasks" "seeds=$seeds" "agents=$llm_json" "profile=${CAP_HARNESS_PROFILE:-}" \
-    "model=${ANTHROPIC_MODEL:-}" "status=running"
+    "model=${ANTHROPIC_MODEL:-}" "reserve_gib=$RESERVE" "status=running"
   echo "session: $SESSION"
   echo "tasks: $tasks ($(wc -l <<< "$task_lines") per seed) | seeds: $seeds | agents: ${#llm[@]} | GPU $GPU"
 
@@ -488,12 +498,6 @@ cmd_run() {
   if ((${#llm[@]})); then cmd_claude_logs "$SESSION"; fi
 
   finish
-  if [[ -n "$reserve" ]]; then
-    step "Reserving ${reserve} GiB on GPU $GPU for later"
-    stage_begin "reserve"
-    if scripts/gpu/reserve.sh hold "$reserve" --gpu "$GPU"; then stage_end PASS "holding up to $reserve GiB"
-    else stage_end WARN "could not hold the reservation (scripts/gpu/reserve.sh status)"; fi
-  fi
 
   local counts
   counts="$(awk -F'\t' '$1 !~ /^preflight: / {n[$2]++} END {for (s in n) printf "%s=%d ", s, n[s]}' "$SESSION/stages.tsv")"

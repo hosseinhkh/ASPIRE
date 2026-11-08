@@ -524,8 +524,14 @@ In order, a session:
 7. stops the services it started, then holds `--reserve GIB` on the GPU for you;
 8. scrubs credential values from every file, builds the report, and logs to W&B.
 
-Ctrl-C stops a session cleanly. The services are stopped, the reservation returns, and a
-report of what finished is still written.
+Ctrl-C stops a session cleanly:
+
+- the running episode or agent is marked INTERRUPTED;
+- the services the session started are stopped;
+- `--reserve` is still applied;
+- a report of everything recorded so far is written.
+
+Editing or pulling the scripts while a session runs is safe.
 
 Each session lands in `outputs/sessions/<date>-<time>-<name>/`:
 

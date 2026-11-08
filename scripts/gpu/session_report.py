@@ -576,7 +576,13 @@ def gpu_section(gpu: dict[str, object], stages: list[dict[str, object]]) -> str:
     )
 
 
-STATUS_CLASS = {"PASS": "ok", "FAIL": "bad", "WARN": "warn", "BLOCKED": "warn"}
+STATUS_CLASS = {
+    "PASS": "ok",
+    "FAIL": "bad",
+    "WARN": "warn",
+    "BLOCKED": "warn",
+    "INTERRUPTED": "bad",
+}
 
 
 def stages_table(stages: list[dict[str, object]]) -> str:
