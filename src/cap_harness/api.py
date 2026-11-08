@@ -856,7 +856,8 @@ class CapApi:
                     code=ErrorCode.INVALID_REQUEST,
                     message=(
                         f"action embodiment {action.embodiment!r} does not match "
-                        f"adapter embodiment {self._embodiment!r}"
+                        f"adapter embodiment {self._embodiment!r}; build each ArmCommand with "
+                        "embodiment=get_robot_state().embodiment (it defaults to 'robosuite')"
                     ),
                 ),
             )

@@ -498,6 +498,7 @@ def load_gpu(session: Path) -> dict[str, object]:
     used: dict[float, float] = {}
     util: dict[float, float] = {}
     yours: dict[float, float] = {}
+    reserved: dict[float, float] = {}
     if gpu_csv.exists():
         with gpu_csv.open() as handle:
             for row in csv.DictReader(handle):
@@ -509,8 +510,17 @@ def load_gpu(session: Path) -> dict[str, object]:
             for row in csv.DictReader(handle):
                 if row["gpu"] == target and row["yours"] == "1":
                     t = float(row["t_s"])
-                    yours[t] = yours.get(t, 0.0) + float(row["used_mib"] or 0) / 1024
-    return {"target": target, "times": sorted(used), "used": used, "util": util, "yours": yours}
+                    # The reservation is memory held in reserve, not what ASPIRE needs.
+                    bucket = reserved if row.get("role") == "reservation" else yours
+                    bucket[t] = bucket.get(t, 0.0) + float(row["used_mib"] or 0) / 1024
+    return {
+        "target": target,
+        "times": sorted(used),
+        "used": used,
+        "util": util,
+        "yours": yours,
+        "reserved": reserved,
+    }
 
 
 def load_stages(session: Path, gpu: dict[str, object]) -> list[dict[str, object]]:
@@ -538,6 +548,7 @@ def load_stages(session: Path, gpu: dict[str, object]) -> list[dict[str, object]
 
 def gpu_section(gpu: dict[str, object], stages: list[dict[str, object]]) -> str:
     times, used, util, yours = gpu["times"], gpu["used"], gpu["util"], gpu["yours"]
+    reserved = gpu["reserved"]
     target = gpu["target"]
     if not times:
         return ""
@@ -554,7 +565,8 @@ def gpu_section(gpu: dict[str, object], stages: list[dict[str, object]]) -> str:
     chart = line_chart(
         {
             "GPU total used (GiB)": [used[t] for t in times],
-            "your ASPIRE processes (GiB)": [yours.get(t, 0.0) for t in times],
+            "your services and simulators (GiB)": [yours.get(t, 0.0) for t in times],
+            "your reservation (GiB)": [reserved.get(t, 0.0) for t in times],
         },
         f"GPU {target} memory over the session ({times[-1]:.0f} s); "
         "shaded bands are the numbered stages",
@@ -571,8 +583,8 @@ def gpu_section(gpu: dict[str, object], stages: list[dict[str, object]]) -> str:
     )
     peak = max(yours.values()) if yours else 0.0
     return (
-        f"<h2>GPU {target}</h2><p>Peak memory of your processes: <b>{peak:.1f} GiB</b>"
-        f"</p>{chart}<br>{util_chart}"
+        f"<h2>GPU {target}</h2><p>Peak memory of your services and simulators: "
+        f"<b>{peak:.1f} GiB</b> (the reservation is shown separately)</p>{chart}<br>{util_chart}"
     )
 
 

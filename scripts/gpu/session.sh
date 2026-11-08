@@ -88,9 +88,12 @@ STAGE_OPEN=0
 stage_begin() { STAGE_NAME="$1"; STAGE_T="$(now)"; STAGE_OPEN=1; }
 stage_end() {  # stage_end STATUS DETAIL
   STAGE_OPEN=0
-  printf '%s\t%s\t%s\t%s\t%s\n' "$STAGE_NAME" "$1" "${2//$'\t'/ }" "$(since_t0 "$STAGE_T")" \
+  local detail="${2//$'\t'/ }"
+  detail="${detail//$'\r'/ }"
+  detail="${detail//$'\n'/ }"  # one stage = one line in stages.tsv, whatever the detail holds
+  printf '%s\t%s\t%s\t%s\t%s\n' "$STAGE_NAME" "$1" "$detail" "$(since_t0 "$STAGE_T")" \
     "$(since_t0 "$(now)")" >> "$SESSION/stages.tsv"
-  printf '  %-7s %-36s %s\n' "$1" "$STAGE_NAME" "$2"
+  printf '  %-7s %-36s %s\n' "$1" "$STAGE_NAME" "$detail"
 }
 
 write_meta() {  # write_meta KEY=VALUE... ; merges into session.json (values are strings or JSON)
@@ -210,11 +213,11 @@ build_report() {  # build_report SESSION WANDB_MODE
     echo "warning: could not install wandb; skipping W&B (the HTML report has everything)" >&2
     return "$status"
   fi
-  if ! "$tools" scripts/gpu/wandb_log.py "$session" --mode "$mode"; then
+  if ! OTEL_SDK_DISABLED=true "$tools" scripts/gpu/wandb_log.py "$session" --mode "$mode"; then
     if [[ "$mode" == online ]]; then
       echo "warning: W&B online logging failed (not logged in? run: $tools -m wandb login);" >&2
       echo "         writing offline runs instead; upload them later with wandb sync" >&2
-      "$tools" scripts/gpu/wandb_log.py "$session" --mode offline || status=1
+      OTEL_SDK_DISABLED=true "$tools" scripts/gpu/wandb_log.py "$session" --mode offline || status=1
     else
       status=1
     fi
@@ -273,6 +276,9 @@ for root in roots:
             continue
         dest = session / "claude-sessions" / root.name
         sub = path.with_suffix("")
+        text = path.read_text(errors="replace")
+        if path.stem not in captured and '"tool_use"' not in text:
+            continue  # a one-line exchange such as check_stack's Claude Code check
         if path.stem not in captured:
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest / path.name)
@@ -337,8 +343,8 @@ parts = []
 result = ws / "result.json"
 if result.exists():
     r = json.loads(result.read_text())
-    parts.append(f"{r.get('result') or r.get('subtype')}, {r.get('num_turns')} turns, "
-                 f"${r.get('total_cost_usd') or 0:.2f}")
+    kind = r.get("subtype") or ("error" if r.get("is_error") else "finished")
+    parts.append(f"{kind}, {r.get('num_turns')} turns, ${r.get('total_cost_usd') or 0:.2f}")
 for batch in sorted(ws.glob("dev_v*/batch.json")):
     b = json.loads(batch.read_text())
     parts.append(f"{batch.parent.name} {b.get('passes')}/{b.get('seeds')}")
@@ -356,6 +362,14 @@ PY
 }
 
 STARTED_SERVICES=0 SERVICES_STOPPED=0 FINISHED=0 MONITOR_PID="" RESERVE=""
+reserve_held() { scripts/gpu/reserve.sh status 2>/dev/null | sed -n 's/^held: *//p'; }
+already_reserved() {  # the holder runs with the same target on the same GPU
+  local target="${ASPIRE_STATE_DIR:-$HOME/.cache/aspire}/reservation.target" gpu gib
+  [[ -f "$target" ]] || return 1
+  read -r gpu gib < "$target"
+  [[ "$gpu" == "$GPU" ]] && awk -v a="$gib" -v b="$RESERVE" 'BEGIN { exit !(a + 0 == b + 0) }' \
+    && [[ "$(reserve_held)" == [0-9]* ]]
+}
 finish() {  # stop the monitor and the services this session started, then hold --reserve GiB
   stop_monitor
   copy_service_logs
@@ -367,8 +381,14 @@ finish() {  # stop the monitor and the services this session started, then hold 
   if [[ -n "$RESERVE" ]]; then
     step "Reserving ${RESERVE} GiB on GPU $GPU for later"
     stage_begin "reserve"
-    if scripts/gpu/reserve.sh hold "$RESERVE" --gpu "$GPU"; then stage_end PASS "holding up to $RESERVE GiB"
-    else stage_end WARN "could not hold the reservation (scripts/gpu/reserve.sh status)"; fi
+    if already_reserved; then
+      # services.sh stop has just restored it; re-holding would free it for a moment.
+      stage_end PASS "already holding the ${RESERVE} GiB target ($(reserve_held))"
+    elif scripts/gpu/reserve.sh hold "$RESERVE" --gpu "$GPU"; then
+      stage_end PASS "holding up to $RESERVE GiB"
+    else
+      stage_end WARN "could not hold the reservation (scripts/gpu/reserve.sh status)"
+    fi
     RESERVE=""
   fi
 }

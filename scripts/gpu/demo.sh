@@ -230,8 +230,25 @@ cmd_llm() {
   ws="$(cd "$ws" && pwd)"
   local curobo_note=""
   ((CUROBO_UP)) && curobo_note=", cuRobo :8118 (first plan ~50 s while it warms up)"
+  local instruction="" task_note
+  if [[ "$benchmark" == libero-pro ]]; then
+    # Resolved offline from the task's BDDL file (about a second, no simulator).
+    instruction="$("$REPO_ROOT/.venv-libero/bin/python" - "$suite" "$task_id" 2>/dev/null <<'PY' \
+      | sed -n 's/^INSTRUCTION=//p' | tail -n 1
+import sys
+from cap_harness.libero.registry import LiberoSuiteRegistry
+print("INSTRUCTION=" + LiberoSuiteRegistry().resolve(f"{sys.argv[1]}:{sys.argv[2]}").language)
+PY
+)"
+  fi
+  if [[ -n "$instruction" ]]; then
+    task_note="The task instruction is: \"$instruction\"."
+    echo "instruction: $instruction"
+  else
+    task_note="Read the instruction from \`get_task_context().language\` (or from a first run) before writing the program."
+  fi
   render scripts/gpu/prompts/llm_quick_demo.md "$ws/prompt.md" \
-    "BENCHMARK=$benchmark" "SUITE=$suite" "TASK_ID=$task_id" "WS=$ws" \
+    "BENCHMARK=$benchmark" "SUITE=$suite" "TASK_ID=$task_id" "WS=$ws" "TASK_NOTE=$task_note" \
     "CAP_HARNESS=$venv/bin/cap-harness" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
     "INIT_MODE=$init_mode" "MAX_STEPS=$max_steps" "MAX_VERSIONS=$max_versions" \
     "CUROBO_NOTE=$curobo_note"

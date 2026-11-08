@@ -9,7 +9,10 @@ Do not read or run anything under src/cap_harness/yam_real, docs/system2*.md or 
 ## Task
 
 Write a Code-as-Policy program for {{BENCHMARK}} suite `{{SUITE}}`, task id {{TASK_ID}}.
-Read the instruction from `get_task_context().language` inside the program, or from a first run.
+{{TASK_NOTE}}
+The suite name is the benchmark variant, not the task: in LIBERO-Pro, a suffix such as `_swap`
+names how the scene layout is perturbed. Do what the instruction says, and keep reading it from
+`get_task_context().language` inside the program rather than hard-coding it.
 
 1. Read `docs/api-reference.md` and `docs/run-artifacts.md`, then
    `.claude/skills/iterative-debugging/skills/README.md` and the skill files it indexes.

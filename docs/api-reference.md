@@ -166,7 +166,7 @@ injected by the harness.
 
 | Constructor | Signature |
 | --- | --- |
-| `ArmCommand` | `ArmCommand(mode, target, gripper_position=None)` |
+| `ArmCommand` | `ArmCommand(mode, target, gripper_position=None, embodiment=...)` |
 | `MotionStrategy` | `MotionStrategy(ik_solver="pyroki", trajectory_planner="interpolation", pose_planner="composed")` |
 | `Pose` | `Pose(position, quaternion_wxyz, frame)`; quaternion order is `wxyz` |
 | `RobotAction` | `RobotAction(arms)` |
@@ -174,7 +174,8 @@ injected by the harness.
 | `SynchronizedTrajectory` | `SynchronizedTrajectory(joint_positions, dt_s, joint_names, planner, collision_aware, expected_start, gripper_positions=None, embodiment=...)` |
 
 `embodiment` defaults to `"robosuite"`, which every other embodiment's adapter rejects at
-execution. A hand-built `Trajectory` or `SynchronizedTrajectory` must pass
+execution: on LIBERO-Pro, BEHAVIOR or YAM, `step()` returns `invalid_request` for a default
+`ArmCommand`. A hand-built `ArmCommand`, `Trajectory` or `SynchronizedTrajectory` must pass
 `embodiment=get_robot_state().embodiment`; prefer `move_to_pose()` / `move_to_joints()`, which
 build it for you.
 

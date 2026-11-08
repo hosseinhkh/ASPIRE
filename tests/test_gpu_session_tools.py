@@ -35,6 +35,7 @@ def _fake_session(root: Path) -> Path:
     (gpu / "processes.csv").write_text(
         "t_s,gpu,pid,role,yours,used_mib\n"
         + "".join(f"{t},0,{100 + t},sam3,1,{4096 + 512 * t}\n" for t in range(0, 12, 2))
+        + "".join(f"{t},0,999,reservation,1,30720\n" for t in range(0, 12, 2))
     )
 
     run = session / "episodes/robosuite/cube_lifting/00-lift/0001/run-x"
@@ -120,7 +121,8 @@ def test_session_report_links_stages_episodes_and_agents(tmp_path: Path) -> None
     assert "episode cube seed 1" in index and "service down: sam3" in index
     assert "episode-000.html" in index and "agent-000.html" in index
     assert "<rect" in index  # stage bands on the GPU chart
-    assert "<td>9.0</td>" in index  # your GPU peak during the cube stage, in GiB
+    # Your GPU peak during the cube stage, in GiB; the 30 GiB reservation is charted apart.
+    assert "<td>9.0</td>" in index and "your reservation" in index
     episode = (report / "episode-000.html").read_text()
     assert "move_to_pose" in episode and "end-effector position" in episode
     agent = (report / "agent-000.html").read_text()

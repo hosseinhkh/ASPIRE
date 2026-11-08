@@ -34,7 +34,7 @@ import sys
 
 import wandb
 
-MAX_IMAGES = 120  # per kind and run; keyframes can number in the hundreds on long episodes
+MAX_IMAGES = 100  # per kind and run (W&B keeps at most 108 per log call)
 MAX_CELL = 4000
 
 
@@ -281,11 +281,13 @@ def log_session(args: argparse.Namespace, session: Path) -> None:
     target = str(meta.get("gpu", "0"))
     gpu_csv, proc_csv = session / "gpu/gpu.csv", session / "gpu/processes.csv"
     yours: dict[str, float] = {}
+    reserved: dict[str, float] = {}
     if proc_csv.exists():
         with proc_csv.open() as handle:
             for row in csv.DictReader(handle):
                 if row["gpu"] == target and row["yours"] == "1":
-                    yours[row["t_s"]] = yours.get(row["t_s"], 0.0) + float(row["used_mib"] or 0)
+                    bucket = reserved if row.get("role") == "reservation" else yours
+                    bucket[row["t_s"]] = bucket.get(row["t_s"], 0.0) + float(row["used_mib"] or 0)
     if gpu_csv.exists():
         with gpu_csv.open() as handle:
             for index, row in enumerate(r for r in csv.DictReader(handle) if r["gpu"] == target):
@@ -294,6 +296,7 @@ def log_session(args: argparse.Namespace, session: Path) -> None:
                         "gpu/t_s": float(row["t_s"]),
                         "gpu/used_gib": float(row["used_mib"] or 0) / 1024,
                         "gpu/yours_gib": yours.get(row["t_s"], 0.0) / 1024,
+                        "gpu/reserved_gib": reserved.get(row["t_s"], 0.0) / 1024,
                         "gpu/util_pct": float(row["util_pct"] or 0),
                     },
                     step=index,
