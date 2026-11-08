@@ -13,7 +13,7 @@ Everything ASPIRE needs, by layer. Versions are taken from `pyproject.toml`, `uv
 | git, git-lfs | Submodules, LFS assets | |
 | ffmpeg | Run videos, through `imageio[ffmpeg]` wheels; system copy optional | |
 | OpenGL (headless) | NVIDIA driver + EGL (GPU), **or** Mesa `libosmesa6` (CPU) | `MUJOCO_GL=egl` fails without an NVIDIA device. Use `osmesa` on CPU. |
-| NVIDIA GPU | Ada sm_89 (RTX 4090, L40) or Blackwell sm_120 (RTX 5090) are the shipped profiles | Ampere sm_86 needs a new arch entry (NVlabs/ASPIRE#28). |
+| NVIDIA GPU | Ada sm_89 (RTX 4090, L40) or Blackwell sm_120 (RTX 5090; RTX PRO 6000 via profile `rtxpro6000`, added on this branch) | Ampere sm_86 needs a new arch entry (NVlabs/ASPIRE#28). |
 | CUDA | Runtime 12.8 via torch cu128 wheels. A system `nvcc` 12.x is needed **only** for BEHAVIOR's in-process cuRobo. | The cuRobo service bootstrap pulls its own `nvidia-cuda-nvcc` wheel. |
 | Disk | About 20 GB for the LIBERO + Robosuite + providers venvs; about 52 GB extra for BEHAVIOR (12 GB venv + 40 GB data) | `.venv-libero` alone is about 7 GB (torch + CUDA wheels). |
 | RAM | 16 GB is fine for MuJoCo benchmarks. BEHAVIOR docs say 16–32 GB. | |

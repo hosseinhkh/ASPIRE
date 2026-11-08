@@ -204,6 +204,7 @@ verified final tightness. Re-ground the current scene and verify the actual outc
 | BEHAVIOR-1K | [`docs/behavior.md`](docs/behavior.md) |
 | Optional backends | [`docs/optional-backends.md`](docs/optional-backends.md) |
 | CPU-only development setup (no GPU) | [`docs/cpu-dev-setup.md`](docs/cpu-dev-setup.md) |
+| GPU workstation: conda env, Opus 4.6 on Bedrock, light demos | [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md) |
 | Code review, known issues, and extension roadmap | [`docs/review/README.md`](docs/review/README.md) |
 
 ## Contribution Guidelines

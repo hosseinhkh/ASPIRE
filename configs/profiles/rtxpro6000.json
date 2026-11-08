@@ -1,0 +1,19 @@
+{
+  "schema": "cap-harness/profile/1",
+  "name": "rtxpro6000",
+  "arch": "sm_120",
+  "description": "NVIDIA RTX PRO 6000 Blackwell (sm_120, 96 GB) on a shared workstation; every GPU provider is pinned to GPU 0 with serialized access. Edit the gpus map to move the stack to another card.",
+  "venv_root": null,
+  "gpus": {
+    "sam3": 0,
+    "contact_graspnet": 0,
+    "curobo": 0
+  },
+  "concurrency": {
+    "sam3": 1,
+    "contact_graspnet": 1,
+    "pyroki": 4,
+    "curobo": 1
+  },
+  "ports": {}
+}

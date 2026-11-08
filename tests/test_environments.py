@@ -8,7 +8,7 @@ import pytest
 from cap_harness import environments
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ("rtx5090", "l40")
+PROFILES = ("rtx5090", "l40", "rtxpro6000")
 
 
 def test_topology_loads_and_is_internally_consistent() -> None:
@@ -203,6 +203,12 @@ def test_profiles_resolve_from_the_gpu_compute_capability() -> None:
     assert environments.profile_for_gpu("sm_89", "NVIDIA L40", REPO_ROOT) == "l40"
     assert environments.profile_for_gpu("sm_89", "", REPO_ROOT) in {"rtx4090", "rtx5880"}
     assert environments.profile_for_gpu("sm_120", "NVIDIA GeForce RTX 5090", REPO_ROOT) == "rtx5090"
+    assert (
+        environments.profile_for_gpu(
+            "sm_120", "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition", REPO_ROOT
+        )
+        == "rtxpro6000"
+    )
     assert environments.profile_for_gpu("sm_10", "", REPO_ROOT) is None
     with pytest.raises(ValueError):
         environments.arch_for_compute_capability("ada")
