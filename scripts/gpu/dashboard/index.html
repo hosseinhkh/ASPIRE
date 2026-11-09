@@ -293,7 +293,7 @@ async function viewLive() {
    <h2>Consoles</h2><div class="panel"><table><tr><th>console</th><th>state</th><th>ready</th><th>log</th><th></th></tr>
    ${d.consoles.map(c => `<tr><td><a href="#/live/${esc(c.id)}">${esc(c.label)}</a><div class="muted small">${esc(c.url)}</div></td><td>${esc(c.state)}</td><td>${fmtBool(c.ready)}</td><td>${c.log ? `<a href="${file(c.log)}" target="_blank">console log</a>` : ""}</td>
      <td>${c.external ? "" : `<button data-stop="${esc(c.id)}">Close & save</button>`}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">none running</td></tr>'}</table></div>
-   <p class="muted small">From a terminal instead: <span class="mono">.venv-robosuite/bin/python -m cap_harness.live --benchmark robosuite --suite cube_lifting --port 8770</span>, then start the dashboard with <span class="mono">--live http://127.0.0.1:8770</span>.</p>`;
+   <p class="muted small">From a terminal instead: <span class="mono">.venv-robosuite/bin/python -m cap_harness.live --benchmark robosuite --suite cube_lifting</span> prints its address; start the dashboard with <span class="mono">--live &lt;that address&gt;</span>.</p>`;
   document.querySelectorAll("[data-ex]").forEach(a => a.onclick = () => { const [b, s, t] = JSON.parse(a.dataset.ex); document.getElementById("b").value = b; document.getElementById("s").value = s; document.getElementById("t").value = t; });
   document.querySelectorAll("[data-stop]").forEach(b => b.onclick = async () => { b.disabled = true; b.textContent = "closing..."; await api(`/api/live/${b.dataset.stop}/stop`, {method: "POST"}); viewLive(); });
   document.getElementById("start").onclick = async () => {

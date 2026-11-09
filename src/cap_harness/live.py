@@ -1,10 +1,12 @@
 """Live console: keep one robot (simulated or real) running and drive it over HTTP.
 
   python -m cap_harness.live --benchmark robosuite --suite cube_lifting --task-id 0 --seed 1
-      [--host 127.0.0.1] [--port 8770] [--output-root outputs/live]
+      [--host 127.0.0.1] [--port N] [--output-root outputs/live]
       [--camera-width 512] [--camera-height 512] [--max-steps 100000]
       [--init-mode saved|seeded]                      (libero-pro)
       [--station NAME] [--station-config-root DIR] [--allow-motion]     (yam_real)
+
+Without --port it listens on 8770 or the next free port, and prints the address.
 
 The robot is the same adapter + CapApi + ToolRegistry that `cap-harness run` builds, wrapped in
 the LiveAgentSession that serves the real-robot System 2 agent: calls run one at a time as
@@ -31,6 +33,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import inspect
 import io
@@ -676,6 +679,24 @@ def make_handler(console: LiveConsole, stop: threading.Event) -> type[BaseHTTPRe
     return Handler
 
 
+def bind_server(host: str, port: int | None, handler: Any, default: int) -> ThreadingHTTPServer:
+    """Bind the console to an explicit port, or to the first free port from the default.
+
+    Shared machines often have the default taken; after 50 tries any free port will do.
+    """
+    candidates = [port] if port is not None else [*range(default, default + 50), 0]
+    for candidate in candidates:
+        try:
+            return ThreadingHTTPServer((host, candidate), handler)
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+    raise SystemExit(
+        f"error: port {port} on {host} is already in use; pick another with --port, "
+        "or leave --port out to use a free one"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--benchmark", choices=BENCHMARKS, required=True)
@@ -683,7 +704,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8770)
+    parser.add_argument("--port", type=int, help="default: 8770, or the next free port")
     parser.add_argument("--output-root", default="outputs/live")
     parser.add_argument("--camera-width", type=int, default=512)
     parser.add_argument("--camera-height", type=int, default=512)
@@ -697,7 +718,8 @@ def main(argv: list[str] | None = None) -> int:
 
     console = LiveConsole(args)
     stop = threading.Event()
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(console, stop))
+    server = bind_server(args.host, args.port, make_handler(console, stop), default=8770)
+    port = server.server_address[1]
     server.daemon_threads = True
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
@@ -705,7 +727,7 @@ def main(argv: list[str] | None = None) -> int:
     thread.start()
     print(
         f"live console: {args.benchmark} {console.metadata.suite_name}:{console.metadata.task_id} "
-        f"seed {args.seed} on http://{args.host}:{args.port}  (run dir {console.recorder.root})",
+        f"seed {args.seed} on http://{args.host}:{port}  (run dir {console.recorder.root})",
         flush=True,
     )
     stop.wait()

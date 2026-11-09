@@ -621,11 +621,14 @@ extra packages:
 python scripts/gpu/dashboard.py
 ```
 
-From your laptop, tunnel the port and open http://localhost:8765:
+It uses port 8765, or the next free one if someone else has it, and prints the address and
+the `ssh -L` command to use from your laptop. For example, if it prints port 8766:
 
 ```bash
-ssh -L 8765:localhost:8765 <you>@<server>
+ssh -L 8766:localhost:8766 <you>@<server>
 ```
+
+Then open http://localhost:8766. To choose the port yourself, pass `--port N`.
 
 | Page | What you get |
 | --- | --- |
@@ -640,8 +643,11 @@ The model services must be running for perception and motion
 attached to the dashboard:
 
 ```bash
-.venv-libero/bin/python -m cap_harness.live --benchmark libero-pro --suite libero_object_swap --task-id 0 --seed 1 --port 8770
+.venv-libero/bin/python -m cap_harness.live --benchmark libero-pro --suite libero_object_swap --task-id 0 --seed 1
 ```
+
+It prints the address it listens on (port 8770, or the next free one). Pass that to the
+dashboard:
 
 ```bash
 python scripts/gpu/dashboard.py --live http://127.0.0.1:8770

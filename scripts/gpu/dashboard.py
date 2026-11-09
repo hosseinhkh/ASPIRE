@@ -3,7 +3,8 @@
 
   python scripts/gpu/dashboard.py [--port 8765] [--host 127.0.0.1] [--outputs outputs]
 
-Then open http://localhost:8765 (from a laptop: ssh -L 8765:localhost:8765 <server>).
+Without --port it takes 8765 or the next free port, and prints the address and the
+ssh tunnel command to reach it from a laptop.
 Standard library only; the live consoles it starts run in the simulator venvs.
 
   Runs      sessions (scripts/gpu/session.sh), live-console runs, checks, demos, campaigns
@@ -22,12 +23,14 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -724,10 +727,30 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
     return Handler
 
 
+def bind_server(
+    host: str, port: int | None, handler: type[BaseHTTPRequestHandler], default: int
+) -> ThreadingHTTPServer:
+    """Bind the dashboard to an explicit port, or to the first free port from the default.
+
+    Shared machines often have the default taken; after 50 tries any free port will do.
+    """
+    candidates = [port] if port is not None else [*range(default, default + 50), 0]
+    for candidate in candidates:
+        try:
+            return ThreadingHTTPServer((host, candidate), handler)
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+    raise SystemExit(
+        f"error: port {port} on {host} is already in use; pick another with --port, "
+        "or leave --port out to use a free one"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, help="default: 8765, or the next free port")
     parser.add_argument("--outputs", default=str(REPO / "outputs"))
     parser.add_argument("--live", action="append", default=[],
                         help="URL of a live console started elsewhere (repeatable)")  # fmt: skip
@@ -736,12 +759,18 @@ def main() -> int:
     outputs.mkdir(parents=True, exist_ok=True)
     store = Store(outputs)
     live = LiveManager(store, args.live)
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(store, live))
+    server = bind_server(args.host, args.port, make_handler(store, live), default=8765)
     server.daemon_threads = True
-    print(f"ASPIRE dashboard on http://{args.host}:{args.port}  (outputs: {store.outputs})")
+    port = server.server_address[1]
+    print(f"ASPIRE dashboard on http://{args.host}:{port}  (outputs: {store.outputs})")
     if args.host in ("127.0.0.1", "localhost"):
-        print(f"from your laptop: ssh -L {args.port}:localhost:{args.port} <this server>, "
-              f"then open http://localhost:{args.port}")  # fmt: skip
+        print(f"from your laptop: ssh -L {port}:localhost:{port} {socket.gethostname()}, "
+              f"then open http://localhost:{port}")  # fmt: skip
+
+    def interrupt(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupt)  # kill / timeout: still close our live consoles
     try:
         server.serve_forever()
     except KeyboardInterrupt:
