@@ -155,3 +155,12 @@ img.big { max-width: 100%; width: 420px; border-radius: 6px; cursor: zoom-in; }
 .diff .add { color: var(--ok); } .diff .del { color: var(--bad); } .diff .hunk { color: var(--accent); }
 .seed { display: inline-block; padding: 1px 8px; border-radius: 10px; margin: 2px; font-size: 12px; text-decoration: none; }
 .seed.ok { background: var(--ok-soft); color: var(--ok); } .seed.bad { background: var(--bad-soft); color: var(--bad); }
+
+/* Session tasks: expandable rows, seed chips, per-run downloads */
+.table.tasks tr.task-row { cursor: pointer; }
+.table.tasks tr.task-row:hover { background: var(--hover); }
+.table.tasks .caret { display: inline-block; color: var(--muted); transition: transform .15s; }
+.table.tasks tr.open .caret { transform: rotate(90deg); }
+.table.tasks tr.task-detail > td { background: var(--soft); padding-top: 4px; }
+.table.runs .err-cell { color: var(--bad); max-width: 420px; word-break: break-word; }
+.seed:not(.ok):not(.bad) { background: var(--soft); color: var(--muted); }

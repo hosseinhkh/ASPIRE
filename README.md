@@ -290,6 +290,11 @@ scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_
 **7. Look at the run in the dashboard.** Refresh **Runs** and open the newest session.
 
 - **Session → Tasks:** success per task, per agent version (dev / held-out) and per seed.
+  Click a seed to replay it, or a row to see every run with how it ended and its error. Each
+  row and each run has **Logs** and **Full** zip downloads. Tick two rows (say `dev_v03` and
+  `dev_v04`) and press **Compare selected**.
+- **Session → Failures:** every unsolved episode grouped by how it failed, with the logs of
+  each group as one zip.
 - **Session → Episodes:** a thumbnail per episode; filter by task or by failed.
 - **An episode:** a replay. Every camera plays in sync, frame by frame if you like, under a
   timeline of every call: the program's calls, the API stages inside them (IK, planning,

@@ -191,6 +191,19 @@ def test_dashboard_serves_runs_and_streams_zips(tmp_path: Path) -> None:
         assert any(n.endswith(".mp4") for n in full.namelist())
         assert not any(n.endswith(".mp4") for n in logs.namelist())
         assert any(n.endswith("transcript.jsonl") for n in logs.namelist())
+        # Tasks list their runs and the folder holding them; failures group unsolved runs.
+        task = collection["tasks"][0]
+        assert task["folder"] == collection["episodes"][0]["path"] and len(task["runs"]) == 1
+        assert collection["failures"] == []
+        # Several paths in one zip keep their layout under the folder that holds them all.
+        two = zipfile.ZipFile(
+            io.BytesIO(get(f"/download?media=0&name=pair&path={rel}/stages.tsv&path={rel}/gpu"))
+        )
+        assert sorted(two.namelist()) == [
+            f"{session.name}/gpu/gpu.csv",
+            f"{session.name}/gpu/processes.csv",
+            f"{session.name}/stages.tsv",
+        ]
         try:
             get("/api/collection?path=../..")
             raise AssertionError("a path outside the outputs directory was served")
@@ -527,3 +540,31 @@ def test_agent_story_links_reasoning_code_changes_and_batch_results(tmp_path: Pa
     assert story[1]["results"]["runs"][0]["seed"] == 51
     assert "+soup = localize_object('blue soup can')" in story[2]["diff"]
     assert story[2]["reasoning"][0]["text"].startswith("SAM3 picked the wrong can")
+
+
+def test_failures_group_unsolved_runs_by_reason_with_numbers_blanked() -> None:
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    from dashboard_store import _column_name, _failures
+
+    def episode(seed: int, ok: bool | None, program_ok: bool = True, error: str | None = None):
+        return {"path": f"s/run-{seed}", "seed": seed, "suite": "s", "task_id": 0, "agent": None,
+                "phase": "dev_v01", "finalized": ok is not None, "task_success": ok,
+                "program_ok": program_ok, "termination": "program_completed", "error": error}  # fmt: skip
+
+    groups = _failures(
+        [
+            episode(1, True),
+            episode(2, False, False, "timeout: joint error 0.28 rad at /tmp/x/run-2"),
+            episode(3, False, False, "timeout: joint error 0.19 rad at /tmp/y/run-3"),
+            episode(4, False),
+            episode(5, None),
+        ]
+    )
+    assert [(g["count"], g["reason"]) for g in groups] == [
+        (2, "program failed: timeout: joint error N rad at <path>"),
+        (1, "program finished, task not done (program_completed)"),
+        (1, "not finished (stopped or crashed before the outcome was written)"),
+    ]
+    assert [e["seed"] for e in groups[0]["episodes"]] == [2, 3]
+    assert _column_name("sessions/x/agents/llm-a/dev_v03/libero-pro/s/00-t") == "llm-a · dev_v03"
+    assert _column_name("sessions/20261109-tasks") == "20261109-tasks"

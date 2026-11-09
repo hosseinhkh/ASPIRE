@@ -282,7 +282,14 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
                 if path.startswith("/files/"):
                     return self._file(store.resolve(path[len("/files/") :]))
                 if path == "/download":
-                    return self._zip(store.resolve(query["path"]), query.get("media", "1") == "1")
+                    paths = parse_qs(urlparse(self.path).query).get("path", [])
+                    if not paths:
+                        raise ValueError("pass one or more ?path= to download")
+                    return self._zip(
+                        [store.resolve(p) for p in paths],
+                        query.get("media", "1") == "1",
+                        query.get("name"),
+                    )
                 if path == "/api/live":
                     return self._json({"consoles": live.list()})
                 if path.startswith("/live/"):
@@ -367,34 +374,44 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
 
-        def _zip(self, path: Path, media: bool) -> None:
-            if not path.exists():
-                raise FileNotFoundError(f"no such path: {store.rel(path)}")
-            name = f"{path.name}{'' if media else '-logs'}.zip"
+        def _zip(self, paths: list[Path], media: bool, name: str | None = None) -> None:
+            """Stream a zip of one or more files or folders, with or without media."""
+            for path in paths:
+                if not path.exists():
+                    raise FileNotFoundError(f"no such path: {store.rel(path)}")
+            # Entries are named from the folder that holds them all, so a zip of several
+            # runs keeps their layout (dev_v03/.../0051/run-x/...).
+            common = Path(os.path.commonpath([str(p) for p in paths]))
+            anchor = common.parent
+            stem = re.sub(r"[^\w.-]+", "-", name or common.name or "runs")[:80]
+            if len(paths) > 1 and not name:
+                stem = f"{stem}-{len(paths)}-runs"
+            filename = f"{stem}{'' if media else '-logs'}.zip"
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
-            files = [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file())
+            files: list[Path] = []
+            for path in paths:
+                files += (
+                    [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file())
+                )
             stream = _ZipStream(self.wfile)
             with zipfile.ZipFile(stream, "w", allowZip64=True) as archive:  # type: ignore[arg-type]
-                for file in files:
+                for file in dict.fromkeys(files):
                     if not media and file.suffix.lower() in MEDIA_SUFFIXES:
                         continue
-                    arcname = (
-                        (Path(path.name) / file.relative_to(path)).as_posix()
-                        if path.is_dir()
-                        else file.name
-                    )
                     compress = (
                         zipfile.ZIP_STORED
                         if file.suffix.lower() in MEDIA_SUFFIXES
                         else zipfile.ZIP_DEFLATED
                     )
                     try:
-                        archive.write(file, arcname, compress_type=compress)
+                        archive.write(
+                            file, file.relative_to(anchor).as_posix(), compress_type=compress
+                        )
                     except OSError:
                         continue
 

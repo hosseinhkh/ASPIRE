@@ -188,6 +188,7 @@ class Store:
             "gpu": gpu_view,
             "episodes": episodes,
             "tasks": self._tasks(episodes),
+            "failures": _failures(episodes),
             "agents": agents,
             "files": [
                 {
@@ -207,6 +208,10 @@ class Store:
         where = run.relative_to(root).parts if run != root else ()
         phase = next((part for part in where if PHASE.match(part)), "episode")
         agent = next((part for part in where if part.startswith("llm-")), None)
+        result = read_json(run / "source/program-result.json") or {}
+        error = result.get("error") or outcome.get("error")
+        if isinstance(error, dict):
+            error = f"{error.get('code') or error.get('type') or 'error'}: {error.get('message')}"
         keyframes = sorted((run / "media/keyframes").glob("*/*.png"))
         thumb = next(
             (p for p in reversed(keyframes) if p.stem in {"agentview", "head", "top"}),
@@ -232,6 +237,10 @@ class Store:
             "agent": agent,
             "finalized": bool(outcome),
             "thumb": self.rel(thumb) if thumb else None,
+            "error": str(error)[:400] if error else None,
+            "program": self.rel(run / "source/program.py")
+            if (run / "source/program.py").exists()
+            else None,
         }
 
     @staticmethod
@@ -247,6 +256,13 @@ class Store:
             done = [e for e in items if e["finalized"]]
             rows.append(
                 {
+                    "key": "|".join(str(x) for x in (agent, phase, benchmark, suite, task_id)),
+                    # The folder holding every run of the group, for one-click downloads.
+                    "folder": os.path.commonpath([e["path"] for e in items]),
+                    "runs": sorted(
+                        ({k: e.get(k) for k in RUN_FIELDS} for e in items),
+                        key=lambda r: (r["seed"] is None, r["seed"] or 0),
+                    ),
                     "agent": agent or None,
                     "phase": phase,
                     "benchmark": benchmark,
@@ -803,7 +819,7 @@ class Store:
             columns.append(
                 {
                     "path": self.rel(path),
-                    "name": meta.get("name") or path.name,
+                    "name": meta.get("name") or _column_name(self.rel(path)),
                     "git_commit": meta.get("git_commit"),
                     "gpu": meta.get("gpu"),
                     "started": meta.get("started"),
@@ -1013,6 +1029,52 @@ def _has_masks(run: Path, span: dict[str, Any]) -> bool:
     if not isinstance(output, dict):
         return True
     return output.get("ok", True) is not False and bool(output.get("segmentations", True))
+
+
+RUN_FIELDS = ("path", "seed", "task_success", "program_ok", "termination", "steps", "wall_s",
+              "error", "program", "finalized")  # fmt: skip
+
+
+def _column_name(rel: str) -> str:
+    """A short name for a compared folder: its agent and phase when it has them."""
+    parts = Path(rel).parts
+    agent = next((p for p in parts if p.startswith("llm-")), None)
+    phase = next((p for p in reversed(parts) if PHASE.match(p)), None)
+    if agent or phase:
+        return " · ".join(x for x in (agent, phase) if x)
+    return "/".join(parts[1:3]) if len(parts) > 2 else (parts[-1] if parts else rel)
+
+
+def _failure_reason(episode: dict[str, Any]) -> str:
+    """One line that groups episodes failing the same way (numbers and paths blanked)."""
+    if not episode["finalized"]:
+        return "not finished (stopped or crashed before the outcome was written)"
+    if episode["program_ok"] is False:
+        text = str(episode.get("error") or episode.get("termination") or "program error")
+        text = re.sub(r"/[^\s'\"]+", "<path>", text.splitlines()[0] if text else text)
+        text = re.sub(r"-?\d+(\.\d+)?(e-?\d+)?", "N", text)
+        return f"program failed: {text[:160]}"
+    return f"program finished, task not done ({episode.get('termination') or 'unknown'})"
+
+
+def _failures(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Unsolved episodes grouped by how they failed, most common first."""
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for episode in episodes:
+        if episode["task_success"] is not True:
+            groups[_failure_reason(episode)].append(episode)
+    return [
+        {
+            "reason": reason,
+            "count": len(items),
+            "example": next((e["error"] for e in items if e.get("error")), None),
+            "episodes": [
+                {k: e.get(k) for k in ("path", "seed", "suite", "task_id", "agent", "phase")}
+                for e in items
+            ],
+        }
+        for reason, items in sorted(groups.items(), key=lambda kv: -len(kv[1]))
+    ]
 
 
 def _mean(values: list[Any]) -> float | None:

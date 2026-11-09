@@ -4,6 +4,9 @@ export const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const q = (s) => encodeURIComponent(s ?? "");
 export const fileUrl = (p) => `/files/${String(p).split("/").map(encodeURIComponent).join("/")}`;
+// A zip of one or more files or folders; media=false leaves out videos and images.
+export const zipUrl = (paths, media = true, name = "") =>
+  `/download?media=${media ? 1 : 0}${name ? `&name=${encodeURIComponent(name)}` : ""}${[].concat(paths).map((p) => `&path=${encodeURIComponent(p)}`).join("")}`;
 export const num = (v, d = 1) => (v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? "" : Number(v).toFixed(d));
 export const when = (t) => (t ? new Date(typeof t === "number" ? t * 1000 : t).toLocaleString() : "");
 export const size = (b) =>
