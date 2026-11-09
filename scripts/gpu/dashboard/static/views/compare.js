@@ -26,7 +26,7 @@ export async function render(app, params) {
       <tr><th>GPU</th>${cols.map((c) => `<td>${esc(c.gpu ?? "-")}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>Agent</th>${cols.map((c) => `<td class="small">${agentModels(c)}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>Agent effort</th>${cols.map((c) => `<td>${esc(c.claude_effort ?? "-")}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
-      <tr><th>Motion timing</th>${cols.map((c) => `<td>${c.motion_retiming == null ? "-" : c.motion_retiming === "1" ? "re-timed" : "published"}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
+      <tr><th>Harness</th>${cols.map((c) => `<td title="fixed: the default; published: CAP_HARNESS_COMPAT=published">${esc(c.harness || "-")}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>All episodes</th>${cols.map((c) => `<td>${rate(c.successes, c.episodes)}</td>`).join("")}${two ? `<td>${delta(cols[0].successes, cols[0].episodes, cols[1].successes, cols[1].episodes)}</td>` : ""}</tr>
       <tr><th>LLM cost</th>${cols.map((c) => `<td>${c.llm_cost_usd != null ? "$" + num(c.llm_cost_usd, 2) : "-"}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>Motion speed</th>${cols.map((c) => `<td>${c.realtime_factor ? num(c.realtime_factor, 2) + " s per simulated s" : "-"}</td>`).join("")}${two ? "<td></td>" : ""}</tr>

@@ -350,10 +350,11 @@ console recordings), or two versions of an agent. From a terminal:
 python scripts/gpu/latency.py outputs/sessions/*-baseline outputs/sessions/*-my-idea
 ```
 
-By default the harness behaves exactly like the published release. One idea is already built in
-to try this way: motions re-timed so the arm can follow them (see
-[`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#11-testing-latency-and-gpu-checks)). Record
-the variant with `CAP_HARNESS_TRAJECTORY_RETIMING=1` in front of the command, then compare.
+The harness fixes defects of the published release that fail programs for reasons outside the
+program: motions planned six times faster than the arm can follow, and point clouds and object
+boxes corrupted by depth-edge pixels ([`docs/harness-fixes.md`](docs/harness-fixes.md) has the
+evidence). To measure what they change, record a session with `CAP_HARNESS_COMPAT=published` in
+front of the command and compare it with one without.
 
 ### Check that you match the paper (Opus 4.6)
 
@@ -366,7 +367,8 @@ paper's Opus 4.6 numbers come from the full iterative-debugging pipeline:
 | Pipeline | coordinator, worker, unseen check, held-out validation, verifier | same | one agent, short prompt |
 | LIBERO-Pro seeds | dev 51–65, unseen 66–80, held-out 1–50 | same | dev 51–53, held-out 1–3 |
 | Program versions | until the dev threshold or a plateau | same | at most 4 |
-| Cameras, episode length, motion timing | 800×512, harness default, published | same | same |
+| Cameras, episode length | 800×512, harness default | same | same |
+| Harness behaviour | published release | published (`CAP_HARNESS_COMPAT=published`, set by `--paper`) | fixed ([harness-fixes.md](docs/harness-fixes.md)) |
 | Cost | about $24 and an hour of agent time per task (Table 18) | capped at $40 per task | the cap you set |
 
 For example, the paper reports 100% on 50 held-out seeds for LIBERO-Pro Object "alphabet soup"
@@ -445,6 +447,7 @@ That releases GPU 0.
 | Simulator/provider topology, venvs, profiles | [`docs/environments.md`](docs/environments.md) |
 | Generated-program API | [`docs/api-reference.md`](docs/api-reference.md) |
 | Run artifacts and traces | [`docs/run-artifacts.md`](docs/run-artifacts.md) |
+| Harness fixes (motion timing, point clouds, boxes, diagnostics) and why | [`docs/harness-fixes.md`](docs/harness-fixes.md) |
 | LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
 | Robosuite | [`docs/robosuite.md`](docs/robosuite.md) |
 | BEHAVIOR-1K | [`docs/behavior.md`](docs/behavior.md) |

@@ -80,6 +80,54 @@ TRAJECTORY_START_TOLERANCE_RAD = 0.02
 TRAJECTORY_START_GRIPPER_TOLERANCE = 0.25
 
 
+#: Below this SAM3 score the segmenter is guessing: its best mask is often another object.
+LOW_SEGMENTATION_SCORE = 0.3
+#: Best and runner-up masks closer than this are a coin toss between two objects.
+AMBIGUOUS_SCORE_MARGIN = 0.1
+#: A gripper that closes below this normalized opening closed on nothing.
+EMPTY_GRIPPER_OPENING = 0.1
+
+
+def localization_diagnostics(segmentations: SegmentationSet) -> dict[str, object]:
+    """How confident a best-mask choice was: scores, flags and the competing boxes."""
+    top = list(segmentations.segmentations[:5])
+    score = float(top[0].score)
+    runner_up = float(top[1].score) if len(top) > 1 else None
+    return {
+        "segmentation_score": score,
+        "runner_up_score": runner_up,
+        "low_confidence": score < LOW_SEGMENTATION_SCORE,
+        "ambiguous": runner_up is not None and score - runner_up < AMBIGUOUS_SCORE_MARGIN,
+        "candidates": [
+            {
+                "score": float(item.score),
+                "box_xyxy": None
+                if item.box_xyxy is None
+                else [float(v) for v in np.asarray(item.box_xyxy).reshape(-1)],
+            }
+            for item in top
+        ],
+    }
+
+
+def grip_diagnostics(result: ExecutionResult, arm: str) -> ExecutionResult:
+    """Add the measured opening after a close, and whether it closed on nothing."""
+    observation = result.final_observation
+    try:
+        positions = observation.robot_state.gripper_positions  # type: ignore[union-attr]
+        opening = float(positions[arm] if isinstance(positions, Mapping) else positions)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return result
+    return replace(
+        result,
+        diagnostics={
+            **dict(result.diagnostics),
+            "gripper_position": opening,
+            "closed_empty": bool(result.ok and opening < EMPTY_GRIPPER_OPENING),
+        },
+    )
+
+
 class CapApi:
     """Atomic robot APIs plus explicit higher-level local compositions."""
 
@@ -1158,6 +1206,9 @@ class CapApi:
         if not segmentation_set.ok:
             return LocalizationResult(ok=False, error=segmentation_set.error)
         segmentation = segmentation_set.segmentations[0]
+        # localize_object takes the best mask; say how sure that choice was, so a program
+        # can tell "the soup" from "SAM3's best guess at 0.11, with four others close".
+        diagnostics = localization_diagnostics(segmentation_set)
         if target_frame is None:
             target_frame = observation.robot_state.base_frame
         try:
@@ -1178,12 +1229,14 @@ class CapApi:
                     code=ErrorCode.POINT_CLOUD_FAILED,
                     message=f"object localization geometry failed: {exc}",
                 ),
+                diagnostics=diagnostics,
             )
         return LocalizationResult(
             ok=True,
             geometry=geometry,
             segmentation=segmentation,
             point_cloud=point_cloud,
+            diagnostics=diagnostics,
         )
 
     def select_grasp(
@@ -1435,7 +1488,7 @@ class CapApi:
             try:
                 result = adapter_method(arm=arm).public_view()
                 self._commanded_gripper_positions[arm] = 0.0
-                return result
+                return grip_diagnostics(result, arm)
             # Best-effort arm resolution must not mask the embodiment error.
             except Exception as exc:
                 return ExecutionResult(
@@ -1446,7 +1499,7 @@ class CapApi:
                         message=f"gripper close failed: {exc}",
                     ),
                 )
-        return self.set_gripper(0.0, arm=arm)
+        return grip_diagnostics(self.set_gripper(0.0, arm=arm), arm)
 
     def go_home(self, *, arm: str = "primary") -> ExecutionResult:
         """Home through the embodiment's own primitive when it has one.

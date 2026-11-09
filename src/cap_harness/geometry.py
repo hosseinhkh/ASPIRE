@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import warnings
 
 import numpy as np
 
+from cap_harness.compat import published_behavior
 from cap_harness.contracts import (
     CameraObservation,
     GraspCandidate,
@@ -17,6 +19,44 @@ from cap_harness.contracts import (
 )
 
 _ROTATION_ATOL = 1e-5
+
+#: A mask pixel whose 3x3 neighbourhood spans more depth than this (or than 2 % of its own
+#: depth) straddles an object border. Renderers and depth cameras give such pixels depths
+#: between the object and what lies behind it, so they back-project to points in mid-air or
+#: on the floor behind the object.
+DEPTH_EDGE_MIN_M = 0.01
+DEPTH_EDGE_FRACTION = 0.02
+#: Keep the edge-filtered mask only when it retains this share of the pixels (thin objects).
+DEPTH_EDGE_MIN_KEEP = 0.25
+#: Boxes from at least this many points ignore stray points: an inlier test around the median,
+#: then extents between the 1st and 99th percentile along each principal axis.
+ROBUST_BOX_MIN_POINTS = 50
+ROBUST_BOX_TRIM = 0.01
+
+
+def depth_edge_pixels(depth: np.ndarray, rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
+    """For each (row, column), whether its 3x3 neighbourhood spans a depth discontinuity."""
+    if rows.size == 0:
+        return np.zeros(0, dtype=bool)
+    top, bottom = max(int(rows.min()) - 1, 0), min(int(rows.max()) + 2, depth.shape[0])
+    left, right = max(int(columns.min()) - 1, 0), min(int(columns.max()) + 2, depth.shape[1])
+    window = np.asarray(depth[top:bottom, left:right], dtype=np.float64)
+    window = np.where(np.isfinite(window) & (window > 0.0), window, np.nan)
+    padded = np.pad(window, 1, mode="edge")
+    height, width = window.shape
+    stack = np.stack(
+        [
+            padded[1 + dy : 1 + dy + height, 1 + dx : 1 + dx + width]
+            for dy in (-1, 0, 1)
+            for dx in (-1, 0, 1)
+        ]
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN neighbourhoods
+        jump = np.nanmax(stack, axis=0) - np.nanmin(stack, axis=0)
+    local = window[rows - top, columns - left]
+    limit = np.maximum(DEPTH_EDGE_MIN_M, DEPTH_EDGE_FRACTION * np.nan_to_num(local))
+    return np.nan_to_num(jump[rows - top, columns - left], nan=np.inf) > limit
 
 
 def _finite_array(value: object, *, shape: tuple[int | None, ...], name: str) -> np.ndarray:
@@ -278,6 +318,12 @@ def mask_to_point_cloud(
         raise ValueError("segmentation mask shape does not match camera depth")
 
     rows, columns = np.nonzero(segmentation.mask)
+    if not published_behavior():
+        # Mixed-depth border pixels are not the object; drop them unless that leaves too
+        # little of a thin object.
+        keep = ~depth_edge_pixels(observation.depth_m, rows, columns)
+        if int(keep.sum()) >= max(4, DEPTH_EDGE_MIN_KEEP * rows.size):
+            rows, columns = rows[keep], columns[keep]
     depths = observation.depth_m[rows, columns]
     valid = np.isfinite(depths) & (depths > 0.0)
     rows = rows[valid]
@@ -314,13 +360,27 @@ def mask_to_point_cloud(
 
 
 def estimate_oriented_bounding_box(point_cloud: PointCloud) -> ObjectGeometry:
-    """Estimate a deterministic PCA-oriented bounding box."""
+    """Estimate a deterministic PCA-oriented bounding box.
+
+    With enough points the box ignores stray points (points far from the bulk of the cloud,
+    then the outer 1 % along each axis): a handful of depth-edge points otherwise stretches a
+    7 cm can into a 40 cm box and moves its centre by centimetres.
+    """
     if not isinstance(point_cloud, PointCloud):
         # Preserve the invalid-data ValueError contract.
         raise ValueError("point_cloud must be a PointCloud")
     points = point_cloud.points
     if len(points) < 4:
         raise ValueError("at least four points are required for a 3D oriented bounding box")
+    robust = not published_behavior() and len(points) >= ROBUST_BOX_MIN_POINTS
+    if robust:
+        median = np.median(points, axis=0)
+        distance = np.linalg.norm(points - median, axis=1)
+        spread = np.median(np.abs(distance - np.median(distance)))
+        if spread > 0.0:
+            inliers = distance <= np.median(distance) + 6.0 * 1.4826 * spread
+            if int(inliers.sum()) >= 4:
+                points = points[inliers]
 
     centered = points - np.mean(points, axis=0)
     covariance = centered.T @ centered / float(len(points))
@@ -338,8 +398,12 @@ def estimate_oriented_bounding_box(point_cloud: PointCloud) -> ObjectGeometry:
         axes[:, 2] *= -1.0
 
     local = centered @ axes
-    lower = np.min(local, axis=0)
-    upper = np.max(local, axis=0)
+    if robust:
+        lower = np.quantile(local, ROBUST_BOX_TRIM, axis=0)
+        upper = np.quantile(local, 1.0 - ROBUST_BOX_TRIM, axis=0)
+    else:
+        lower = np.min(local, axis=0)
+        upper = np.max(local, axis=0)
     extents = upper - lower
     if not bool(np.all(np.isfinite(extents))) or bool(np.any(extents <= 1e-9)):
         raise ValueError("point cloud is degenerate and has no finite 3D bounding box")
@@ -351,7 +415,7 @@ def estimate_oriented_bounding_box(point_cloud: PointCloud) -> ObjectGeometry:
     return ObjectGeometry(
         pose=matrix_to_pose(transform, frame=point_cloud.frame),
         extents=extents,
-        point_count=len(points),
+        point_count=len(point_cloud.points),
     )
 
 

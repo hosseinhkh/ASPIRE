@@ -321,6 +321,23 @@ def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Pa
     # Only the low-confidence segmentation is flagged, linked to its call.
     assert [(w["level"], w["span"]) for w in episode["warnings"]] == [("warn", "span-000003")]
     assert "first" in episode["warnings"][0]["text"]
+    # A close that ended empty is flagged too (diagnostics.closed_empty from close_gripper).
+    grip = run / "trace/calls/call-000009-close-gripper"
+    grip.mkdir(parents=True)
+    (grip / "output.json").write_text(
+        json.dumps({"ok": True, "diagnostics": {"closed_empty": True}})
+    )
+    _write_jsonl(
+        run / "trace/events.jsonl",
+        events
+        + [
+            {"event": "span_start", "span_id": "span-000009", "simulator_time_s": 4.0},
+            {"event": "span_end", "span_id": "span-000009", "name": "close_gripper",
+             "category": "program", "ok": True, "simulator_time_s": 4.5},
+        ],
+    )  # fmt: skip
+    warnings = store.episode(run)["warnings"]
+    assert ("warn", "span-000009") in [(w["level"], w["span"]) for w in warnings]
     assert spans[4]["overlay"]["image"] is None
     assert episode["duration_s"] == 3.0
 
@@ -331,7 +348,7 @@ def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Pa
         [{"type": "result", "subtype": "success", "total_cost_usd": 1.0, "modelUsage": usage}],
     )
     meta = json.loads((session / "session.json").read_text())
-    meta.update(claude_effort="max", motion_retiming="0")
+    meta.update(claude_effort="max", harness="published")
     (session / "session.json").write_text(json.dumps(meta))
 
     # Comparing a session with itself gives two identical columns over the same task rows.
@@ -343,7 +360,7 @@ def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Pa
     assert column["agent_models"] == {
         "opus-4-6": {"context_window": 1_000_000, "thinking_tokens": 7}
     }
-    assert (column["claude_effort"], column["motion_retiming"]) == ("max", "0")
+    assert (column["claude_effort"], column["harness"]) == ("max", "published")
     assert "provider: sam3.segment_text" in compared["columns"][0]["providers"]
 
     log = session / "logs/agent.log"

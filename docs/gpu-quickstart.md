@@ -755,21 +755,26 @@ busy and one recorded now. It reports:
 - per simulator step and per reset;
 - how far motions run from real time.
 
-**Motion timing (optional).** On LIBERO-Pro and Robosuite the joint controller moves each joint
-about 0.008 rad per step, while planned trajectories can ask for 0.05. The published harness
-sends the waypoints at the planner's rate and then waits at most 120 steps, so long moves can
-end with "final trajectory waypoint did not converge", and the arm cuts a lower path between
-waypoints. The paper's agents work around this by staging long moves, and the default keeps
-this behaviour so results match the paper.
+**Harness fixes.** Two defects of the published release fail programs for reasons outside the
+program, and are fixed by default ([harness-fixes.md](harness-fixes.md) has the evidence from
+recorded runs):
 
-`CAP_HARNESS_TRAJECTORY_RETIMING=1` turns on two changes:
+- **Motion timing.** The planners send joint targets six times faster than the arm can follow
+  (0.05 against about 0.008 rad per step), so long moves fell behind, swept low and ended with
+  "final trajectory waypoint did not converge". Trajectories are now re-timed to the speed each
+  adapter derives from its controller's gains, and settling continues while the arm is still
+  converging. Each call's output reports `planned_waypoints`, `executed_waypoints`,
+  `max_joint_step_rad` and `settle_steps`.
+- **Point clouds and boxes.** Depth-edge pixels at a mask's border landed in mid-air or behind
+  the object, and `estimate_geometry` sized boxes from the extreme points: a 7 cm can became a
+  40 cm box with its centre 5 cm off. Edge pixels are now left out and boxes ignore stray points.
 
-- trajectories are re-timed so no joint is asked to move more than 0.006 rad per step;
-- the final wait continues while the arm is still getting closer, up to 600 steps; it stops
-  after 25 steps without progress.
+`localize_object` also reports how sure SAM3 was (`low_confidence`, `ambiguous`), and
+`close_gripper` reports `closed_empty` when the grasp missed.
 
-Each call's output then also reports `settle_steps`, `stalled`, `planned_waypoints` and
-`executed_waypoints`. Compare a session with it against one without on the Compare page.
+`CAP_HARNESS_COMPAT=published` restores the published behaviour, and `demo.sh campaign --paper`
+sets it, so paper comparisons stay like for like. Compare a session with it against one without
+on the Compare page.
 
 ## Troubleshooting
 

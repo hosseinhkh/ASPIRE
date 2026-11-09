@@ -335,7 +335,7 @@ class Store:
             ),
             "video_fps": video_index.get("fps"),
             "spans": spans,
-            "warnings": _warnings(spans, outcome),
+            "warnings": _warnings(self._mark_empty_grasps(run, spans), outcome),
             "calls": [s for s in spans if s.get("dir")],
             "charts": charts,
             "chart_steps": len(next(iter(next(iter(charts.values()), {}).values()), [])),
@@ -457,6 +457,17 @@ class Store:
         ]
         for span, overlay in zip(with_masks, unnamed, strict=False):
             span["overlay"] = overlay
+
+    @staticmethod
+    def _mark_empty_grasps(run: Path, spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Flag close_gripper calls that closed on nothing (diagnostics.closed_empty)."""
+        for span in spans:
+            if span.get("name") == "close_gripper" and span.get("dir"):
+                output = read_json(run / "trace/calls" / Path(span["dir"]).name / "output.json")
+                diagnostics = output.get("diagnostics") if isinstance(output, dict) else None
+                if isinstance(diagnostics, dict) and diagnostics.get("closed_empty"):
+                    span["closed_empty"] = True
+        return spans
 
     def _pair_evidence(self, run: Path, spans: list[dict[str, Any]]) -> None:
         """Attach grasp overlays and 3D geometry files to the calls that produced them."""
@@ -829,7 +840,12 @@ class Store:
                     "llm_cost_usd": round(sum(agent_costs), 2) if agent_costs else None,
                     "agent_models": agent_models,
                     "claude_effort": meta.get("claude_effort"),
-                    "motion_retiming": meta.get("motion_retiming"),
+                    # fixed / published (docs/harness-fixes.md); older sessions only
+                    # recorded the motion-timing switch.
+                    "harness": meta.get("harness")
+                    or {"1": "re-timed motion", "0": "published motion"}.get(
+                        str(meta.get("motion_retiming"))
+                    ),
                     "providers": providers,
                     "simulator_ms": {k: round(v * 1000, 1) for k, v in simulator.items()},
                     "realtime_factor": statistics.median(lat["realtime"])
@@ -904,6 +920,16 @@ def _warnings(spans: list[dict[str, Any]], outcome: dict[str, Any]) -> list[dict
             text += f", next {scores[1]:.2f}"
         text += ". The program may have used the wrong object: compare the candidates."
         notes.append({"level": "warn", "text": text, "span": span["id"]})
+    for span in spans:
+        if span.get("closed_empty"):
+            notes.append(
+                {
+                    "level": "warn",
+                    "text": "close_gripper closed on nothing: the grasp missed, so the moves "
+                    "after it carried nothing.",
+                    "span": span["id"],
+                }
+            )
     if outcome.get("program_ok") is True and outcome.get("task_success") is False:
         notes.append(
             {

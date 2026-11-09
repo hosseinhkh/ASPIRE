@@ -22,7 +22,8 @@
 #       --headless runs it unattended under a hard dollar cap (Claude Code's --max-budget-usd
 #       works only headless) and records the transcript in the campaign folder.
 #       --paper uses the paper's protocol: LIBERO dev 51-65 / unseen 66-80 / held-out 1-50
-#       (Robosuite 101-125 / 126-130 / 1-100), no cap on program versions, $40 per task.
+#       (Robosuite 101-125 / 126-130 / 1-100), no cap on program versions, $40 per task,
+#       and the published harness behaviour (CAP_HARNESS_COMPAT=published).
 #
 #   Claude runs with the paper's Opus 4.6 settings: max effort and the 1M-token context.
 #   ASPIRE_EFFORT=high (Claude Code's default) or ASPIRE_1M=0 change them.
@@ -323,9 +324,9 @@ campaign_headless() {  # campaign_headless RUN_ROOT BUDGET_USD MAX_TURNS
     exit 1
   fi
   # session.json lets the dashboard name the run, and claude-logs pick out its sub-agents.
-  printf '{"name": "campaign %s", "started": "%s", "budget_usd": %s, "model": "%s", "claude_effort": "%s", "motion_retiming": "%s", "git_commit": "%s"}\n' \
+  printf '{"name": "campaign %s", "started": "%s", "budget_usd": %s, "model": "%s", "claude_effort": "%s", "harness": "%s", "git_commit": "%s"}\n' \
     "$(basename "$run_root")" "$(date -Iseconds)" "$budget" "$ANTHROPIC_MODEL" \
-    "$CLAUDE_CODE_EFFORT_LEVEL" "${CAP_HARNESS_TRAJECTORY_RETIMING:-0}" \
+    "$CLAUDE_CODE_EFFORT_LEVEL" "${CAP_HARNESS_COMPAT:-fixed}" \
     "$(git rev-parse --short HEAD 2>/dev/null)" > "$run_root/session.json"
   step "Headless ASPIRE campaign (Claude Code, $ANTHROPIC_MODEL), cap \$$budget"
   echo "campaign: $run_root"
@@ -397,6 +398,9 @@ JSON
     esac
     budget="${budget:-$((40 * count))}"; max_turns="${max_turns:-$((600 * count))}"
     label=paper-protocol
+    # The published release's behaviour too (motion timing, point clouds, boxes), so the
+    # numbers compare with the paper's (docs/harness-fixes.md).
+    export CAP_HARNESS_COMPAT=published
     scope="Run an ASPIRE iterative-debugging campaign with the paper's protocol (arXiv 2607.00272, Section 3 and Appendix E): the full seed partitions below, the skill's own stopping rules, Stage-2 held-out validation, the verifier, and skill promotion. Do not shorten the seed lists or skip a stage."
     version_rule="Budget: no fixed cap on program versions; workers debug until the development threshold or a plateau, as subagent-prompt.md says. Dispatch the verifier whenever a worker proposes skills."
   fi

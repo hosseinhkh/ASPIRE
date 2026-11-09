@@ -92,10 +92,10 @@ simulator, because MuJoCo's GL context belongs to that thread. Its HTTP API is l
 
    Call `run_observer.on_reset / before_step / after_step` so the recorder sees every step.
    Copy the closest existing adapter: Robosuite for MuJoCo, YAM for real hardware with a
-   motion gate. If the controller limits how far a joint moves per step, use
-   `trajectory_timing.retime` and `Settler` in `execute_trajectory`, as both simulators do
-   when `CAP_HARNESS_TRAJECTORY_RETIMING=1`, so planned motions are sent at a rate the arm can
-   follow.
+   motion gate. Time `execute_trajectory` to what your controller can follow: both simulators
+   derive it from their gains (`trajectory_timing.controller_step_rad`), re-time every plan to
+   it (`retime`) and settle while the arm still converges (`Settler`); see
+   [harness-fixes.md](harness-fixes.md).
 2. **Tasks.** Write a task registry (`resolve(suite, task_id)` → metadata with
    `suite_name`, `task_id`, `task_name`, language, horizon).
 3. **Joint layout.** Add the embodiment's joints per arm to `JOINT_DIMENSIONS` in

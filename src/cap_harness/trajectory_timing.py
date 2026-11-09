@@ -1,38 +1,47 @@
-"""Make planned joint trajectories trackable by the simulators' joint-position controllers.
+"""Execute planned joint trajectories at a speed the joint controller can actually follow.
 
-LIBERO and Robosuite run robosuite's JOINT_POSITION controller: each control step it may move
-the goal at most ``output_max = 0.05`` rad, and with ``kp = 50`` the arm itself advances only
-about 0.008 rad per step (measured at saturation). The motion planners interpolate at up to
-0.05 rad per step, so on long moves the arm fell far behind the plan. Each joint moved at the
-same capped rate, so joints with further to go lagged, and the hand swept a different, lower
-path than the one planned (on LIBERO it dropped from 0.26 m to 0.03 m above the table on a
-move to 0.14 m). Then the fixed 120 settle steps ran out while the arm was still converging,
-and the move was reported as "final trajectory waypoint did not converge".
+LIBERO and Robosuite run robosuite's JOINT_POSITION controller (kp = 50, critically damped,
+goal moved at most ``output_max = 0.05`` rad per 20 Hz control step). The planners time their
+trajectories by what the controller *accepts* per step (0.05 rad), but what the arm *achieves*
+is set by the PD gains: with the goal clipped 0.05 rad ahead, a joint settles at
 
-Two remedies, used by both adapters:
+    v = (kp / kd) * output_max / (1 + (kp / kd) * dt / 2)  ~ 0.16 rad/s ~ 0.008 rad per step,
 
-* ``retime``: insert intermediate waypoints so no step asks a joint to move more than
-  ``TRACKABLE_JOINT_STEP_RAD``. The arm then follows the planned path with a few hundredths of
-  a radian of lag, and the trajectory takes as long as the robot needs.
-* ``Settler``: after the last waypoint, keep commanding it while the error is still falling.
-  It never stops before the original 120-step budget, so nothing that converged before fails
-  now. It stops early only on a stall (an arm blocked by contact) or at ``SETTLE_MAX_STEPS``.
+six times slower than planned (measured in recorded episodes: 0.0079 rad per step). On a long
+move the arm falls up to a radian behind the plan, every joint moving at the same capped speed,
+so the hand leaves the planned path; then the fixed 120-step settle runs out while the arm is
+still moving, and the move fails with "final trajectory waypoint did not converge" even though
+nothing blocks it.
 
-Both are **off by default**, so the harness executes plans exactly as the published ASPIRE
-release does and results stay comparable with the paper (whose agents, and skill library,
-learned to stage long moves around this behaviour). Set ``CAP_HARNESS_TRAJECTORY_RETIMING=1``
-to turn both on, and compare the two with the dashboard's Compare page.
+The fix is the one real robot drivers use, time-scaling to the actuator's limits:
+
+* ``trackable_step_rad``: the per-step joint change the controller follows closely, derived
+  from its own gains (85 % of the saturated speed above), so other robots and gains get their
+  own limit;
+* ``retime``: insert intermediate waypoints so no step asks a joint to move more than that;
+  the arm follows the planned path with a few hundredths of a radian of lag;
+* ``Settler``: after the last waypoint keep commanding it while the error is still falling.
+  It never stops before the original 120-step budget, and stops early only on a stall (an arm
+  blocked by contact) or at ``SETTLE_MAX_STEPS``.
+
+On by default. ``CAP_HARNESS_COMPAT=published`` (or ``CAP_HARNESS_TRAJECTORY_RETIMING=0``)
+executes plans exactly as the published release does, for comparisons with the paper.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 import os
+from typing import Any
 
 import numpy as np
 
-#: Largest per-step joint change the JOINT_POSITION controllers follow closely.
+from cap_harness.compat import published_behavior
+
+#: Per-step joint change used when a controller's gains are not available.
 TRACKABLE_JOINT_STEP_RAD = 0.006
+#: Fraction of the controller's saturated speed that trajectories are timed to.
+TRACKING_MARGIN = 0.85
 #: The original settle budget; settling never ends before it.
 SETTLE_MIN_STEPS = 119
 #: Hard cap on settle steps after the last waypoint (30 s of simulated time at 20 Hz).
@@ -44,9 +53,39 @@ SETTLE_PROGRESS_RAD = 0.002
 
 
 def retiming_enabled() -> bool:
-    """Whether ``CAP_HARNESS_TRAJECTORY_RETIMING`` turns re-timing and extended settling on."""
-    value = os.environ.get("CAP_HARNESS_TRAJECTORY_RETIMING", "0").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    """On unless CAP_HARNESS_COMPAT=published; CAP_HARNESS_TRAJECTORY_RETIMING=0/1 overrides."""
+    value = os.environ.get("CAP_HARNESS_TRAJECTORY_RETIMING", "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return not published_behavior()
+
+
+def trackable_step_rad(
+    kp: Any, kd: Any, output_max: Any, period_s: float, margin: float = TRACKING_MARGIN
+) -> float:
+    """Per-step joint change a goal-clipped PD joint controller follows (smallest joint)."""
+    kp, kd, limit = (np.atleast_1d(np.asarray(v, dtype=float)) for v in (kp, kd, output_max))
+    ratio = kp / np.maximum(kd, 1e-9)
+    speed = ratio * limit / (1.0 + ratio * period_s / 2.0)  # rad/s at saturation
+    step = float(np.min(speed)) * period_s * margin
+    if not np.isfinite(step) or step <= 0.0:
+        raise ValueError("controller gains give no positive trackable speed")
+    return step
+
+
+def controller_step_rad(controllers: Iterable[Any], period_s: float) -> float:
+    """``trackable_step_rad`` for robosuite controllers (kp, kd, output_max), or the default."""
+    steps = []
+    for controller in controllers:
+        try:
+            steps.append(
+                trackable_step_rad(controller.kp, controller.kd, controller.output_max, period_s)
+            )
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return min(steps) if steps else TRACKABLE_JOINT_STEP_RAD
 
 
 def retime(
@@ -149,6 +188,8 @@ __all__ = [
     "SETTLE_MIN_STEPS",
     "TRACKABLE_JOINT_STEP_RAD",
     "Settler",
+    "controller_step_rad",
     "retime",
     "retiming_enabled",
+    "trackable_step_rad",
 ]

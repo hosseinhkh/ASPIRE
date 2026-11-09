@@ -267,7 +267,9 @@ def test_secondary_ik_request_is_explicitly_expressed_in_robot1_base():
     np.testing.assert_allclose(transformed.position, [0.3, 0.0, 0.3])
 
 
-def test_synchronized_trajectory_converges_and_grippers_persist():
+def test_synchronized_trajectory_converges_and_grippers_persist(monkeypatch):
+    # The published executor's exact step counts (re-timing: tests/test_trajectory_timing.py).
+    monkeypatch.setenv("CAP_HARNESS_COMPAT", "published")
     adapter, env, observation = _adapter()
     names = observation.robot_state.joint_names
     trajectory = SynchronizedTrajectory(
@@ -473,7 +475,8 @@ def test_synchronized_trajectory_has_bounded_convergence_timeout():
     assert result.error.code == ErrorCode.TIMEOUT
 
 
-def test_trajectory_advances_intermediate_waypoints_at_fixed_rate() -> None:
+def test_trajectory_advances_intermediate_waypoints_at_fixed_rate(monkeypatch) -> None:
+    monkeypatch.setenv("CAP_HARNESS_COMPAT", "published")
     adapter, env, observation = _adapter()
     env.freeze = True
     trajectory = SynchronizedTrajectory(

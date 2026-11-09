@@ -10,8 +10,10 @@ from cap_harness.trajectory_timing import (
     SETTLE_MIN_STEPS,
     TRACKABLE_JOINT_STEP_RAD,
     Settler,
+    controller_step_rad,
     retime,
     retiming_enabled,
+    trackable_step_rad,
 )
 
 
@@ -69,11 +71,34 @@ def test_retiming_switch(monkeypatch: pytest.MonkeyPatch, value: str, enabled: b
     assert retiming_enabled() is enabled
 
 
-def test_retiming_is_off_by_default_so_runs_match_the_published_harness(
+def test_retiming_is_on_by_default_and_off_in_published_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CAP_HARNESS_TRAJECTORY_RETIMING", raising=False)
+    monkeypatch.delenv("CAP_HARNESS_COMPAT", raising=False)
+    assert retiming_enabled() is True
+    monkeypatch.setenv("CAP_HARNESS_COMPAT", "published")
     assert retiming_enabled() is False
+    monkeypatch.setenv("CAP_HARNESS_TRAJECTORY_RETIMING", "1")  # an explicit switch wins
+    assert retiming_enabled() is True
+
+
+def test_trackable_step_follows_the_controller_gains() -> None:
+    # robosuite's JOINT_POSITION defaults: kp 50, critically damped, 0.05 rad goal clip, 20 Hz.
+    # Saturated speed 0.162 rad/s (measured in recorded LIBERO episodes: 0.158); 85 % of it.
+    step = trackable_step_rad(50.0, 2 * 50.0**0.5, 0.05, 0.05)
+    assert step == pytest.approx(0.0069, abs=1e-4)
+    # The slowest joint sets the limit; stiffer gains track faster.
+    assert trackable_step_rad([50.0, 300.0], [14.142, 34.64], 0.05, 0.05) == pytest.approx(
+        step, rel=1e-3
+    )
+    assert trackable_step_rad(300.0, 34.64, 0.05, 0.05) > 2 * step
+
+    class Controller:
+        kp, kd, output_max = np.full(7, 50.0), np.full(7, 14.142), np.full(7, 0.05)
+
+    assert controller_step_rad([Controller(), None], 0.05) == pytest.approx(step, rel=1e-3)
+    assert controller_step_rad([None], 0.05) == TRACKABLE_JOINT_STEP_RAD  # unknown: default
 
 
 def test_published_settle_stops_after_119_steps_even_while_converging() -> None:
@@ -86,7 +111,7 @@ def test_published_settle_stops_after_119_steps_even_while_converging() -> None:
     assert Settler(0.01, extended=False).keep_going(0.005) is False
 
 
-def test_robosuite_adapter_retimes_both_arms_only_when_enabled(
+def test_robosuite_adapter_retimes_both_arms_unless_published(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pytest.importorskip("robosuite")
@@ -109,12 +134,13 @@ def test_robosuite_adapter_retimes_both_arms_only_when_enabled(
         return adapter.execute_trajectory(trajectory)
 
     monkeypatch.delenv("CAP_HARNESS_TRAJECTORY_RETIMING", raising=False)
+    monkeypatch.setenv("CAP_HARNESS_COMPAT", "published")
     published = run()
     assert published.ok and published.steps_executed == 2
     assert "executed_waypoints" not in published.diagnostics
 
-    monkeypatch.setenv("CAP_HARNESS_TRAJECTORY_RETIMING", "1")
-    retimed = run()
+    monkeypatch.delenv("CAP_HARNESS_COMPAT")
+    retimed = run()  # the default
     assert retimed.ok
     # 0.05 rad in one step becomes nine steps of at most 0.006 rad, for both arms together.
     assert retimed.diagnostics["planned_waypoints"] == 2

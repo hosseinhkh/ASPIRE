@@ -1198,3 +1198,57 @@ def test_go_home_stops_at_terminal_results(monkeypatch, terminal_flag, first_is_
     assert getattr(result, terminal_flag)
     assert result.error == terminal.error
     assert result.steps_executed == (1 if first_is_terminal else 120)
+
+
+def test_localize_object_reports_how_sure_the_mask_choice_was() -> None:
+    api = CapApi(FakeAdapter())  # type: ignore[arg-type]
+
+    def candidate(score: float, box: list[float]) -> Segmentation:
+        return Segmentation(
+            mask=np.ones((2, 2), dtype=bool),
+            label="alphabet soup",
+            score=score,
+            camera_name="agentview",
+            frame="camera",
+            box_xyxy=np.array(box),
+        )
+
+    found = (candidate(0.111, [255, 264, 298, 346]), candidate(0.088, [397, 302, 443, 370]))
+    cloud = PointCloud(points=np.zeros((4, 3)) + np.eye(4, 3), frame="base")
+    api._segment_text = lambda *a, **k: SegmentationSet(ok=True, segmentations=found)  # type: ignore[method-assign]
+    api._project_mask = lambda *a, **k: cloud  # type: ignore[method-assign]
+    api.estimate_geometry = lambda value: ObjectGeometry(  # type: ignore[method-assign]
+        pose=_pose(), extents=np.ones(3), point_count=4
+    )
+
+    result = api.localize_object("alphabet soup")
+
+    assert result.ok and result.diagnostics["segmentation_score"] == 0.111
+    assert result.diagnostics["low_confidence"] and result.diagnostics["ambiguous"]
+    assert result.diagnostics["runner_up_score"] == 0.088
+    assert result.diagnostics["candidates"][1]["box_xyxy"] == [397.0, 302.0, 443.0, 370.0]
+
+
+def test_close_gripper_reports_when_it_closed_on_nothing() -> None:
+    adapter = FakeAdapter()
+
+    def closed_at(opening: float) -> ExecutionResult:
+        observation = adapter.get_observation()
+        state = observation.robot_state
+        held = RobotState(
+            joint_positions=state.joint_positions["primary"],
+            joint_velocities=state.joint_velocities["primary"],
+            end_effector_poses=_pose(),
+            gripper_positions=opening,
+            base_frame="base",
+        )
+        observation = Observation(cameras=observation.cameras, robot_state=held)
+        return ExecutionResult(ok=True, steps_executed=5, final_observation=observation)
+
+    api = CapApi(adapter)  # type: ignore[arg-type]
+    adapter.close_gripper = lambda *, arm="primary": closed_at(0.049)  # type: ignore[method-assign]
+    empty = api.close_gripper()
+    assert empty.diagnostics["closed_empty"] is True
+    assert empty.diagnostics["gripper_position"] == pytest.approx(0.049)
+    adapter.close_gripper = lambda *, arm="primary": closed_at(0.65)  # type: ignore[method-assign]
+    assert api.close_gripper().diagnostics["closed_empty"] is False

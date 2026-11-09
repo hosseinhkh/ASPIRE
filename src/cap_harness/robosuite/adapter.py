@@ -27,7 +27,7 @@ from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.geometry import invert_transform, matrix_to_pose, transform_pose
 from cap_harness.robosuite.codec import RobosuiteActionCodec
 from cap_harness.robosuite.registry import RobosuiteTaskMetadata, RobosuiteTaskRegistry
-from cap_harness.trajectory_timing import Settler, retime, retiming_enabled
+from cap_harness.trajectory_timing import Settler, controller_step_rad, retime, retiming_enabled
 
 PANDA_JOINT_NAMES = tuple(f"panda_joint{i}" for i in range(1, 8))
 TRAJECTORY_TOLERANCE_RAD = 0.01
@@ -167,6 +167,15 @@ class RobosuiteAdapter:
         if self._env is None:
             raise RuntimeError("reset() must be called before using the Robosuite adapter")
         return self._env
+
+    def _trackable_step_rad(self) -> float:
+        """Per-step joint change this environment's joint controllers follow (from their gains)."""
+        env = self._require_env()
+        inner = getattr(env, "env", env)
+        robots = getattr(inner, "robots", None) or []
+        return controller_step_rad(
+            (getattr(robot, "controller", None) for robot in robots), self.control_period_s
+        )
 
     def _make_environment(self, metadata: RobosuiteTaskMetadata) -> Any:
         if self._env_factory is not None:
@@ -522,9 +531,14 @@ class RobosuiteAdapter:
         timing: dict[str, object] = {}
         if retimed:
             planned = count
-            positions, grippers = retime(positions, grippers)
+            step_rad = self._trackable_step_rad()
+            positions, grippers = retime(positions, grippers, max_step_rad=step_rad)
             count = len(next(iter(positions.values())))
-            timing = {"planned_waypoints": planned, "executed_waypoints": count}
+            timing = {
+                "planned_waypoints": planned,
+                "executed_waypoints": count,
+                "max_joint_step_rad": round(step_rad, 5),
+            }
 
         def commands(waypoint: int) -> dict[str, ArmCommand]:
             return {

@@ -192,3 +192,68 @@ def test_obb_and_explicit_top_down_selection() -> None:
     assert selected is candidates.grasps[1]
     with pytest.raises(ValueError, match="expected 'world'"):
         select_top_down_grasp(candidates, frame="world")
+
+
+def _depth_scene() -> tuple[CameraObservation, Segmentation]:
+    """A 10x10 px object at 1.0 m in front of a wall at 2.0 m; the mask bleeds one ring out."""
+    depth = np.full((20, 20), 2.0)
+    depth[5:15, 5:15] = 1.0
+    depth[4, 5:15] = 1.5  # a mixed-depth border row, as renderers and depth cameras produce
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[4:16, 4:16] = True
+    camera = CameraObservation(
+        rgb=np.zeros((20, 20, 3), dtype=np.uint8),
+        depth_m=depth,
+        intrinsics=np.array([[20.0, 0, 10.0], [0, 20.0, 10.0], [0, 0, 1.0]]),
+        frame="camera",
+        camera_pose=Pose(np.zeros(3), np.array([1.0, 0, 0, 0]), "base"),
+    )
+    segmentation = Segmentation(
+        mask=mask, label="object", score=1.0, camera_name="agentview", frame="camera"
+    )
+    return camera, segmentation
+
+
+def test_depth_edge_pixels_are_left_out_of_mask_clouds(monkeypatch: pytest.MonkeyPatch) -> None:
+    camera, segmentation = _depth_scene()
+    monkeypatch.delenv("CAP_HARNESS_COMPAT", raising=False)
+    cloud = mask_to_point_cloud(camera, segmentation)
+    # Only object pixels whose neighbourhood stays on the object remain: no wall, no mixed row.
+    assert np.all(cloud.points[:, 2] == 1.0)
+    assert len(cloud.points) == 8 * 8
+    monkeypatch.setenv("CAP_HARNESS_COMPAT", "published")
+    published = mask_to_point_cloud(camera, segmentation)
+    assert len(published.points) == 12 * 12
+    assert set(np.unique(published.points[:, 2])) == {1.0, 1.5, 2.0}
+
+
+def test_thin_objects_keep_their_pixels_when_every_pixel_is_an_edge() -> None:
+    depth = np.full((9, 9), 2.0)
+    depth[2:7, 4] = 1.0  # a one-pixel-wide handle
+    mask = depth < 1.5
+    camera, _ = _depth_scene()
+    camera = CameraObservation(
+        rgb=np.zeros((9, 9, 3), dtype=np.uint8),
+        depth_m=depth,
+        intrinsics=camera.intrinsics,
+        frame="camera",
+        camera_pose=camera.camera_pose,
+    )
+    segmentation = Segmentation(mask=mask, label="h", score=1.0, camera_name="a", frame="camera")
+    assert len(mask_to_point_cloud(camera, segmentation).points) == 5
+
+
+def test_box_ignores_stray_points_unless_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    rng = np.random.default_rng(0)
+    # A 10 x 6 x 3 cm box (distinct sides, so its principal axes are well defined).
+    can = rng.uniform(-0.5, 0.5, size=(1500, 3)) * [0.10, 0.06, 0.03] + [0.40, -0.08, 0.04]
+    strays = np.array([[0.26, -0.06, 0.0], [0.28, -0.13, 0.0], [0.64, -0.09, 0.15]] * 3)
+    cloud = PointCloud(points=np.vstack([can, strays]), frame="base")
+    monkeypatch.delenv("CAP_HARNESS_COMPAT", raising=False)
+    box = estimate_oriented_bounding_box(cloud)
+    np.testing.assert_allclose(box.pose.position, [0.40, -0.08, 0.04], atol=0.005)
+    np.testing.assert_allclose(np.sort(box.extents)[::-1], [0.10, 0.06, 0.03], atol=0.006)
+    assert box.point_count == len(cloud.points)
+    monkeypatch.setenv("CAP_HARNESS_COMPAT", "published")
+    published = estimate_oriented_bounding_box(cloud)
+    assert np.max(published.extents) > 0.3  # the published min/max box spans the strays

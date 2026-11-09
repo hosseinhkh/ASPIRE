@@ -24,7 +24,7 @@ from cap_harness.contracts import (
 from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.libero.codec import LIBERO_ACTION_DIMENSION, LiberoActionCodec
 from cap_harness.libero.registry import LiberoSuiteRegistry, LiberoTaskMetadata
-from cap_harness.trajectory_timing import Settler, retime, retiming_enabled
+from cap_harness.trajectory_timing import Settler, controller_step_rad, retime, retiming_enabled
 
 CAMERA_NAMES: tuple[str, str] = ("agentview", "robot0_eye_in_hand")
 BASE_FRAME = "robot_base"
@@ -319,6 +319,15 @@ class LiberoAdapter:
         if self._env is None:
             raise RuntimeError("reset() must be called before using the LIBERO adapter")
         return self._env
+
+    def _trackable_step_rad(self) -> float:
+        """Per-step joint change this environment's joint controllers follow (from their gains)."""
+        env = self._require_env()
+        inner = getattr(env, "env", env)
+        robots = getattr(inner, "robots", None) or []
+        return controller_step_rad(
+            (getattr(robot, "controller", None) for robot in robots), self.control_period_s
+        )
 
     @staticmethod
     def _extract_observation(reset_result: Any) -> Mapping[str, Any]:
@@ -802,15 +811,18 @@ class LiberoAdapter:
         retimed = retiming_enabled()
         timing: dict[str, object] = {}
         if retimed:
+            step_rad = self._trackable_step_rad()
             new_positions, new_grippers = retime(
                 {PRIMARY_ARM: waypoints},
                 None if gripper_waypoints is None else {PRIMARY_ARM: gripper_waypoints},
+                max_step_rad=step_rad,
             )
             waypoints = new_positions[PRIMARY_ARM]
             gripper_waypoints = None if new_grippers is None else new_grippers[PRIMARY_ARM]
             timing = {
                 "planned_waypoints": len(trajectory.joint_positions),
                 "executed_waypoints": len(waypoints),
+                "max_joint_step_rad": round(step_rad, 5),
             }
 
         def apply_waypoint(index: int) -> StepResult:
