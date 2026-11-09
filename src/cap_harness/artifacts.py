@@ -278,7 +278,7 @@ class _Span:
         with self.recorder.timing.measure("trace_write"):
             self.serializer.dump(self.path / "output.json", value)
         if self.capture_segmentation and isinstance(value, SegmentationSet):
-            self.recorder.segmentation_overlay(value)
+            self.recorder.segmentation_overlay(value, call=self.path.name)
         self.state["ok"] = ok
         return value
 
@@ -548,19 +548,21 @@ class RunRecorder:
             {"label": label, "step_index": self.step_count, "cameras": cameras},
         )
 
-    def segmentation_overlay(self, result: SegmentationSet) -> None:
+    def segmentation_overlay(self, result: SegmentationSet, *, call: str | None = None) -> None:
         """Save one annotated image containing every returned SAM candidate.
 
         One image per provider call keeps large campaigns tractable while still
         showing false positives, score ordering, boxes, and overlapping masks.
-        Raw masks remain summarized rather than persisted.
+        Raw masks remain summarized rather than persisted. ``call`` names the
+        trace/calls folder of the request, so viewers can pair image and call even
+        when a failed or empty request saved no image.
         """
         if not result.ok or not result.segmentations or self.last_observation is None:
             return
         with self.timing.measure("overlay"):
-            self._segmentation_overlay(result)
+            self._segmentation_overlay(result, call)
 
-    def _segmentation_overlay(self, result: SegmentationSet) -> None:
+    def _segmentation_overlay(self, result: SegmentationSet, call: str | None = None) -> None:
         segmentations = result.segmentations[:5]
         first = segmentations[0]
         camera = next(
@@ -640,6 +642,7 @@ class RunRecorder:
                 "camera_frame": first.frame,
                 "image_shape": list(first.mask.shape),
                 "candidates": records,
+                "call": call,
             },
         )
 

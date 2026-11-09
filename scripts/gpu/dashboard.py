@@ -21,7 +21,6 @@ Standard library only; the live consoles it starts run in the simulator venvs.
 from __future__ import annotations
 
 import argparse
-import base64
 import binascii
 import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,373 +43,12 @@ import zipfile
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-import session_report as report  # noqa: E402
+from dashboard_store import MEDIA_SUFFIXES, Store, dir_size  # noqa: E402
 
-UI = HERE / "dashboard" / "index.html"
-COLLECTION_KINDS = {  # outputs/<dir>: what one entry inside it is
-    "sessions": "session",
-    "gpu-demo": "demo",
-    "gpu-check": "check",
-    "runs": "campaign",
-}
-MEDIA_SUFFIXES = {".mp4", ".png", ".jpg", ".jpeg", ".npz", ".npy", ".webm", ".gif"}
-MAX_POINTS = 600
+UI_DIR = HERE / "dashboard"
+UI = UI_DIR / "index.html"
 LIVE_VENVS = {"robosuite": ".venv-robosuite", "libero-pro": ".venv-libero"}
-
-
-def read_json(path: Path) -> object:
-    return report.read_json(path)
-
-
-def jsonable(value: object) -> object:
-    return json.loads(json.dumps(value, default=str))
-
-
-def downsample(values: list[float], limit: int = MAX_POINTS) -> list[float]:
-    if len(values) <= limit:
-        return values
-    step = len(values) / limit
-    return [values[int(i * step)] for i in range(limit)]
-
-
-def dir_size(path: Path) -> int:
-    total = 0
-    for root, _dirs, files in os.walk(path):
-        for name in files:
-            try:
-                total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                pass
-    return total
-
-
-# ---------------------------------------------------------------------------- discovery --
-class Store:
-    def __init__(self, outputs: Path) -> None:
-        self.outputs = outputs.resolve()
-
-    def resolve(self, rel: str) -> Path:
-        """A path inside the outputs directory, or ValueError."""
-        path = (self.outputs / unquote(rel or "")).resolve()
-        if path != self.outputs and self.outputs not in path.parents:
-            raise ValueError("path outside the outputs directory")
-        return path
-
-    def rel(self, path: Path) -> str:
-        return path.resolve().relative_to(self.outputs).as_posix()
-
-    def runs_in(self, root: Path) -> list[Path]:
-        if (root / "run.json").exists():
-            return [root]
-        return sorted(
-            p.parent
-            for p in root.rglob("run.json")
-            if "wandb" not in p.parts and "report" not in p.parts
-        )
-
-    def collections(self) -> list[dict[str, object]]:
-        items: list[dict[str, object]] = []
-        for folder, kind in COLLECTION_KINDS.items():
-            base = self.outputs / folder
-            if not base.is_dir():
-                continue
-            for entry in sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-                if entry.is_dir() and not entry.name.startswith("."):
-                    items.append(self._summary(entry, kind))
-        live = self.outputs / "live"
-        if live.is_dir():
-            for run in sorted(self.runs_in(live), key=lambda p: p.stat().st_mtime, reverse=True):
-                items.append(self._summary(run, "live"))
-        return items
-
-    def _summary(self, path: Path, kind: str) -> dict[str, object]:
-        meta = read_json(path / "session.json") or {}
-        if not isinstance(meta, dict):
-            meta = {}
-        item: dict[str, object] = {
-            "path": self.rel(path),
-            "name": meta.get("name") or path.name,
-            "kind": kind,
-            "modified": path.stat().st_mtime,
-            "status": meta.get("status"),
-            "stage_counts": meta.get("stage_counts"),
-        }
-        if kind == "live":
-            run = read_json(path / "run.json") or {}
-            outcome = read_json(path / "outcome.json")
-            item.update(
-                name=f"{run.get('suite', '?')}:{run.get('task_id', '?')} seed {run.get('seed', '?')}",
-                status="finalized" if outcome else "open or interrupted",
-                episodes=1,
-            )
-        else:
-            item["episodes"] = sum(1 for p in path.rglob("outcome.json") if "wandb" not in p.parts)
-        return item
-
-    # -- one collection --
-    def collection(self, path: Path) -> dict[str, object]:
-        meta = read_json(path / "session.json") or {}
-        gpu = report.load_gpu(path)
-        stages = report.load_stages(path, gpu)
-        for number, row in enumerate(stages, 1):
-            row["n"] = number
-        times = gpu["times"]
-        gpu_view = None
-        if times:
-            idx = list(range(len(times)))
-            if len(idx) > MAX_POINTS:
-                idx = [int(i * len(times) / MAX_POINTS) for i in range(MAX_POINTS)]
-            gpu_view = {
-                "target": gpu["target"],
-                "t": [times[i] for i in idx],
-                "used": [gpu["used"][times[i]] for i in idx],
-                "util": [gpu["util"][times[i]] for i in idx],
-                "yours": [gpu["yours"].get(times[i], 0.0) for i in idx],
-                "reserved": [gpu["reserved"].get(times[i], 0.0) for i in idx],
-            }
-        episodes = []
-        for run in self.runs_in(path):
-            run_meta = read_json(run / "run.json") or {}
-            outcome = read_json(run / "outcome.json") or {}
-            calls = len(list((run / "trace/calls").glob("call-*")))
-            episodes.append(
-                {
-                    "path": self.rel(run),
-                    "where": run.relative_to(path).as_posix(),
-                    "benchmark": run_meta.get("benchmark"),
-                    "suite": run_meta.get("suite"),
-                    "task_id": run_meta.get("task_id"),
-                    "task_name": run_meta.get("task_name"),
-                    "seed": run_meta.get("seed"),
-                    "program_ok": outcome.get("program_ok"),
-                    "task_success": outcome.get("task_success"),
-                    "termination": outcome.get("termination_reason"),
-                    "steps": outcome.get("steps_executed"),
-                    "wall_s": outcome.get("wall_duration_s"),
-                    "calls": calls,
-                    "agent": run.relative_to(path).parts[0] == "agents",
-                    "finalized": bool(outcome),
-                }
-            )
-        agents = []
-        transcripts = [p for p in path.rglob("transcript.jsonl") if "wandb" not in p.parts]
-        transcripts += sorted((path / "claude-sessions").rglob("*.jsonl"))
-        for transcript in transcripts:
-            agents.append(
-                {
-                    "path": self.rel(transcript),
-                    "title": transcript.relative_to(path).as_posix(),
-                    **self._agent_stats(transcript),
-                }
-            )
-        files = []
-        for candidate in (path / "session.log", path / "stages.tsv", path / "session.json"):
-            if candidate.exists():
-                files.append(candidate)
-        for folder in ("env", "preflight", "service-logs", "episodes/logs", "gpu"):
-            files += sorted(p for p in (path / folder).glob("*") if p.is_file())
-        return {
-            "path": self.rel(path),
-            "meta": meta,
-            "stages": jsonable(stages),
-            "gpu": gpu_view,
-            "episodes": episodes,
-            "agents": agents,
-            "files": [
-                {
-                    "path": self.rel(f),
-                    "name": f.relative_to(path).as_posix(),
-                    "size": f.stat().st_size,
-                }
-                for f in files
-            ],
-            "has_report": (path / "report/index.html").exists(),
-        }
-
-    def _agent_stats(self, transcript: Path) -> dict[str, object]:
-        stats: dict[str, object] = {"tool_calls": 0, "tool_errors": 0}
-        for event in report.transcript_events(transcript):
-            if event.get("type") == "result":
-                stats.update(
-                    result=event.get("subtype"),
-                    turns=event.get("num_turns"),
-                    cost_usd=event.get("total_cost_usd"),
-                    minutes=round((event.get("duration_ms") or 0) / 60000, 1),
-                )
-            for block in (event.get("message") or {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    stats["tool_calls"] = int(stats["tool_calls"]) + 1
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_result"
-                    and block.get("is_error")
-                ):
-                    stats["tool_errors"] = int(stats["tool_errors"]) + 1
-        return stats
-
-    # -- one episode --
-    def episode(self, run: Path) -> dict[str, object]:
-        meta = read_json(run / "run.json") or {}
-        outcome = read_json(run / "outcome.json") or {}
-        result = read_json(run / "source/program-result.json") or {}
-        calls = []
-        for row in report.call_rows(run):
-            output = read_json(row["dir"] / "output.json")
-            calls.append(
-                {
-                    "index": row["index"],
-                    "name": row["name"],
-                    "category": row["category"],
-                    "depth": row["depth"],
-                    "ok": row["ok"],
-                    "duration_s": row["duration_s"],
-                    "sim_time_s": row["sim_time_s"],
-                    "error": row["error"],
-                    "dir": self.rel(row["dir"]),
-                    "summary": _short(output),
-                }
-            )
-        charts = {
-            title: {name: downsample(values) for name, values in series.items()}
-            for title, series in report.trajectories(run).items()
-        }
-        media = {
-            "videos": [self.rel(p) for p in sorted((run / "media/videos").glob("*.mp4"))],
-            "keyframes": [self.rel(p) for p in sorted((run / "media/keyframes").glob("*/*.png"))],
-            "overlays": [self.rel(p) for p in sorted((run / "media/overlays").rglob("*.png"))],
-        }
-        texts = {}
-        for name, rel in (("program", "source/program.py"), ("stdout", "logs/program.stdout"),
-                          ("stderr", "logs/program.stderr")):  # fmt: skip
-            path = run / rel
-            if path.exists():
-                texts[name] = path.read_text(encoding="utf-8", errors="replace")[-200_000:]
-        commands = []
-        log = run / "logs/live_commands.jsonl"
-        if log.exists():
-            for line in log.read_text(encoding="utf-8").splitlines():
-                try:
-                    commands.append(json.loads(line))
-                except ValueError:
-                    pass
-        files = [
-            {"path": self.rel(p), "name": p.relative_to(run).as_posix(), "size": p.stat().st_size}
-            for p in sorted(run.rglob("*"))
-            if p.is_file()
-            and "trace/calls" not in p.relative_to(run).as_posix()
-            and p.suffix.lower() not in MEDIA_SUFFIXES
-        ]
-        return {
-            "path": self.rel(run),
-            "meta": meta,
-            "outcome": outcome,
-            "result": jsonable(result.get("result")),
-            "program_error": jsonable(result.get("error")),
-            "timing": outcome.get("timing"),
-            "calls": calls,
-            "charts": charts,
-            "media": media,
-            "texts": texts,
-            "commands": jsonable(commands),
-            "files": files,
-        }
-
-    def call(self, call_dir: Path) -> dict[str, object]:
-        data: dict[str, object] = {"dir": self.rel(call_dir)}
-        for name in ("input", "output", "error"):
-            path = call_dir / f"{name}.json"
-            if path.exists():
-                data[name] = read_json(path)
-        data["other_files"] = [
-            self.rel(p) for p in sorted(call_dir.iterdir())
-            if p.is_file() and p.name not in {"input.json", "output.json", "error.json"}
-        ]  # fmt: skip
-        return data
-
-    # -- one agent conversation --
-    def agent(self, transcript: Path) -> dict[str, object]:
-        workspace = transcript.parent
-        events = []
-        names: dict[str, str] = {}
-        for i, event in enumerate(report.transcript_events(transcript)):
-            kind = event.get("type")
-            message = event.get("message") or {}
-            if kind == "system" and event.get("subtype") == "init":
-                events.append({"kind": "init", "model": event.get("model"),
-                               "tools": event.get("tools"), "cwd": event.get("cwd")})  # fmt: skip
-            elif kind == "result":
-                events.append(
-                    {
-                        "kind": "result",
-                        "subtype": event.get("subtype"),
-                        "turns": event.get("num_turns"),
-                        "cost_usd": event.get("total_cost_usd"),
-                        "minutes": round((event.get("duration_ms") or 0) / 60000, 1),
-                        "text": event.get("result"),
-                    }
-                )
-            for j, block in enumerate(message.get("content") or []):
-                if not isinstance(block, dict):
-                    continue
-                btype = block.get("type")
-                if btype == "text":
-                    events.append({"kind": "text", "role": message.get("role") or kind,
-                                   "text": block.get("text", "")})  # fmt: skip
-                elif btype == "thinking":
-                    events.append({"kind": "thinking", "text": block.get("thinking", "")})
-                elif btype == "tool_use":
-                    names[block.get("id", "")] = block.get("name", "?")
-                    events.append({"kind": "tool_use", "name": block.get("name"),
-                                   "input": block.get("input")})  # fmt: skip
-                elif btype == "tool_result":
-                    parts: list[dict[str, object]] = []
-                    content = block.get("content")
-                    for k, part in enumerate(content if isinstance(content, list) else [content]):
-                        if isinstance(part, dict) and part.get("type") == "image":
-                            parts.append({"type": "image", "ref": f"{i}.{j}.{k}"})
-                        elif isinstance(part, dict):
-                            parts.append(
-                                {"type": "text", "text": str(part.get("text", ""))[:20000]}
-                            )
-                        elif part is not None:
-                            parts.append({"type": "text", "text": str(part)[:20000]})
-                    events.append(
-                        {
-                            "kind": "tool_result",
-                            "name": names.get(block.get("tool_use_id", ""), "tool"),
-                            "is_error": bool(block.get("is_error")),
-                            "parts": parts,
-                        }
-                    )
-        texts = {}
-        for name in ("prompt.md", "REPORT.md"):
-            if (workspace / name).exists():
-                texts[name] = (workspace / name).read_text(encoding="utf-8", errors="replace")
-        programs = {
-            p.name: p.read_text(encoding="utf-8", errors="replace")
-            for p in sorted(workspace.glob("program_*.py"))
-        }
-        return {"path": self.rel(transcript), "events": events, "texts": texts,
-                "programs": programs, **self._agent_stats(transcript)}  # fmt: skip
-
-    def agent_image(self, transcript: Path, ref: str) -> tuple[bytes, str]:
-        i, j, k = (int(x) for x in ref.split("."))
-        event = report.transcript_events(transcript)[i]
-        block = (event.get("message") or {}).get("content")[j]
-        content = block.get("content")
-        part = (content if isinstance(content, list) else [content])[k]
-        source = part.get("source") or {}
-        return base64.b64decode(source.get("data", "")), source.get("media_type", "image/png")
-
-
-def _short(value: object, limit: int = 160) -> str:
-    if isinstance(value, dict):
-        error = value.get("error")
-        if isinstance(error, dict):
-            return f"{error.get('code')}: {error.get('message')}"[:limit]
-        keys = [k for k in value if not k.startswith("$")][:6]
-        return ("{" + ", ".join(keys) + "}")[:limit]
-    return str(value)[:limit] if value is not None else ""
+STATIC_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
 
 
 # ---------------------------------------------------------------------------- live --
@@ -598,6 +236,22 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
             try:
                 if path in ("/", "/index.html"):
                     return self._bytes(UI.read_bytes(), "text/html; charset=utf-8")
+                if path.startswith("/static/"):
+                    return self._static(path[len("/static/") :])
+                if path == "/api/benchmark":
+                    paths = parse_qs(urlparse(self.path).query).get("path", [])
+                    if not paths:
+                        raise ValueError("pass one or more ?path= runs to compare")
+                    return self._json(store.benchmark([store.resolve(p) for p in paths]))
+                if path == "/api/log":
+                    return self._json(
+                        store.log(
+                            store.resolve(query["path"]),
+                            query.get("q", ""),
+                            query.get("alerts") == "1",
+                            int(query.get("tail", "4000")),
+                        )
+                    )
                 if path == "/api/collections":
                     return self._json({"outputs": str(store.outputs), "items": store.collections()})
                 if path == "/api/collection":
@@ -652,6 +306,14 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
             _, _, console_id, rest = self.path.split("/", 3)
             status, kind, data = live.proxy(console_id, "/" + rest, method, body)
             return self._bytes(data, kind or "application/octet-stream", status)
+
+        def _static(self, rel: str) -> None:
+            base = (UI_DIR / "static").resolve()
+            path = (base / unquote(rel)).resolve()
+            if base not in path.parents or not path.is_file():
+                raise FileNotFoundError(f"no such asset: {rel}")
+            kind = STATIC_TYPES.get(path.suffix, "application/octet-stream")
+            return self._bytes(path.read_bytes(), f"{kind}; charset=utf-8")
 
         def _file(self, path: Path) -> None:
             if not path.is_file():

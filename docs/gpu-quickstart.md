@@ -521,7 +521,8 @@ In order, a session:
 5. runs each task once per seed (`--seeds "1 2 3"`). A task whose service is down is skipped;
 6. runs each `--llm BENCHMARK:SUITE:TASK_ID` agent (the same agent as `demo.sh llm`, with
    `--llm-budget`, `--llm-max-turns`, `--llm-dev-seeds` and `--llm-heldout-seeds`);
-7. stops the services it started, then holds `--reserve GIB` on the GPU for you;
+7. stops the services it started, then holds `--reserve GIB` on the GPU for you. A
+   reservation you hold on another GPU is left where it is;
 8. scrubs credential values from every file, builds the report, and logs to W&B.
 
 Ctrl-C stops a session cleanly:
@@ -632,11 +633,19 @@ Then open http://localhost:8766. To choose the port yourself, pass `--port N`.
 
 | Page | What you get |
 | --- | --- |
-| Runs | Every session, live-console run, check, demo and campaign under `outputs/`. Each has a **zip download**: complete (videos and images included) or logs only |
-| Session | Stages with timing and GPU peak, GPU memory and utilization charts with the stages shaded, episodes, agent conversations, and every log file (console, environment, preflight, service logs) |
-| Episode | The videos (seekable), joint / gripper / end-effector trajectories, SAM3 overlays, keyframes before and after each motion, and **every call**: the program's calls, the API stages inside them, and each model-service request (SAM3, Contact-GraspNet, PyRoki, cuRobo), each with its full input, output and error. Also the program, what it printed, and the commands of a live session |
-| Agent | The whole Claude Code conversation: prompt, text, thinking, each command, each result, every image the agent was shown, its report and the programs it wrote |
+| Runs | Every session, live-console run, check, demo and campaign under `outputs/`, with success rate, LLM cost, GPU and git commit. Filter them, tick two or more and press **Compare**. Each has a **zip download**: complete (videos and images included) or logs only |
+| Session | Summary cards and a stage timeline. Tabs: **Tasks** (success per task, agent and phase, each seed linked), **Episodes** (thumbnails, filter by task or failed), **Agents**, **Stages**, **GPU** (memory and utilization with the stages shaded), **Logs** (open in the viewer or download) and the session details |
+| Episode | A replay. Every camera plays in sync with play, pause, frame step, speed and a scrub bar showing the simulated time and step. Below it, a **timeline** of every call in three lanes: the program's calls, the API stages inside them (IK, planning, execution) and each model request (SAM3, Contact-GraspNet, PyRoki, cuRobo). The **chain of calls** shows how they nest, with a failed-only filter. Clicking a call jumps the videos there and shows its keyframes before and after, its SAM3 masks with each candidate's score, and its full input, output and error. Tabs: trajectories (with a line that follows the video), perception, keyframes, the program and its output, live-console commands and files |
+| Agent | The whole Claude Code conversation: prompt, text, thinking, each command, each result, every image the agent was shown, its report, the programs it wrote and the result of each program version on the dev and held-out seeds |
+| Compare | Runs side by side: success per task, agent and phase (with the change in points for two runs), model-service latency (median and p90), simulator time per step, motion speed and LLM cost |
+| Log viewer | Any log or text file: search, errors and warnings only, last N lines, and follow while it grows |
 | Live robots | Start a simulator as a **live console**. See its cameras and state, call any robot tool with JSON arguments (`segment_text`, `localize_object`, `generate_grasps`, `plan_motion`, `move_to_pose`, grippers, ...) or run a Code-as-Policy program, one at a time. **Close & save** finalizes the recording, which then appears under Runs like any episode |
+
+The dashboard is plain files with no build step. The server, `scripts/gpu/dashboard.py`, only
+routes; `scripts/gpu/dashboard_store.py` reads recordings into JSON (`/api/...`). The page is
+`scripts/gpu/dashboard/index.html` plus ES modules in `scripts/gpu/dashboard/static/`: one per
+page in `views/`, shared pieces in `lib/` (`charts.js`, `ui.js`, `util.js`). To add a page,
+add a `views/<name>.js` that exports `render(app, params, ctx)` and a route in `app.js`.
 
 The model services must be running for perception and motion
 (`scripts/gpu/services.sh start`). A live console can also be started from a terminal and
@@ -722,6 +731,16 @@ busy and one recorded now. It reports:
 - for each model service: median, p90 and max seconds per call;
 - per simulator step and per reset;
 - how far motions run from real time.
+
+**Motion timing.** On LIBERO-Pro and Robosuite the joint controller moves each joint at most
+about 0.008 rad per step, while planned trajectories can ask for 0.05. The harness used to
+send the waypoints at the planner's rate and then wait a fixed 120 steps, so long moves ended
+with "final trajectory waypoint did not converge" and the arm cut a low path between
+waypoints. Trajectories are now re-timed so no joint is asked to move more than 0.006 rad per
+step, and the final wait continues while the arm is still getting closer (up to 600 steps;
+it stops after 25 steps without progress). The step counts and the error details
+(`settle_steps`, `stalled`, `planned_waypoints`, `executed_waypoints`) are in each call's
+output. To get the original behaviour for a comparison, set `CAP_HARNESS_TRAJECTORY_RETIMING=0`.
 
 ## Troubleshooting
 

@@ -286,6 +286,7 @@ def test_segmentation_trace_keeps_boxes_and_annotated_overlay_without_masks(tmp_
     ]
     assert overlay_metadata["candidates"][0]["score"] == 0.9
     assert overlay_metadata["candidates"][0]["mask_pixels"] == 16
+    assert overlay_metadata["call"] == "call-000001-sam3-segment-text"
     assert not (recorder.root / "payloads").exists()
 
 

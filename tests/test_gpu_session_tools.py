@@ -236,3 +236,156 @@ def test_latency_report_uses_simulated_durations(tmp_path: Path) -> None:
     ).stdout
     assert "provider: pyroki.solve_ik" in out and "0.250" in out
     assert "median 2.00" in out  # 4 s of wall time for 2 simulated seconds
+
+
+def _sam3_call(run: Path, number: int, *, ok: bool, masks: int, clock: float) -> list[dict]:
+    """One recorded SAM3 provider request: call folder plus its two trace events."""
+    call = run / f"trace/calls/call-{number:06d}-sam3-segment-text"
+    call.mkdir(parents=True)
+    (call / "input.json").write_text(json.dumps({"prompt": "soup"}))
+    segmentations = [{"label": "soup", "score": 0.5}] * masks
+    (call / "output.json").write_text(json.dumps({"ok": ok, "segmentations": segmentations}))
+    span = f"span-{number:06d}"
+    return [
+        {"event": "span_start", "span_id": span, "simulator_time_s": clock},
+        {
+            "event": "span_end",
+            "span_id": span,
+            "name": "sam3.segment_text",
+            "category": "provider",
+            "ok": ok,
+            "duration_s": 1.2,
+            "simulator_time_s": clock,
+        },
+    ]
+
+
+def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Path) -> None:
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    from dashboard_store import Store
+
+    outputs = tmp_path / "outputs"
+    (outputs / "sessions").mkdir(parents=True)
+    session = _fake_session(outputs / "sessions")
+    run = next(session.rglob("run-x"))
+    # Keyframes: one before/after pair for the move_to_pose call, plus periodic frames.
+    for name in ("000001-reset", "000002-before-move-to-pose", "000003-after-move-to-pose"):
+        (run / "media/keyframes" / name).mkdir(parents=True)
+        (run / "media/keyframes" / name / "agentview.png").write_bytes(b"png")
+    # Three SAM3 requests: the first fails (no image saved), the next two return masks.
+    events = [json.loads(line) for line in (run / "trace/events.jsonl").read_text().splitlines()]
+    events += _sam3_call(run, 2, ok=False, masks=0, clock=1.0)
+    events += _sam3_call(run, 3, ok=True, masks=2, clock=2.0)
+    events += _sam3_call(run, 4, ok=True, masks=1, clock=3.0)
+    _write_jsonl(run / "trace/events.jsonl", events)
+    overlays = run / "media/overlays"
+    overlays.mkdir(parents=True)
+    # An older recording without the call name, then a newer one that names it.
+    (overlays / "sam3-000001-camera-agentview.json").write_text(
+        json.dumps({"camera_name": "agentview", "candidates": [{"label": "first"}]})
+    )
+    (overlays / "sam3-000002-camera-agentview.json").write_text(
+        json.dumps(
+            {
+                "camera_name": "agentview",
+                "candidates": [{"label": "second"}],
+                "call": "call-000004-sam3-segment-text",
+            }
+        )
+    )
+    (overlays / "sam3-000001-camera-agentview.png").write_bytes(b"png")
+
+    store = Store(outputs)
+    episode = store.episode(run)
+    spans = {span["index"]: span for span in episode["spans"]}
+    assert spans[1]["keyframes"]["before"][0].endswith("000002-before-move-to-pose/agentview.png")
+    assert spans[1]["keyframes"]["after"][0].endswith("000003-after-move-to-pose/agentview.png")
+    assert "overlay" not in spans[2]  # the failed request saved no image
+    assert spans[3]["overlay"]["candidates"] == [{"label": "first"}]
+    assert spans[3]["overlay"]["image"].endswith("sam3-000001-camera-agentview.png")
+    assert spans[4]["overlay"]["candidates"] == [{"label": "second"}]
+    assert spans[4]["overlay"]["image"] is None
+    assert episode["duration_s"] == 3.0
+
+    # Comparing a session with itself gives two identical columns over the same task rows.
+    compared = store.benchmark([session, session])
+    assert [column["successes"] for column in compared["columns"]] == [1, 1]
+    assert [row["task_id"] for row in compared["rows"]] == [0]
+    assert compared["columns"][0]["llm_cost_usd"] == 0.5
+    assert "provider: sam3.segment_text" in compared["columns"][0]["providers"]
+
+    log = session / "logs/agent.log"
+    log.parent.mkdir()
+    log.write_text("starting\nTraceback (most recent call last)\nretrying sam3\ndone\n")
+    assert [line["n"] for line in store.log(log, alerts=True)["lines"]] == [2]
+    assert [line["n"] for line in store.log(log, query="SAM3")["lines"]] == [3]
+    assert [line["n"] for line in store.log(log, tail=2)["lines"]] == [3, 4]
+
+
+def test_dashboard_serves_static_assets_only_from_its_folder(tmp_path: Path) -> None:
+    import threading
+    from urllib.error import HTTPError
+    from urllib.request import urlopen
+
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    import dashboard
+
+    (tmp_path / "outputs").mkdir()
+    store = dashboard.Store(tmp_path / "outputs")
+    server = dashboard.ThreadingHTTPServer(
+        ("127.0.0.1", 0), dashboard.make_handler(store, dashboard.LiveManager(store, []))
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with urlopen(base + "/static/app.js", timeout=10) as response:
+            assert "javascript" in response.headers["Content-Type"]
+            assert b"import" in response.read()
+        for name in [
+            "lib/charts.js",
+            "lib/ui.js",
+            "lib/util.js",
+            "views/episode.js",
+            "views/compare.js",
+        ]:
+            with urlopen(f"{base}/static/{name}", timeout=10) as response:
+                assert response.status == 200
+        for escape in ["../../dashboard.py", "..%2F..%2Fdashboard.py"]:
+            try:
+                urlopen(f"{base}/static/{escape}", timeout=10)
+                raise AssertionError(f"served a file outside the static folder: {escape}")
+            except HTTPError as exc:
+                assert exc.code in (400, 404)
+    finally:
+        server.shutdown()
+
+
+def test_dashboard_keyframes_follow_failed_and_nested_motion_calls(tmp_path: Path) -> None:
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    from dashboard_store import Store
+
+    run = tmp_path / "run"
+    # move_to_pose #1 raised (no "after"); go_home then called move_to_pose inside it.
+    for name in [
+        "000001-before-move-to-pose",
+        "000002-before-go-home",
+        "000003-before-move-to-pose",
+        "000004-after-move-to-pose",
+        "000005-after-go-home",
+    ]:
+        (run / "media/keyframes" / name).mkdir(parents=True)
+        (run / "media/keyframes" / name / "cam.png").write_bytes(b"png")
+    spans = [
+        {"index": i, "name": n, "category": "program"}
+        for i, n in enumerate(["move_to_pose", "go_home", "move_to_pose"], 1)
+    ]
+    Store(tmp_path)._pair_keyframes(run, spans)
+
+    def folders(span: dict) -> dict:
+        return {k: v[0].split("/")[-2][:6] for k, v in span["keyframes"].items()}
+
+    assert [folders(span) for span in spans] == [
+        {"before": "000001"},
+        {"before": "000002", "after": "000005"},
+        {"before": "000003", "after": "000004"},
+    ]

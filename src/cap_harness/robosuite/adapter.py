@@ -27,10 +27,13 @@ from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.geometry import invert_transform, matrix_to_pose, transform_pose
 from cap_harness.robosuite.codec import RobosuiteActionCodec
 from cap_harness.robosuite.registry import RobosuiteTaskMetadata, RobosuiteTaskRegistry
+from cap_harness.trajectory_timing import Settler, retime, retiming_enabled
 
 PANDA_JOINT_NAMES = tuple(f"panda_joint{i}" for i in range(1, 8))
 TRAJECTORY_TOLERANCE_RAD = 0.01
 TRAJECTORY_START_TOLERANCE_RAD = 0.02
+#: The original fixed settle budget. Settling now continues past it while the arm is still
+#: converging (cap_harness.trajectory_timing); kept for reference and compatibility.
 TRAJECTORY_MAX_STEPS_PER_WAYPOINT = 120
 _EEF_TO_HAND_ROTATION = np.array(
     [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64
@@ -512,6 +515,13 @@ class RobosuiteAdapter:
                 raise ValueError(f"trajectory joint_names do not match arm {arm!r}")
         final: Observation | None = None
         steps = 0
+        planned = count
+        # Follow the plan at a speed the joint controller can track (see trajectory_timing).
+        # All arms are subdivided together, so synchronized plans stay synchronized.
+        if retiming_enabled():
+            positions, grippers = retime(positions, grippers)
+            count = len(next(iter(positions.values())))
+        timing = {"planned_waypoints": planned, "executed_waypoints": count}
 
         def commands(waypoint: int) -> dict[str, ArmCommand]:
             return {
@@ -555,9 +565,9 @@ class RobosuiteAdapter:
             arm: float(np.max(np.abs(final.robot_state.joint_positions[arm] - values[-1])))
             for arm, values in positions.items()
         }
-        for _ in range(TRAJECTORY_MAX_STEPS_PER_WAYPOINT - 1):
-            if max(errors.values()) <= TRAJECTORY_TOLERANCE_RAD:
-                break
+        # Keep commanding the last waypoint while the arms are still getting closer.
+        settler = Settler(TRAJECTORY_TOLERANCE_RAD)
+        while settler.keep_going(max(errors.values())):
             result = self.step(RobotAction(commands(count - 1)))
             if not result.ok or result.observation is None:
                 return ExecutionResult(
@@ -591,16 +601,26 @@ class RobosuiteAdapter:
                 error=ApiError(
                     ErrorCode.TIMEOUT,
                     "final trajectory waypoint did not converge",
-                    details={"joint_error_rad": errors},
+                    details={
+                        "joint_error_rad": errors,
+                        "tolerance_rad": TRAJECTORY_TOLERANCE_RAD,
+                        **settler.details(),
+                        **timing,
+                    },
                 ),
                 final_errors=errors,
+                diagnostics=timing,
             )
         return ExecutionResult(
             ok=True,
             steps_executed=steps,
             final_observation=final,
             final_errors=errors if final is not None else {},
-            diagnostics={"joint_error_rad": errors if final is not None else {}},
+            diagnostics={
+                "joint_error_rad": errors if final is not None else {},
+                "settle_steps": settler.steps,
+                **timing,
+            },
         )
 
     def set_grippers(self, positions: Mapping[str, float]) -> ExecutionResult:

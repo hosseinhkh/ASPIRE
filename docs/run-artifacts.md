@@ -47,7 +47,9 @@ Every invocation creates a new directory and never overwrites an earlier run.
   BEHAVIOR-1K, so 10 fps), and `media/video-index.json` records the effective fps.
 - `media/keyframes/`: lossless RGB immediately before and after public motion API calls, plus one
   depth NPY attached to the first such keyframe in the run.
-- `media/overlays/`: top-1 SAM mask rendered over RGB; raw masks are not retained.
+- `media/overlays/`: SAM masks rendered over RGB, one image per segmentation request that
+  returned masks, with a JSON next to it (camera, candidates with label, score and box, and
+  `call`, the `trace/calls` folder of the request); raw masks are not retained.
 
 `run.json` records the backend names configured for the program; it does not assert service health.
 Program and provider spans record the

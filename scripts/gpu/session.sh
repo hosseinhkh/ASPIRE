@@ -371,6 +371,13 @@ already_reserved() {  # the holder runs with the same target on the same GPU
   [[ "$gpu" == "$GPU" ]] && awk -v a="$gib" -v b="$RESERVE" 'BEGIN { exit !(a + 0 == b + 0) }' \
     && [[ "$(reserve_held)" == [0-9]* ]]
 }
+reservation_gpu_elsewhere() {  # prints the GPU of a running reservation on another card
+  local target="${ASPIRE_STATE_DIR:-$HOME/.cache/aspire}/reservation.target" gpu gib
+  [[ -f "$target" ]] || return 0
+  read -r gpu gib < "$target"
+  [[ "$gpu" != "$GPU" && "$(reserve_held)" == [0-9]* ]] && printf '%s\n' "$gpu"
+  return 0
+}
 finish() {  # stop the monitor and the services this session started, then hold --reserve GiB
   stop_monitor
   copy_service_logs
@@ -382,7 +389,12 @@ finish() {  # stop the monitor and the services this session started, then hold 
   if [[ -n "$RESERVE" ]]; then
     step "Reserving ${RESERVE} GiB on GPU $GPU for later"
     stage_begin "reserve"
-    if already_reserved; then
+    local held_gpu
+    held_gpu="$(reservation_gpu_elsewhere)"
+    if [[ -n "$held_gpu" ]]; then
+      # One reservation at a time: holding here would release the one on the other card.
+      stage_end PASS "kept your reservation on GPU $held_gpu ($(reserve_held)); not moved to GPU $GPU (to move it: scripts/gpu/reserve.sh hold $RESERVE --gpu $GPU)"
+    elif already_reserved; then
       # services.sh stop has just restored it; re-holding would free it for a moment.
       stage_end PASS "already holding the ${RESERVE} GiB target ($(reserve_held))"
     elif scripts/gpu/reserve.sh hold "$RESERVE" --gpu "$GPU"; then

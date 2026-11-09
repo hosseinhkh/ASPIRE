@@ -92,7 +92,9 @@ simulator, because MuJoCo's GL context belongs to that thread. Its HTTP API is l
 
    Call `run_observer.on_reset / before_step / after_step` so the recorder sees every step.
    Copy the closest existing adapter: Robosuite for MuJoCo, YAM for real hardware with a
-   motion gate.
+   motion gate. If the controller limits how far a joint moves per step, use
+   `trajectory_timing.retime` and `Settler` in `execute_trajectory`, as both simulators do,
+   so planned motions are sent at a rate the arm can follow.
 2. **Tasks.** Write a task registry (`resolve(suite, task_id)` → metadata with
    `suite_name`, `task_id`, `task_name`, language, horizon).
 3. **Joint layout.** Add the embodiment's joints per arm to `JOINT_DIMENSIONS` in
@@ -145,4 +147,6 @@ To add a new segmenter, grasp model, planner or VLM:
 | Read the robot API | `docs/api-reference.md` |
 | Try a robot by hand | Dashboard → Live robots |
 | Run the self-improving loop | `scripts/gpu/demo.sh campaign` and `.claude/skills/iterative-debugging/` |
+| Compare two ideas, simulators or robots | Dashboard → tick runs → Compare, or `scripts/gpu/latency.py` |
+| Add a dashboard page | `scripts/gpu/dashboard/static/views/` and `dashboard_store.py` |
 | Check what was reviewed, fixed and planned | `docs/review/` |

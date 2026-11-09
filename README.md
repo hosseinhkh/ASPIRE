@@ -289,8 +289,15 @@ scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_
 
 **7. Look at the run in the dashboard.** Refresh **Runs** and open the newest session.
 
-- **An episode:** videos, calls (click one for its input and output), images and trajectories.
-- **The agent:** its whole conversation.
+- **Session → Tasks:** success per task, per agent version (dev / held-out) and per seed.
+- **Session → Episodes:** a thumbnail per episode; filter by task or by failed.
+- **An episode:** a replay. Every camera plays in sync, frame by frame if you like, under a
+  timeline of every call: the program's calls, the API stages inside them (IK, planning,
+  execution) and each model request (SAM3, Contact-GraspNet, PyRoki, cuRobo). Click a call to
+  jump the videos there and see its keyframes before and after, its SAM3 masks and scores,
+  and its full input, output and error. Failed calls are red.
+- **The agent:** its whole conversation and every program version it tried.
+- **Logs:** open any log in the viewer (search, errors only, follow), or download it.
 - **Download:** a zip, complete or logs only.
 
 **8. If an episode failed,** print why:
@@ -304,6 +311,38 @@ scripts/gpu/session.sh why "$(ls -td outputs/sessions/* | head -1)/episodes"
 ```bash
 scripts/gpu/services.sh stop
 ```
+
+### Compare runs: a new idea, another simulator, a real robot
+
+Record each variant as its own session with a name, on the same tasks and seeds:
+
+```bash
+scripts/gpu/session.sh run --name baseline --tasks standard --seeds "1 2 3"
+```
+
+Change the code (a new skill, model, prompt or planner), then:
+
+```bash
+scripts/gpu/session.sh run --name my-idea --tasks standard --seeds "1 2 3"
+```
+
+In the dashboard, tick both under **Runs** and press **Compare**. You get, side by side:
+
+- success per task, per agent and per phase, with the change in points;
+- model-service latency (median and p90), simulator time per step, motion speed;
+- LLM cost, GPU and git commit of each run.
+
+The same page compares any recordings: two simulators, a simulator and a real robot (live
+console recordings), or two versions of an agent. From a terminal:
+
+```bash
+python scripts/gpu/latency.py outputs/sessions/*-baseline outputs/sessions/*-my-idea
+```
+
+Motions are re-timed so the arm can follow them (see
+[`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#11-testing-latency-and-gpu-checks)). To
+compare against the original timing, run a session with
+`CAP_HARNESS_TRAJECTORY_RETIMING=0` in front of the command.
 
 ### Switch to another GPU (e.g. GPU 1), keeping your reservation on GPU 0
 
@@ -346,9 +385,9 @@ scripts/gpu/reserve.sh status
 gpustat
 ```
 
-Run sessions **without** `--reserve`, for example
-`scripts/gpu/session.sh run --tasks quick --no-preflight`. On GPU 1, `--reserve` would move
-your reservation from GPU 0 to GPU 1.
+Run sessions as usual, for example
+`scripts/gpu/session.sh run --tasks quick --no-preflight --reserve 30`. When your reservation
+is held on another GPU, `--reserve` leaves it there and says so.
 
 To go back, run the same steps with `scripts/gpu/use_gpu.sh 0`. When the services start on
 GPU 0 again, they share your reservation automatically.
@@ -372,7 +411,7 @@ That releases GPU 0.
 | GPU workstation: conda env, Opus 4.6 on Bedrock, light demos | [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md) |
 | Code review, known issues, and extension roadmap | [`docs/review/README.md`](docs/review/README.md) |
 | How the core works and how to add a robot or a model | [`docs/big-picture.md`](docs/big-picture.md) |
-| Dashboard and live robot console | [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#9-dashboard-and-live-robots) |
+| Dashboard, comparing runs, live robot console | [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#9-dashboard-and-live-robots) |
 
 ## Contribution Guidelines
 

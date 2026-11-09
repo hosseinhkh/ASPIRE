@@ -24,12 +24,15 @@ from cap_harness.contracts import (
 from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.libero.codec import LIBERO_ACTION_DIMENSION, LiberoActionCodec
 from cap_harness.libero.registry import LiberoSuiteRegistry, LiberoTaskMetadata
+from cap_harness.trajectory_timing import Settler, retime, retiming_enabled
 
 CAMERA_NAMES: tuple[str, str] = ("agentview", "robot0_eye_in_hand")
 BASE_FRAME = "robot_base"
 PRIMARY_ARM = "primary"
 PANDA_JOINT_NAMES: tuple[str, ...] = tuple(f"robot0_joint{i}" for i in range(1, 8))
 TRAJECTORY_JOINT_TOLERANCE_RAD = 0.01
+#: The original fixed settle budget. Settling now continues past it while the arm is still
+#: converging (cap_harness.trajectory_timing); kept for reference and compatibility.
 TRAJECTORY_MAX_STEPS_PER_WAYPOINT = 120
 
 _LiberoAdapterT = TypeVar("_LiberoAdapterT", bound="LiberoAdapter")
@@ -788,14 +791,28 @@ class LiberoAdapter:
         steps_executed = 0
         terminated = False
         truncated = False
+        # Follow the plan at a speed the joint controller can track (see trajectory_timing).
+        waypoints = np.asarray(trajectory.joint_positions)
+        gripper_waypoints = (
+            None
+            if trajectory.gripper_positions is None
+            else np.asarray(trajectory.gripper_positions)
+        )
+        if retiming_enabled():
+            retimed, retimed_grippers = retime(
+                {PRIMARY_ARM: waypoints},
+                None if gripper_waypoints is None else {PRIMARY_ARM: gripper_waypoints},
+            )
+            waypoints = retimed[PRIMARY_ARM]
+            gripper_waypoints = None if retimed_grippers is None else retimed_grippers[PRIMARY_ARM]
+        timing = {
+            "planned_waypoints": len(trajectory.joint_positions),
+            "executed_waypoints": len(waypoints),
+        }
 
         def apply_waypoint(index: int) -> StepResult:
-            joints = trajectory.joint_positions[index]
-            gripper = (
-                None
-                if trajectory.gripper_positions is None
-                else float(trajectory.gripper_positions[index])
-            )
+            joints = waypoints[index]
+            gripper = None if gripper_waypoints is None else float(gripper_waypoints[index])
             return self.step(
                 RobotAction(
                     arms={
@@ -809,7 +826,7 @@ class LiberoAdapter:
                 )
             )
 
-        for index, _joints in enumerate(trajectory.joint_positions):
+        for index in range(len(waypoints)):
             result = apply_waypoint(index)
             if not result.ok or result.observation is None:
                 return ExecutionResult(
@@ -831,16 +848,16 @@ class LiberoAdapter:
             if terminated or truncated:
                 break
 
-        final_joints = trajectory.joint_positions[-1]
+        final_joints = waypoints[-1]
         error_rad = float(
             np.max(
                 np.abs(final_observation.robot_state.joint_positions[PRIMARY_ARM] - final_joints)
             )
         )
-        for _ in range(TRAJECTORY_MAX_STEPS_PER_WAYPOINT - 1):
-            if error_rad <= TRAJECTORY_JOINT_TOLERANCE_RAD or terminated or truncated:
-                break
-            result = apply_waypoint(len(trajectory.joint_positions) - 1)
+        # Keep commanding the last waypoint while the arm is still getting closer.
+        settler = Settler(TRAJECTORY_JOINT_TOLERANCE_RAD)
+        while not (terminated or truncated) and settler.keep_going(error_rad):
+            result = apply_waypoint(len(waypoints) - 1)
             if not result.ok or result.observation is None:
                 return ExecutionResult(
                     ok=False,
@@ -853,7 +870,7 @@ class LiberoAdapter:
                         code=ErrorCode.EXECUTION_FAILED,
                         message="final trajectory settle returned no observation",
                     ),
-                    diagnostics={"failed_waypoint": len(trajectory.joint_positions) - 1},
+                    diagnostics={"failed_waypoint": len(waypoints) - 1},
                 )
             steps_executed += 1
             final_observation = result.observation
@@ -876,10 +893,11 @@ class LiberoAdapter:
                     details={
                         "joint_error_rad": error_rad,
                         "tolerance_rad": TRAJECTORY_JOINT_TOLERANCE_RAD,
-                        "max_steps": TRAJECTORY_MAX_STEPS_PER_WAYPOINT,
+                        **settler.details(),
+                        **timing,
                     },
                 ),
-                diagnostics={"failed_waypoint": len(trajectory.joint_positions) - 1},
+                diagnostics={"failed_waypoint": len(waypoints) - 1, **timing},
             )
         if terminated or truncated:
             return ExecutionResult(
@@ -908,6 +926,8 @@ class LiberoAdapter:
             diagnostics={
                 "control_period_s": self.control_period_s,
                 "joint_error_rad": error_rad,
+                "settle_steps": settler.steps,
+                **timing,
             },
         )
 
