@@ -277,10 +277,16 @@ def test_segmentation_trace_keeps_boxes_and_annotated_overlay_without_masks(tmp_
     assert len(output["segmentations"]) == 5
     assert output["segmentations"][0]["box_xyxy"] == [1.0, 2.0, 12.0, 13.0]
     assert "mask" not in output["segmentations"][0]
-    assert len(list((recorder.root / "media/overlays").glob("*.png"))) == 1
-    overlay_metadata = json.loads(
-        next((recorder.root / "media/overlays").glob("*.json")).read_text()
-    )
+    overlays = recorder.root / "media/overlays"
+    # One annotated overlay, plus the clean image and one mask per candidate for viewers.
+    assert [path.name for path in overlays.glob("sam3-*.png") if "-mask-" not in path.name] == [
+        "sam3-000001-agentview.png"
+    ]
+    assert len(list(overlays.glob("sam3-000001-agentview-mask-*.png"))) == 5
+    assert (overlays / "sam3-000001-agentview-rgb.jpg").exists()
+    overlay_metadata = json.loads(next(overlays.glob("*.json")).read_text())
+    assert overlay_metadata["image"] == "sam3-000001-agentview-rgb.jpg"
+    assert overlay_metadata["candidates"][0]["mask"] == "sam3-000001-agentview-mask-0.png"
     assert [item["label"] for item in overlay_metadata["candidates"]] == [
         f"candidate-{index}" for index in range(5)
     ]

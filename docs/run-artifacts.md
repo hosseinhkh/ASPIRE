@@ -47,9 +47,22 @@ Every invocation creates a new directory and never overwrites an earlier run.
   BEHAVIOR-1K, so 10 fps), and `media/video-index.json` records the effective fps.
 - `media/keyframes/`: lossless RGB immediately before and after public motion API calls, plus one
   depth NPY attached to the first such keyframe in the run.
-- `media/overlays/`: SAM masks rendered over RGB, one image per segmentation request that
-  returned masks, with a JSON next to it (camera, candidates with label, score and box, and
-  `call`, the `trace/calls` folder of the request); raw masks are not retained.
+- `media/overlays/`: what each perception request saw, as pictures. Every file names `call`,
+  the `trace/calls` folder of its request.
+  - `sam3-NNNNNN-<camera>.png`: the top five SAM3 candidates drawn over the image, for each
+    request that returned masks. Beside it: `-rgb.jpg` (the clean image), `-mask-<i>.png` (each
+    candidate's mask, 1-bit, at the same size) and `.json` (camera, image shape, and per candidate
+    label, score, box, mask pixels and mask file).
+  - `grasps-NNNNNN-camera-<camera>.png` (+ `.json`): grasp candidates drawn on each camera that
+    sees them, best first, with score, width and position.
+- `media/geometry/NNNNNN-<kind>.json`: what each call located, in the robot base frame when the
+  frame is known (camera-frame data is converted with the camera pose). `cloud`: points in
+  millimetres, down-sampled to 2,000 per object or 6,000 for a whole-scene projection;
+  `box`: centre, rotation and extents from `estimate_geometry`/`localize_object`; `grasps` and
+  `grasp` (the one `select_grasp` chose): poses, scores and widths. The dashboard's 3D view
+  reads these.
+- `logs/evidence-errors.txt`: present only when writing any of these failed; such a failure
+  never fails the run.
 
 `run.json` records the backend names configured for the program; it does not assert service health.
 Program and provider spans record the
@@ -59,8 +72,8 @@ The harness never substitutes a backend silently.
 Large arrays are deduplicated by content under `payloads/` and referenced from readable JSON by
 relative path, dtype, shape, and hash; small arrays are stored inline. Observations retain camera
 metadata rather than duplicate RGB or depth arrays. SAM3 retains metadata, scores, and bounding-box
-coordinates for its top five results, plus an RGB overlay for the top result; raw masks are not
-persisted. Contact-GraspNet collections retain five candidates. Point-cloud artifacts retain only
+coordinates for its top five results in the trace; the masks themselves are kept as small 1-bit
+images under `media/overlays/`. Contact-GraspNet collections retain five candidates. Point-cloud artifacts retain only
 frame, point count, and color-presence metadata; XYZ and RGB point arrays are not persisted.
 Reward, benchmark success, and protocol predicates never appear in generated-program results, API
 traces, or per-step records. The runtime writes only final aggregate outcomes and the separate

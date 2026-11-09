@@ -31,6 +31,7 @@ from cap_harness.contracts import (
     SegmentationSet,
     StepResult,
 )
+from cap_harness.evidence import Evidence
 
 SCHEMA_VERSION = "1.0"
 TERMINATION_REASONS = {
@@ -269,16 +270,19 @@ class _Span:
         recorder: RunRecorder,
         *,
         capture_segmentation: bool,
+        name: str = "",
     ) -> None:
         self.path, self.serializer, self.state = path, serializer, state
         self.recorder = recorder
         self.capture_segmentation = capture_segmentation
+        self.name = name
 
     def output(self, value: object, *, ok: bool = True) -> object:
         with self.recorder.timing.measure("trace_write"):
             self.serializer.dump(self.path / "output.json", value)
         if self.capture_segmentation and isinstance(value, SegmentationSet):
             self.recorder.segmentation_overlay(value, call=self.path.name)
+        self.recorder.capture_evidence(value, call=self.path.name, name=self.name)
         self.state["ok"] = ok
         return value
 
@@ -349,6 +353,7 @@ class RunRecorder:
             (self.root / name).mkdir(parents=True, exist_ok=True)
         (self.root / "trace/model/turns.jsonl").touch()
         self.serializer = Serializer(self.root)
+        self.evidence = Evidence(self.root)
         self.max_steps, self.step_count = max_steps, 0
         self.frequency = float(control_frequency_hz)
         self.cumulative_reward = 0.0
@@ -450,6 +455,7 @@ class RunRecorder:
                 state,
                 self,
                 capture_segmentation=category == "provider" and name.startswith("sam3."),
+                name=name,
             )
         except BaseException as exc:
             self.serializer.dump(
@@ -562,6 +568,18 @@ class RunRecorder:
         with self.timing.measure("overlay"):
             self._segmentation_overlay(result, call)
 
+    def capture_evidence(self, value: object, *, call: str, name: str) -> None:
+        """Grasp overlays, point clouds and boxes for a call's output (see evidence.py)."""
+        try:
+            with self.timing.measure("overlay"):
+                self.evidence.capture(
+                    value, call=call, name=name, observation=self.last_observation
+                )
+        # Evidence is for people reading the run; it must never fail the run itself.
+        except Exception as exc:
+            with (self.root / "logs/evidence-errors.txt").open("a", encoding="utf-8") as log:
+                log.write(f"{call}: {type(exc).__name__}: {exc}\n")
+
     def _segmentation_overlay(self, result: SegmentationSet, call: str | None = None) -> None:
         segmentations = result.segmentations[:5]
         first = segmentations[0]
@@ -635,12 +653,22 @@ class RunRecorder:
         if image.width > 960:
             image.thumbnail((960, 960 * image.height // image.width))
         image.save(directory / f"{stem}.png", optimize=True)
+        # The clean image and one mask per candidate, so a viewer can show each mask alone.
+        clean = Image.fromarray(np.asarray(rgb, dtype=np.uint8)).resize(image.size)
+        clean.save(directory / f"{stem}-rgb.jpg", quality=90)
+        for record in records:
+            segmentation = segmentations[record["index"]]
+            mask = Image.fromarray(np.asarray(segmentation.mask, dtype=np.uint8) * 255, "L")
+            mask = mask.resize(image.size, Image.NEAREST).convert("1")
+            mask.save(directory / f"{stem}-mask-{record['index']}.png", optimize=True)
+            record["mask"] = f"{stem}-mask-{record['index']}.png"
         atomic_json(
             directory / f"{stem}.json",
             {
                 "camera_name": first.camera_name,
                 "camera_frame": first.frame,
                 "image_shape": list(first.mask.shape),
+                "image": f"{stem}-rgb.jpg",
                 "candidates": records,
                 "call": call,
             },

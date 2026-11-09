@@ -301,9 +301,10 @@ def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Pa
     assert spans[1]["keyframes"]["before"][0].endswith("000002-before-move-to-pose/agentview.png")
     assert spans[1]["keyframes"]["after"][0].endswith("000003-after-move-to-pose/agentview.png")
     assert "overlay" not in spans[2]  # the failed request saved no image
-    assert spans[3]["overlay"]["candidates"] == [{"label": "first", "score": 0.12}]
+    # Older recordings kept no per-candidate masks: the viewer falls back to the image.
+    assert spans[3]["overlay"]["candidates"] == [{"label": "first", "score": 0.12, "mask": None}]
     assert spans[3]["overlay"]["image"].endswith("sam3-000001-camera-agentview.png")
-    assert spans[4]["overlay"]["candidates"] == [{"label": "second", "score": 0.9}]
+    assert spans[4]["overlay"]["candidates"] == [{"label": "second", "score": 0.9, "mask": None}]
     # Only the low-confidence segmentation is flagged, linked to its call.
     assert [(w["level"], w["span"]) for w in episode["warnings"]] == [("warn", "span-000003")]
     assert "first" in episode["warnings"][0]["text"]
@@ -407,3 +408,122 @@ def test_dashboard_keyframes_follow_failed_and_nested_motion_calls(tmp_path: Pat
         {"before": "000002", "after": "000005"},
         {"before": "000003", "after": "000004"},
     ]
+
+
+def test_dashboard_reads_arrays_without_numpy_and_builds_the_3d_scene(tmp_path: Path) -> None:
+    import numpy as np
+
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    from dashboard_store import Store, read_npy
+
+    np.save(tmp_path / "a.npy", np.arange(6, dtype=np.float64).reshape(3, 2))
+    np.save(tmp_path / "b.npy", np.array([True, False]))
+    assert read_npy(tmp_path / "a.npy") == {
+        "shape": [3, 2],
+        "dtype": "<f8",
+        "values": [[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]],
+    }
+    assert read_npy(tmp_path / "b.npy")["values"] == [True, False]
+
+    run = tmp_path / "run"
+    geometry = run / "media/geometry"
+    geometry.mkdir(parents=True)
+    (geometry / "000001-cloud.json").write_text(
+        json.dumps({"kind": "cloud", "call": "call-000004-x", "points_mm": [1, 2, 3]})
+    )
+    call = run / "trace/calls/call-000005-move-to-pose"
+    call.mkdir(parents=True)
+    pose = {"$type": "Pose", "frame": "robot_base", "position": {"$array_inline": [0.5, 0, 0.3]}}
+    (call / "input.json").write_text(json.dumps({"args": [pose], "kwargs": {}}))
+    steps = []
+    for k in range(6):
+        joints = {"$array_inline": [0.1 * k, 0.0]}
+        hand = {"position": {"$array_inline": [0.4, 0.0, 0.1 * k]}}
+        steps.append(
+            {
+                "simulator_time_s": 0.05 * k,
+                "robot_state": {
+                    "joint_positions": {"primary": joints},
+                    "end_effector_poses": {"primary": hand},
+                },
+                "action": {"arms": {"primary": {"target": {"$array_inline": [0.5, 0.0]}}}},
+            }
+        )
+    _write_jsonl(run / "episode/steps.jsonl", steps)
+
+    store = Store(tmp_path)
+    scene = store.scene(run)
+    assert [item["kind"] for item in scene["items"]] == ["cloud"]
+    assert scene["targets"] == [
+        {
+            "call": "call-000005-move-to-pose",
+            "position": [0.5, 0.0, 0.3],
+            "quaternion_wxyz": None,
+            "frame": "robot_base",
+        }
+    ]
+    assert len(scene["ee_path"]) == 3  # every other step
+    window = store.steps(run, 0.1, 0.2)
+    assert window["t"] == [0.1, 0.15, 0.2]
+    assert window["arms"]["primary"]["measured"][0] == [0.2, 0.0]
+    assert window["arms"]["primary"]["commanded"][0] == [0.5, 0.0]
+
+
+def test_agent_story_links_reasoning_code_changes_and_batch_results(tmp_path: Path) -> None:
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    from dashboard_store import Store
+
+    workspace = tmp_path / "agents/llm-x"
+    run = workspace / "dev_v01/libero-pro/s/00-t/0051/run-a"
+    run.mkdir(parents=True)
+    (run / "run.json").write_text(json.dumps({"suite": "s", "task_id": 0, "seed": 51}))
+    (run / "outcome.json").write_text(json.dumps({"task_success": False, "program_ok": True}))
+    v1 = "soup = localize_object('soup')\nresult = 1\n"
+    v2 = "soup = localize_object('blue soup can')\nresult = 1\n"
+    ws = "/somewhere/else/agents/llm-x"
+
+    def use(tool_id: str, name: str, data: dict) -> dict:
+        return {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": data}],
+            },
+        }
+
+    def said(kind: str, text: str) -> dict:
+        key = "thinking" if kind == "thinking" else "text"
+        return {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": kind, key: text}]},
+        }
+
+    def done(tool_id: str, text: str) -> dict:
+        block = {"type": "tool_result", "tool_use_id": tool_id, "content": text}
+        return {"type": "user", "message": {"role": "user", "content": [block]}}
+
+    command = (
+        f"cap-harness run-batch --seeds 51 --program {ws}/program_v01.py --output-root {ws}/dev_v01"
+    )
+    _write_jsonl(
+        workspace / "transcript.jsonl",
+        [
+            said("thinking", "start with the plain name"),
+            use("t1", "Write", {"file_path": f"{ws}/program_v01.py", "content": v1}),
+            done("t1", "written"),
+            use("t2", "Bash", {"command": command}),
+            done("t2", "0/1 succeeded"),
+            said("text", "SAM3 picked the wrong can; describe it by colour"),
+            use("t3", "Write", {"file_path": f"{ws}/program_v02.py", "content": v2}),
+            done("t3", "written"),
+        ],
+    )
+    story = Store(tmp_path).agent(workspace / "transcript.jsonl")["story"]
+    assert [c["kind"] for c in story] == ["code", "run", "code"]
+    assert story[0]["reasoning"] == [{"kind": "thinking", "text": "start with the plain name"}]
+    assert story[0]["code"] == v1 and story[0]["diff"] is None
+    assert story[1]["seeds"] == ["51"] and story[1]["output_tail"] == "0/1 succeeded"
+    assert story[1]["results"]["total"] == 1 and story[1]["results"]["passes"] == 0
+    assert story[1]["results"]["runs"][0]["seed"] == 51
+    assert "+soup = localize_object('blue soup can')" in story[2]["diff"]
+    assert story[2]["reasoning"][0]["text"].startswith("SAM3 picked the wrong can")

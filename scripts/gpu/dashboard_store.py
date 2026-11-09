@@ -273,7 +273,12 @@ class Store:
         media = {
             "videos": [self.rel(p) for p in sorted((run / "media/videos").glob("*.mp4"))],
             "keyframes": [self.rel(p) for p in sorted((run / "media/keyframes").glob("*/*.png"))],
-            "overlays": [self.rel(p) for p in sorted((run / "media/overlays").rglob("*.png"))],
+            "overlays": [
+                self.rel(p)
+                for p in sorted((run / "media/overlays").rglob("*.png"))
+                if "-mask-" not in p.name
+            ],
+            "geometry": len(list((run / "media/geometry").glob("*.json"))),
         }
         video_index = read_json(run / "media/video-index.json") or {}
         texts = {}
@@ -361,6 +366,7 @@ class Store:
         spans.sort(key=lambda s: s["index"])
         self._pair_keyframes(run, spans)
         self._pair_overlays(run, spans)
+        self._pair_evidence(run, spans)
         return spans
 
     def _pair_keyframes(self, run: Path, spans: list[dict[str, Any]]) -> None:
@@ -411,10 +417,17 @@ class Store:
         for meta in sorted((run / "media/overlays").glob("sam3-*.json")):
             data = read_json(meta) or {}
             image = meta.with_suffix(".png")
+            base = meta.parent / str(data.get("image") or "")
+            candidates = []
+            for candidate in data.get("candidates", []):
+                mask = meta.parent / str(candidate.get("mask") or "")
+                candidates.append({**candidate, "mask": self.rel(mask) if mask.is_file() else None})
             overlay = {
                 "image": self.rel(image) if image.exists() else None,
+                "base": self.rel(base) if data.get("image") and base.is_file() else None,
                 "camera": data.get("camera_name"),
-                "candidates": data.get("candidates", []),
+                "image_shape": data.get("image_shape"),
+                "candidates": candidates,
             }
             span = by_folder.get(str(data.get("call")))
             if span is not None:
@@ -428,6 +441,103 @@ class Store:
         ]
         for span, overlay in zip(with_masks, unnamed, strict=False):
             span["overlay"] = overlay
+
+    def _pair_evidence(self, run: Path, spans: list[dict[str, Any]]) -> None:
+        """Attach grasp overlays and 3D geometry files to the calls that produced them."""
+        by_folder = {Path(s["dir"]).name: s for s in spans if s.get("dir")}
+        for meta in sorted((run / "media/overlays").glob("grasps-*.json")):
+            data = read_json(meta) or {}
+            span = by_folder.get(str(data.get("call")))
+            image = meta.with_suffix(".png")
+            if span is not None and image.exists():
+                span.setdefault("grasp_overlays", []).append(
+                    {
+                        "image": self.rel(image),
+                        "camera": data.get("camera_name"),
+                        "candidates": data.get("candidates", []),
+                    }
+                )
+        for path in sorted((run / "media/geometry").glob("*.json")):
+            data = read_json(path) or {}
+            span = by_folder.get(str(data.get("call")))
+            if span is not None:
+                span.setdefault("geometry", []).append(
+                    {
+                        "kind": data.get("kind"),
+                        "frame": data.get("frame"),
+                        "points": data.get("point_count"),
+                        "grasps": len(data.get("grasps") or []),
+                        "center": data.get("center"),
+                        "extents": data.get("extents"),
+                    }
+                )
+
+    def scene(self, run: Path) -> dict[str, Any]:
+        """Everything with a position, in the robot base frame, for the 3D view."""
+        items = []
+        for path in sorted((run / "media/geometry").glob("*.json")):
+            data = read_json(path)
+            if isinstance(data, dict):
+                items.append({**data, "file": path.name})
+        targets = []
+        for call in sorted((run / "trace/calls").glob("call-*")):
+            if not any(name in call.name for name in ("move-to-pose", "plan-motion")):
+                continue
+            pose = _find_pose(read_json(call / "input.json"))
+            if pose is not None:
+                targets.append({"call": call.name, **pose})
+        path_xyz: list[list[float]] = []
+        steps = run / "episode/steps.jsonl"
+        if steps.exists():
+            with steps.open(encoding="utf-8") as stream:
+                for number, line in enumerate(stream):
+                    try:
+                        state = json.loads(line).get("robot_state") or {}
+                    except ValueError:
+                        continue
+                    for pose in (state.get("end_effector_poses") or {}).values():
+                        position = _inline(pose.get("position") if pose else None)
+                        if position and number % 2 == 0:
+                            path_xyz.append([round(float(v), 4) for v in position[:3]])
+                        break
+        return {"items": items, "targets": targets, "ee_path": path_xyz[:5000]}
+
+    def steps(self, run: Path, start_s: float, end_s: float, limit: int = 4000) -> dict[str, Any]:
+        """Commanded and measured joints, per arm, for the steps in a time window."""
+        out: dict[str, Any] = {"t": [], "arms": {}}
+        path = run / "episode/steps.jsonl"
+        if not path.exists():
+            return out
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    step = json.loads(line)
+                except ValueError:
+                    continue
+                t = float(step.get("simulator_time_s") or 0.0)
+                if t < start_s - 1e-6:
+                    continue
+                if t > end_s + 1e-6 or len(out["t"]) >= limit:
+                    break
+                out["t"].append(round(t, 3))
+                state = step.get("robot_state") or {}
+                commands = ((step.get("action") or {}).get("arms")) or {}
+                for arm, joints in (state.get("joint_positions") or {}).items():
+                    entry = out["arms"].setdefault(arm, {"measured": [], "commanded": []})
+                    entry["measured"].append(_inline(joints) or [])
+                    entry["commanded"].append(
+                        _inline((commands.get(arm) or {}).get("target")) or []
+                    )
+        return out
+
+    def array(self, path: Path, limit: int = 20000) -> dict[str, Any]:
+        """A saved NumPy array (trace payload) as nested lists; long arrays keep evenly spaced rows."""
+        data = read_npy(path)
+        rows = data["values"]
+        if len(rows) > limit:
+            step = len(rows) / limit
+            rows = [rows[int(i * step)] for i in range(limit)]
+        return {"shape": data["shape"], "dtype": data["dtype"], "values": rows}
 
     @staticmethod
     def _language(run: Path) -> str | None:
@@ -553,7 +663,99 @@ class Store:
                              "seeds": data.get("seeds")})  # fmt: skip
         return {"path": self.rel(transcript), "events": events, "texts": texts,
                 "programs": programs, "versions": versions,
+                "story": self._story(events, workspace),
                 **self._agent_stats(transcript)}  # fmt: skip
+
+    def _story(self, events: list[dict[str, Any]], workspace: Path) -> list[dict[str, Any]]:
+        """The debugging loop as chapters: what the agent thought, what it changed, what ran.
+
+        A chapter ends at each program written or edited, and at each batch it ran; the
+        thinking and text before it are its reasoning.
+        """
+        chapters: list[dict[str, Any]] = []
+        reasoning: list[dict[str, str]] = []
+        previous: dict[str, str] = {}  # program name -> last full text seen
+        for event in events:
+            kind = event.get("kind")
+            if kind in ("thinking", "text") and event.get("role", "assistant") == "assistant":
+                text = str(event.get("text") or "").strip()
+                if text:
+                    reasoning.append({"kind": kind, "text": text[:6000]})
+                continue
+            if kind == "tool_result" and chapters and chapters[-1].get("awaiting"):
+                chapter = chapters[-1]
+                chapter.pop("awaiting")
+                chapter["ok"] = not event.get("is_error")
+                text = " ".join(p.get("text", "") for p in event.get("parts") or [])
+                chapter["output_tail"] = text[-1500:]
+                continue
+            if kind != "tool_use":
+                continue
+            name, data = event.get("name"), event.get("input") or {}
+            program = str(data.get("file_path") or "")
+            if name in ("Write", "Edit", "MultiEdit") and PROGRAM_FILE.search(program):
+                label = Path(program).name
+                if name == "Write":
+                    new = str(data.get("content") or "")
+                    old = previous.get(_version_family(label), "")
+                    previous[_version_family(label)] = new
+                    diff = _diff(old, new, label) if old else None
+                    code = None if old else new[:20000]
+                else:
+                    edits = data.get("edits") or [data]
+                    diff = "\n".join(
+                        _diff(str(e.get("old_string", "")), str(e.get("new_string", "")), label)
+                        for e in edits
+                    )
+                    code = None
+                chapters.append({"kind": "code", "file": label, "tool": name,
+                                 "reasoning": reasoning, "diff": diff, "code": code,
+                                 "awaiting": True})  # fmt: skip
+                reasoning = []
+            elif name == "Bash" and "run-batch" in str(data.get("command") or ""):
+                command = str(data.get("command"))
+                root = _flag(command, "--output-root")
+                chapters.append({"kind": "run", "command": command[:2000],
+                                 "seeds": _flag(command, "--seeds", many=True),
+                                 "output": root, "reasoning": reasoning,
+                                 "results": self._batch_results(workspace, root),
+                                 "awaiting": True})  # fmt: skip
+                reasoning = []
+        if reasoning:
+            chapters.append({"kind": "end", "reasoning": reasoning})
+        for chapter in chapters:
+            chapter.pop("awaiting", None)
+        return chapters
+
+    def _batch_results(self, workspace: Path, root: str | None) -> dict[str, Any] | None:
+        """The runs a batch wrote, found under the agent's workspace by the path's tail."""
+        if not root:
+            return None
+        tail = [part for part in root.rstrip("/").split("/") if part and "$" not in part]
+        tail = tail[-3:]
+        folder = None
+        for size in range(len(tail), 0, -1):
+            candidate = workspace.joinpath(*tail[-size:])
+            if candidate.is_dir():
+                folder = candidate
+                break
+        if folder is None:
+            return None
+        runs = [self._episode_row(run, folder) for run in self.runs_in(folder)]
+        return {
+            "path": self.rel(folder),
+            "passes": sum(1 for r in runs if r["task_success"] is True),
+            "total": len(runs),
+            "runs": [
+                {
+                    "path": r["path"],
+                    "seed": r["seed"],
+                    "task_success": r["task_success"],
+                    "termination": r["termination"],
+                }
+                for r in runs
+            ],
+        }
 
     def agent_image(self, transcript: Path, ref: str) -> tuple[bytes, str]:
         i, j, k = (int(x) for x in ref.split("."))
@@ -700,6 +902,107 @@ def _warnings(spans: list[dict[str, Any]], outcome: dict[str, Any]) -> list[dict
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+#: Generated programs: the quick agent's program_vNN.py and the campaign's code/vNN_slug.py.
+PROGRAM_FILE = re.compile(r"(program_[\w-]+|(^|/)v\d+[\w-]*|fix_code[\w-]*)\.py$")
+
+
+def _version_family(name: str) -> str:
+    """Files that are versions of one program share a family (diffs are taken within it)."""
+    return "program" if re.match(r"(program_|v\d+)", name) else name
+
+
+def _diff(old: str, new: str, label: str) -> str:
+    import difflib
+
+    lines = difflib.unified_diff(
+        old.splitlines(), new.splitlines(), "before", label, lineterm="", n=2
+    )
+    return "\n".join(list(lines)[:600])
+
+
+def _flag(command: str, flag: str, many: bool = False) -> Any:
+    """A flag's value(s) in a shell command line (quotes stripped)."""
+    import shlex
+
+    try:
+        words = shlex.split(command.replace("\\\n", " "))
+    except ValueError:
+        words = command.split()
+    if flag not in words:
+        return None
+    rest = words[words.index(flag) + 1 :]
+    if not many:
+        return rest[0] if rest else None
+    values = []
+    for word in rest:
+        if word.startswith("--"):
+            break
+        values.append(word)
+    return values
+
+
+def _inline(value: Any) -> list[Any] | None:
+    """A recorded array value: plain list or {"$array_inline": [...]}."""
+    if isinstance(value, dict):
+        value = value.get("$array_inline")
+    return value if isinstance(value, list) else None
+
+
+def _find_pose(value: Any, depth: int = 0) -> dict[str, Any] | None:
+    """The first recorded Pose inside a call's input (the target of a motion call)."""
+    if depth > 6:
+        return None
+    if isinstance(value, dict):
+        if value.get("$type") == "Pose":
+            position = _inline(value.get("position"))
+            if position:
+                return {
+                    "position": [float(v) for v in position[:3]],
+                    "quaternion_wxyz": _inline(value.get("quaternion_wxyz")),
+                    "frame": value.get("frame"),
+                }
+        children = list(value.values())
+    elif isinstance(value, list):
+        children = value
+    else:
+        return None
+    for child in children:
+        found = _find_pose(child, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+_NPY_TYPES = {"<f8": "d", "<f4": "f", "<i8": "q", "<i4": "i", "<u1": "B", "|u1": "B", "|b1": "B"}
+
+
+def read_npy(path: Path) -> dict[str, Any]:
+    """Read a C-order .npy file with the standard library (the dashboard needs no NumPy)."""
+    import array
+    import ast
+
+    raw = path.read_bytes()
+    if raw[:6] != b"\x93NUMPY":
+        raise ValueError(f"not a .npy file: {path.name}")
+    major = raw[6]
+    header_len = int.from_bytes(raw[8:10] if major == 1 else raw[8:12], "little")
+    start = (10 if major == 1 else 12) + header_len
+    header = ast.literal_eval(raw[(10 if major == 1 else 12) : start].decode("latin1"))
+    code = _NPY_TYPES.get(header["descr"])
+    if code is None or header.get("fortran_order"):
+        raise ValueError(f"unsupported array layout: {header}")
+    values = array.array(code)
+    values.frombytes(raw[start:])
+    flat = [bool(v) for v in values] if header["descr"] == "|b1" else list(values)
+    shape = list(header["shape"])
+    if len(shape) >= 2:
+        width = 1
+        for dim in shape[1:]:
+            width *= dim
+        flat = [flat[i : i + width] for i in range(0, len(flat), width)]
+    return {"shape": shape, "dtype": header["descr"], "values": flat}
 
 
 def _has_masks(run: Path, span: dict[str, Any]) -> bool:

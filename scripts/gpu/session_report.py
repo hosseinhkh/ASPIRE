@@ -275,9 +275,12 @@ def episode_page(run: Path, out_dir: Path) -> tuple[str, dict[str, object]]:
         ]
         body.append("</table>")
 
-    overlays = sorted((run / "media/overlays").rglob("*.png"))
+    # Annotated images only: per-candidate masks are for the dashboard's mask viewer.
+    overlays = [
+        p for p in sorted((run / "media/overlays").rglob("*.png")) if "-mask-" not in p.name
+    ]
     if overlays:
-        body.append("<h2>SAM3 overlays (top mask per call)</h2><div class='grid'>")
+        body.append("<h2>SAM3 and grasp overlays</h2><div class='grid'>")
         body += [
             f"<figure><a href='{rel(o, out_dir)}'><img src='{rel(o, out_dir)}'></a>"
             f"<figcaption>{escape(str(o.relative_to(run / 'media/overlays')))}"

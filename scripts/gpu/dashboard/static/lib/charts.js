@@ -3,7 +3,8 @@ import { esc } from "./util.js";
 
 export const PALETTE = ["#3b6fd8", "#d64545", "#1f9d55", "#c27c0e", "#8a63d2", "#0f8b8d", "#d4447c", "#6b7385"];
 
-export function lineChart(series, title, { width = 900, height = 190, bands = [], marker = null, x = "", id = "" } = {}) {
+// colorKey(name) groups series that share a colour (e.g. "j0" and "j0 cmd"); dash(name) draws one dashed.
+export function lineChart(series, title, { width = 900, height = 190, bands = [], marker = null, x = "", id = "", colorKey = null, dash = null } = {}) {
   const names = Object.keys(series).filter((k) => series[k] && series[k].length);
   if (!names.length) return "";
   const all = names.flatMap((k) => series[k]);
@@ -17,7 +18,9 @@ export function lineChart(series, title, { width = 900, height = 190, bands = []
   const L = 50, T = 22, B = 18, W = width - L - 12, H = height - T - B;
   const X = (i) => L + W * (i / Math.max(n - 1, 1));
   const Y = (v) => T + H * (1 - (v - lo) / (hi - lo));
-  const legendRows = Math.ceil(names.length / 4);
+  const keys = [...new Set(names.map((k) => (colorKey ? colorKey(k) : k)))];
+  const colorOf = (k) => PALETTE[keys.indexOf(colorKey ? colorKey(k) : k) % 8];
+  const legendRows = Math.ceil(keys.length / 4);
   let s = `<svg class="chart" ${id ? `id="${id}"` : ""} viewBox="0 0 ${width} ${height + 16 * legendRows}" data-l="${L}" data-w="${W}" data-n="${n}">`;
   s += `<text x="${L}" y="14" class="c-title">${esc(title)}</text>`;
   s += `<text x="6" y="${T + 9}" class="c-axis">${+hi.toPrecision(3)}</text><text x="6" y="${T + H}" class="c-axis">${+lo.toPrecision(3)}</text>`;
@@ -27,10 +30,12 @@ export function lineChart(series, title, { width = 900, height = 190, bands = []
     s += `<rect x="${x0}" y="${T}" width="${Math.max(x1 - x0, 1)}" height="${H}" class="band ${i % 2 ? "b2" : "b1"}"><title>${esc(b.title)}</title></rect>`;
     if (b.label) s += `<text x="${x0 + 2}" y="${T + 10}" class="c-band">${esc(b.label)}</text>`;
   });
-  names.forEach((k, j) => {
+  names.forEach((k) => {
     const ys = series[k];
     const pts = ys.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
-    s += `<polyline fill="none" stroke="${PALETTE[j % 8]}" stroke-width="1.5" points="${pts}"/>`;
+    s += `<polyline fill="none" stroke="${colorOf(k)}" stroke-width="1.5" ${dash && dash(k) ? 'stroke-dasharray="5 4"' : ""} points="${pts}"/>`;
+  });
+  keys.forEach((k, j) => {
     const lx = L + (j % 4) * 210, ly = height + 10 + 16 * Math.floor(j / 4);
     s += `<rect x="${lx}" y="${ly - 9}" width="10" height="10" rx="2" fill="${PALETTE[j % 8]}"/><text x="${lx + 14}" y="${ly}" class="c-legend">${esc(k)}</text>`;
   });

@@ -260,6 +260,18 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
                     return self._json(store.episode(store.resolve(query["path"])))
                 if path == "/api/call":
                     return self._json(store.call(store.resolve(query["path"])))
+                if path == "/api/scene":
+                    return self._json(store.scene(store.resolve(query["path"])))
+                if path == "/api/steps":
+                    return self._json(
+                        store.steps(
+                            store.resolve(query["path"]),
+                            float(query.get("start", "0")),
+                            float(query.get("end", "1e9")),
+                        )
+                    )
+                if path == "/api/array":
+                    return self._json(store.array(store.resolve(query["path"])))
                 if path == "/api/agent":
                     return self._json(store.agent(store.resolve(query["path"])))
                 if path == "/api/agent-image":

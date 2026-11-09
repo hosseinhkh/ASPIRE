@@ -3,6 +3,10 @@
 import { api, esc, q, num, fileUrl, size, pretty, mmss } from "../lib/util.js";
 import { badge, card, downloads, img, jsonView, tabs, bindTabs, bindZoom } from "../lib/ui.js";
 import { lineChart, moveMarkers, gantt, movePlayhead } from "../lib/charts.js";
+import { maskViewer, bindMaskViewers, graspBlock, geometryChips } from "../lib/perception.js";
+import { scene3d } from "../lib/scene3d.js";
+
+const MOTION = new Set(["move_to_pose", "move_to_joints", "move_synchronized", "execute_trajectory", "go_home", "step"]);
 
 let state = null;
 
@@ -53,13 +57,13 @@ export async function render(app, params) {
       <div class="panel chain"><div class="panel-head"><b>Chain of calls</b><label class="small"><input type="checkbox" id="only-failed"> failed only</label></div><div id="chain"></div></div>
       <div class="panel detail"><div id="detail"><p class="muted">Select a call.</p></div></div>
     </div>
-    ${tabs("ep", ["Trajectories", "Perception (SAM3)", "Keyframes", "Program & output", ...(d.commands.length ? ["Console commands"] : []), "Files"], "Trajectories")}`;
+    ${tabs("ep", ["Trajectories", "Perception", "3D scene", "Keyframes", "Program & output", ...(d.commands.length ? ["Console commands"] : []), "Files"], "Trajectories")}`;
 
   drawChain();
   document.getElementById("only-failed").onchange = drawChain;
   document.querySelectorAll("#timeline rect.bar").forEach((r) => (r.onclick = () => select(r.dataset.key, true)));
   setupPlayer();
-  bindTabs("ep", renderTab);
+  bindTabs("ep", renderTab, afterTab);
   document.querySelectorAll("[data-goto]").forEach((a) => (a.onclick = (e) => {
     e.preventDefault();
     select(a.dataset.goto, true);
@@ -117,12 +121,17 @@ async function select(id, seekVideo) {
     ${s.error ? `<div class="alert bad">${esc(s.error)}</div>` : ""}
     ${s.keyframes ? `<h3>Keyframes</h3><div class="kf-pair"><div><div class="muted small">before</div><div class="grid">${(s.keyframes.before || []).map((p) => img(p, p.split("/").slice(-2).join("/"))).join("")}</div></div>
       <div><div class="muted small">after</div><div class="grid">${(s.keyframes.after || []).map((p) => img(p, p.split("/").slice(-2).join("/"))).join("")}</div></div></div>` : ""}
-    ${overlays.map(overlayBlock).join("")}
+    ${overlays.map((x) => maskViewer(x, x.id)).join("")}
+    ${[s, ...descendants].map(graspBlock).join("")}
+    ${geometryChips([s, ...descendants])}
+    ${MOTION.has(s.name) && s.end > s.start ? `<h3>Joint tracking</h3><div id="tracking" class="muted small">loading...</div>` : ""}
     ${descendants.length ? `<h3>Inside this call</h3><div class="small">${descendants.map((c) => `<div class="sub ${c.ok === false ? "bad" : ""}" data-id="${c.id}">#${c.index} ${esc(c.name)} <span class="muted">${esc(c.category)} · ${num(c.wall_s, 3)} s</span>${c.error ? ` — ${esc(c.error)}` : ""}</div>`).join("")}</div>` : ""}
     <h3>Input · output · error</h3><div id="io" class="muted small">${s.dir ? "loading..." : "No recorded input/output for this call."}</div>`;
   document.getElementById("jump").onclick = () => seek(s.start);
   box.querySelectorAll(".sub[data-id]").forEach((el) => (el.onclick = () => select(el.dataset.id, true)));
   bindZoom(box);
+  bindMaskViewers(box);
+  if (MOTION.has(s.name) && s.end > s.start) trackingChart(s, id);
   if (s.dir) {
     const c = await api(`/api/call?path=${q(s.dir)}`);
     if (state.selected !== id) return;
@@ -132,13 +141,32 @@ async function select(id, seekVideo) {
   }
 }
 
-function overlayBlock(s) {
-  const o = s.overlay;
-  return `<h3>SAM3 result <span class="muted small">(#${s.index} ${esc(s.name)})</span></h3>
-    <div class="overlay">${o.image ? img(o.image, "SAM3 overlay", "big") : ""}
-      <table class="table compact"><thead><tr><th>#</th><th>label</th><th>score</th><th>box (x0,y0,x1,y1)</th><th>pixels</th></tr></thead><tbody>
-      ${(o.candidates || []).map((c, i) => `<tr class="${i === 0 ? "top-pick" : ""}"><td>${c.index ?? i}</td><td>${esc(c.label)}</td><td><b>${num(c.score, 3)}</b></td><td class="mono small">${esc((c.box_xyxy || []).join(", "))}</td><td>${c.mask_pixels ?? ""}</td></tr>`).join("")}
-      </tbody></table></div>`;
+// Commanded (dashed) and measured (solid) joints during a motion call, and the largest gap
+// between them: the arm lagging its plan, or never reaching the last waypoint, shows here.
+async function trackingChart(s, id) {
+  const data = await api(`/api/steps?path=${q(state.d.path)}&start=${s.start}&end=${s.end}`);
+  if (state.selected !== id) return;
+  const box = document.getElementById("tracking");
+  if (!box) return;
+  const parts = Object.entries(data.arms).map(([arm, a]) => {
+    const series = {}, gap = { "largest gap": [] };
+    a.measured.forEach((measured, i) => {
+      const command = a.commanded[i] || [];
+      let worst = 0;
+      measured.forEach((v, j) => {
+        (series[`j${j}`] ||= []).push(v);
+        if (command.length === measured.length) {
+          (series[`j${j} cmd`] ||= []).push(command[j]);
+          worst = Math.max(worst, Math.abs(command[j] - v));
+        }
+      });
+      gap["largest gap"].push(worst);
+    });
+    return lineChart(series, `${arm}: joints (rad) · solid measured, dashed commanded`, { height: 170, x: `${data.t.length} steps`, colorKey: (k) => k.split(" ")[0], dash: (k) => k.endsWith("cmd") })
+      + lineChart(gap, `${arm}: largest joint gap, commanded vs measured (rad)`, { height: 110, x: "steps" });
+  });
+  box.className = "";
+  box.innerHTML = parts.join("") || `<p class="muted small">No steps in this window.</p>`;
 }
 
 // ---------------------------------------------------------------------------- player --
@@ -199,16 +227,30 @@ function update(t) {
 }
 
 // ------------------------------------------------------------------------------ tabs --
+async function afterTab(tab) {
+  if (tab === "Perception") bindMaskViewers(document.getElementById("ep-body"));
+  if (tab === "3D scene") {
+    const data = await api(`/api/scene?path=${q(state.d.path)}`);
+    const box = document.getElementById("scene3d");
+    if (box) scene3d(box, data, { onSelect: (folder) => {
+      const span = state.d.spans.find((x) => x.dir && x.dir.endsWith("/" + folder));
+      if (span) { select(span.id, true); document.getElementById("detail").scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+    } });
+  }
+}
+
 function renderTab(tab) {
   const d = state.d;
   if (tab === "Trajectories") {
     const charts = Object.entries(d.charts);
     return charts.length ? charts.map(([title, series]) => lineChart(series, title, { height: 170, x: "time →", marker: 0 })).join("") + `<p class="muted small">The vertical line follows the video.</p>` : `<p class="muted">No steps recorded.</p>`;
   }
-  if (tab === "Perception (SAM3)") {
-    const withOverlay = d.spans.filter((s) => s.overlay);
-    return withOverlay.length ? withOverlay.map(overlayBlock).join("") : `<p class="muted">No SAM3 calls in this episode.</p>`;
+  if (tab === "Perception") {
+    const seg = d.spans.filter((s) => s.overlay).map((s) => maskViewer(s, s.id));
+    const grasps = d.spans.filter((s) => s.grasp_overlays).map(graspBlock);
+    return seg.concat(grasps).join("") || `<p class="muted">No SAM3 or grasp calls in this episode.</p>`;
   }
+  if (tab === "3D scene") return `<div id="scene3d"><p class="muted">loading...</p></div>`;
   if (tab === "Keyframes") {
     const motions = d.spans.filter((s) => s.keyframes);
     return motions.length ? motions.map((s) => `<div class="kf-row"><div class="kf-title"><b>#${s.index} ${esc(s.name)}</b> ${badge(s.ok, { yes: "ok", no: "failed" })} <span class="muted small">${num(s.start, 1)}–${num(s.end, 1)} s</span></div>

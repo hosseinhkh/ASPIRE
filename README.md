@@ -294,9 +294,14 @@ scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_
 - **An episode:** a replay. Every camera plays in sync, frame by frame if you like, under a
   timeline of every call: the program's calls, the API stages inside them (IK, planning,
   execution) and each model request (SAM3, Contact-GraspNet, PyRoki, cuRobo). Click a call to
-  jump the videos there and see its keyframes before and after, its SAM3 masks and scores,
-  and its full input, output and error. Failed calls are red.
-- **The agent:** its whole conversation and every program version it tried.
+  jump the videos there and see its keyframes before and after, each SAM3 mask (switch them on
+  one by one), the grasps drawn on the image, and its full input, output and error. Motions
+  get a chart of commanded against measured joints. Failed calls are red, and warnings flag
+  low-confidence SAM3 results.
+- **3D scene tab:** the point clouds, boxes, grasps, motion targets and hand path of the
+  episode, in the robot base frame. Drag to rotate.
+- **The agent:** *How it debugged*, one card per step (its reasoning, the code change, the
+  seeds that passed), then its whole conversation.
 - **Logs:** open any log in the viewer (search, errors only, follow), or download it.
 - **Download:** a zip, complete or logs only.
 
