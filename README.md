@@ -330,7 +330,8 @@ In the dashboard, tick both under **Runs** and press **Compare**. You get, side 
 
 - success per task, per agent and per phase, with the change in points;
 - model-service latency (median and p90), simulator time per step, motion speed;
-- LLM cost, GPU and git commit of each run.
+- the agent's model, context window and effort, its cost, the motion timing, the GPU and the
+  git commit of each run.
 
 The same page compares any recordings: two simulators, a simulator and a real robot (live
 console recordings), or two versions of an agent. From a terminal:
@@ -339,10 +340,41 @@ console recordings), or two versions of an agent. From a terminal:
 python scripts/gpu/latency.py outputs/sessions/*-baseline outputs/sessions/*-my-idea
 ```
 
-Motions are re-timed so the arm can follow them (see
-[`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#11-testing-latency-and-gpu-checks)). To
-compare against the original timing, run a session with
-`CAP_HARNESS_TRAJECTORY_RETIMING=0` in front of the command.
+By default the harness behaves exactly like the published release. One idea is already built in
+to try this way: motions re-timed so the arm can follow them (see
+[`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#11-testing-latency-and-gpu-checks)). Record
+the variant with `CAP_HARNESS_TRAJECTORY_RETIMING=1` in front of the command, then compare.
+
+### Check that you match the paper (Opus 4.6)
+
+The `--llm` agent in step 6 is a smoke test, and its score is not comparable with the paper. The
+paper's Opus 4.6 numbers come from the full iterative-debugging pipeline:
+
+| Setting | Paper | `demo.sh campaign --paper` | `--llm` agent (step 6) |
+| --- | --- | --- | --- |
+| Claude | Opus 4.6, max effort, 1M-token context | same | same |
+| Pipeline | coordinator, worker, unseen check, held-out validation, verifier | same | one agent, short prompt |
+| LIBERO-Pro seeds | dev 51–65, unseen 66–80, held-out 1–50 | same | dev 51–53, held-out 1–3 |
+| Program versions | until the dev threshold or a plateau | same | at most 4 |
+| Cameras, episode length, motion timing | 800×512, harness default, published | same | same |
+| Cost | about $24 and an hour of agent time per task (Table 18) | capped at $40 per task | the cap you set |
+
+For example, the paper reports 100% on 50 held-out seeds for LIBERO-Pro Object "alphabet soup"
+(`libero_object_swap` task 0; Table 10). To check that task:
+
+```bash
+scripts/gpu/demo.sh campaign --paper --headless
+```
+
+It runs unattended under a $40 cap and takes a few hours of GPU time (15 dev seeds per program
+version, 15 unseen-check seeds, 50 held-out seeds). At the end it prints the campaign summary
+with the held-out score, and the context window the model really used: it should say
+1,000,000. For other tasks, pass a task list with `--tasks FILE` (format in
+`.claude/skills/iterative-debugging/scripts/gen_progress.py`). The paper's per-task results
+are in Tables 10, 11, 13 and 19.
+
+Even with the same protocol, expect spread between runs: the paper's three Opus 4.6 runs differ
+by up to 47 points on one task (Table 25).
 
 ### Switch to another GPU (e.g. GPU 1), keeping your reservation on GPU 0
 

@@ -31,8 +31,8 @@ BASE_FRAME = "robot_base"
 PRIMARY_ARM = "primary"
 PANDA_JOINT_NAMES: tuple[str, ...] = tuple(f"robot0_joint{i}" for i in range(1, 8))
 TRAJECTORY_JOINT_TOLERANCE_RAD = 0.01
-#: The original fixed settle budget. Settling now continues past it while the arm is still
-#: converging (cap_harness.trajectory_timing); kept for reference and compatibility.
+#: The published settle budget. With CAP_HARNESS_TRAJECTORY_RETIMING=1 settling continues past
+#: it while the arm is still converging (cap_harness.trajectory_timing).
 TRAJECTORY_MAX_STEPS_PER_WAYPOINT = 120
 
 _LiberoAdapterT = TypeVar("_LiberoAdapterT", bound="LiberoAdapter")
@@ -791,24 +791,27 @@ class LiberoAdapter:
         steps_executed = 0
         terminated = False
         truncated = False
-        # Follow the plan at a speed the joint controller can track (see trajectory_timing).
+        # Off by default (published behaviour); CAP_HARNESS_TRAJECTORY_RETIMING=1 follows the
+        # plan at a speed the joint controller can track (see trajectory_timing).
         waypoints = np.asarray(trajectory.joint_positions)
         gripper_waypoints = (
             None
             if trajectory.gripper_positions is None
             else np.asarray(trajectory.gripper_positions)
         )
-        if retiming_enabled():
-            retimed, retimed_grippers = retime(
+        retimed = retiming_enabled()
+        timing: dict[str, object] = {}
+        if retimed:
+            new_positions, new_grippers = retime(
                 {PRIMARY_ARM: waypoints},
                 None if gripper_waypoints is None else {PRIMARY_ARM: gripper_waypoints},
             )
-            waypoints = retimed[PRIMARY_ARM]
-            gripper_waypoints = None if retimed_grippers is None else retimed_grippers[PRIMARY_ARM]
-        timing = {
-            "planned_waypoints": len(trajectory.joint_positions),
-            "executed_waypoints": len(waypoints),
-        }
+            waypoints = new_positions[PRIMARY_ARM]
+            gripper_waypoints = None if new_grippers is None else new_grippers[PRIMARY_ARM]
+            timing = {
+                "planned_waypoints": len(trajectory.joint_positions),
+                "executed_waypoints": len(waypoints),
+            }
 
         def apply_waypoint(index: int) -> StepResult:
             joints = waypoints[index]
@@ -854,8 +857,9 @@ class LiberoAdapter:
                 np.abs(final_observation.robot_state.joint_positions[PRIMARY_ARM] - final_joints)
             )
         )
-        # Keep commanding the last waypoint while the arm is still getting closer.
-        settler = Settler(TRAJECTORY_JOINT_TOLERANCE_RAD)
+        # Command the last waypoint until it converges: at most 119 more steps as published,
+        # or, re-timed, while the arm is still getting closer.
+        settler = Settler(TRAJECTORY_JOINT_TOLERANCE_RAD, extended=retimed)
         while not (terminated or truncated) and settler.keep_going(error_rad):
             result = apply_waypoint(len(waypoints) - 1)
             if not result.ok or result.observation is None:
@@ -893,8 +897,11 @@ class LiberoAdapter:
                     details={
                         "joint_error_rad": error_rad,
                         "tolerance_rad": TRAJECTORY_JOINT_TOLERANCE_RAD,
-                        **settler.details(),
-                        **timing,
+                        **(
+                            {**settler.details(), **timing}
+                            if retimed
+                            else {"max_steps": TRAJECTORY_MAX_STEPS_PER_WAYPOINT}
+                        ),
                     },
                 ),
                 diagnostics={"failed_waypoint": len(waypoints) - 1, **timing},
@@ -926,8 +933,7 @@ class LiberoAdapter:
             diagnostics={
                 "control_period_s": self.control_period_s,
                 "joint_error_rad": error_rad,
-                "settle_steps": settler.steps,
-                **timing,
+                **({"settle_steps": settler.steps, **timing} if retimed else {}),
             },
         )
 

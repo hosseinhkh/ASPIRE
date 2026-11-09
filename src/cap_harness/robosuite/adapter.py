@@ -32,8 +32,8 @@ from cap_harness.trajectory_timing import Settler, retime, retiming_enabled
 PANDA_JOINT_NAMES = tuple(f"panda_joint{i}" for i in range(1, 8))
 TRAJECTORY_TOLERANCE_RAD = 0.01
 TRAJECTORY_START_TOLERANCE_RAD = 0.02
-#: The original fixed settle budget. Settling now continues past it while the arm is still
-#: converging (cap_harness.trajectory_timing); kept for reference and compatibility.
+#: The published settle budget. With CAP_HARNESS_TRAJECTORY_RETIMING=1 settling continues past
+#: it while the arms are still converging (cap_harness.trajectory_timing).
 TRAJECTORY_MAX_STEPS_PER_WAYPOINT = 120
 _EEF_TO_HAND_ROTATION = np.array(
     [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64
@@ -515,13 +515,16 @@ class RobosuiteAdapter:
                 raise ValueError(f"trajectory joint_names do not match arm {arm!r}")
         final: Observation | None = None
         steps = 0
-        planned = count
-        # Follow the plan at a speed the joint controller can track (see trajectory_timing).
-        # All arms are subdivided together, so synchronized plans stay synchronized.
-        if retiming_enabled():
+        # Off by default (published behaviour); CAP_HARNESS_TRAJECTORY_RETIMING=1 follows the
+        # plan at a speed the joint controllers can track (see trajectory_timing). All arms are
+        # subdivided together, so synchronized plans stay synchronized.
+        retimed = retiming_enabled()
+        timing: dict[str, object] = {}
+        if retimed:
+            planned = count
             positions, grippers = retime(positions, grippers)
             count = len(next(iter(positions.values())))
-        timing = {"planned_waypoints": planned, "executed_waypoints": count}
+            timing = {"planned_waypoints": planned, "executed_waypoints": count}
 
         def commands(waypoint: int) -> dict[str, ArmCommand]:
             return {
@@ -565,8 +568,9 @@ class RobosuiteAdapter:
             arm: float(np.max(np.abs(final.robot_state.joint_positions[arm] - values[-1])))
             for arm, values in positions.items()
         }
-        # Keep commanding the last waypoint while the arms are still getting closer.
-        settler = Settler(TRAJECTORY_TOLERANCE_RAD)
+        # Command the last waypoint until it converges: at most 119 more steps as published,
+        # or, re-timed, while the arms are still getting closer.
+        settler = Settler(TRAJECTORY_TOLERANCE_RAD, extended=retimed)
         while settler.keep_going(max(errors.values())):
             result = self.step(RobotAction(commands(count - 1)))
             if not result.ok or result.observation is None:
@@ -603,9 +607,15 @@ class RobosuiteAdapter:
                     "final trajectory waypoint did not converge",
                     details={
                         "joint_error_rad": errors,
-                        "tolerance_rad": TRAJECTORY_TOLERANCE_RAD,
-                        **settler.details(),
-                        **timing,
+                        **(
+                            {
+                                "tolerance_rad": TRAJECTORY_TOLERANCE_RAD,
+                                **settler.details(),
+                                **timing,
+                            }
+                            if retimed
+                            else {}
+                        ),
                     },
                 ),
                 final_errors=errors,
@@ -618,8 +628,7 @@ class RobosuiteAdapter:
             final_errors=errors if final is not None else {},
             diagnostics={
                 "joint_error_rad": errors if final is not None else {},
-                "settle_steps": settler.steps,
-                **timing,
+                **({"settle_steps": settler.steps, **timing} if retimed else {}),
             },
         )
 

@@ -471,7 +471,8 @@ cmd_run() {
     "git_commit=$(git rev-parse --short HEAD 2>/dev/null)" \
     "git_dirty=$([[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]] && echo true || echo false)" \
     "tasks=$tasks" "seeds=$seeds" "agents=$llm_json" "profile=${CAP_HARNESS_PROFILE:-}" \
-    "model=${ANTHROPIC_MODEL:-}" "reserve_gib=$RESERVE" "status=running"
+    "model=${ANTHROPIC_MODEL:-}" "claude_effort=${ASPIRE_EFFORT:-max}" \
+    "motion_retiming=${CAP_HARNESS_TRAJECTORY_RETIMING:-0}" "reserve_gib=$RESERVE" "status=running"
   echo "session: $SESSION"
   echo "tasks: $tasks ($(wc -l <<< "$task_lines") per seed) | seeds: $seeds | agents: ${#llm[@]} | GPU $GPU"
 

@@ -22,9 +22,11 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    ```
    {{CAP_HARNESS}} run-batch --benchmark {{BENCHMARK}} --suite {{SUITE}} --task-id {{TASK_ID}} \
      --seeds {{DEV_SEEDS}} --init-mode {{INIT_MODE}} --program {{WS}}/program_v01.py \
-     --output-root {{WS}}/dev_v01 --max-steps {{MAX_STEPS}} --workers 1 \
-     --camera-width 512 --camera-height 512
+     --output-root {{WS}}/dev_v01 --workers 1
    ```
+
+   Keep run-batch's defaults for the cameras (800x512) and the episode length: they are the
+   ones the published results use.
 
    Each seed takes 1-5 minutes. Run the batch with the Bash tool in the background (or with a
    600000 ms timeout) and wait for it. Never run two batches at once: the GPU is shared.

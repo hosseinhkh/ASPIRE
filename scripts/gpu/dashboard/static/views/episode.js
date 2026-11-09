@@ -33,6 +33,7 @@ export async function render(app, params) {
       ${card("Task", `<span class="small">${esc(m.benchmark)}</span>`, esc(m.task_name || ""))}
     </div>
     ${d.program_error ? `<div class="alert bad"><b>Program error:</b> ${esc(d.program_error.message || JSON.stringify(d.program_error))}</div>` : ""}
+    ${(d.warnings || []).map((w) => `<div class="alert ${w.level === "warn" ? "warn" : "info"}">${esc(w.text)}${w.span ? ` <a href="#" data-goto="${esc(w.span)}">Show the call</a>` : ""}</div>`).join("")}
     <div class="panel player">
       <div class="videos">${d.media.videos.map((v) => `<figure><video class="sync" muted playsinline preload="auto" src="${fileUrl(v)}"></video><figcaption>${esc(v.split("/").pop().replace(".mp4", ""))}</figcaption></figure>`).join("") || `<p class="muted">No videos were recorded for this episode.</p>`}</div>
       ${d.media.videos.length ? `<div class="controls">
@@ -59,6 +60,11 @@ export async function render(app, params) {
   document.querySelectorAll("#timeline rect.bar").forEach((r) => (r.onclick = () => select(r.dataset.key, true)));
   setupPlayer();
   bindTabs("ep", renderTab);
+  document.querySelectorAll("[data-goto]").forEach((a) => (a.onclick = (e) => {
+    e.preventDefault();
+    select(a.dataset.goto, true);
+    document.getElementById("detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }));
   const firstFailure = failed.find((s) => !s.parent) || failed[0];
   select((firstFailure || top[0] || {}).id, false);
 }
@@ -93,6 +99,10 @@ async function select(id, seekVideo) {
   if (!s) return;
   state.selected = id;
   document.querySelectorAll("#chain .call").forEach((el) => el.classList.toggle("selected", el.dataset.id === id));
+  // A nested call sits in collapsed groups: open them so the selection is visible.
+  const row = [...document.querySelectorAll("#chain .call")].find((el) => el.dataset.id === id);
+  for (let p = row?.parentElement; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true;
+  row?.scrollIntoView({ block: "nearest" });
   document.querySelectorAll("#timeline rect.bar").forEach((r) => r.classList.toggle("selected", r.dataset.key === id));
   if (seekVideo) seek(s.start);
   const descendants = [];

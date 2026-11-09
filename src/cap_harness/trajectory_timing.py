@@ -18,8 +18,10 @@ Two remedies, used by both adapters:
   It never stops before the original 120-step budget, so nothing that converged before fails
   now. It stops early only on a stall (an arm blocked by contact) or at ``SETTLE_MAX_STEPS``.
 
-Set ``CAP_HARNESS_TRAJECTORY_RETIMING=0`` to execute plans exactly as before (for comparisons
-with the published harness); settling still extends only while there is progress.
+Both are **off by default**, so the harness executes plans exactly as the published ASPIRE
+release does and results stay comparable with the paper (whose agents, and skill library,
+learned to stage long moves around this behaviour). Set ``CAP_HARNESS_TRAJECTORY_RETIMING=1``
+to turn both on, and compare the two with the dashboard's Compare page.
 """
 
 from __future__ import annotations
@@ -42,8 +44,9 @@ SETTLE_PROGRESS_RAD = 0.002
 
 
 def retiming_enabled() -> bool:
-    value = os.environ.get("CAP_HARNESS_TRAJECTORY_RETIMING", "1").strip().lower()
-    return value not in {"0", "false", "no", "off"}
+    """Whether ``CAP_HARNESS_TRAJECTORY_RETIMING`` turns re-timing and extended settling on."""
+    value = os.environ.get("CAP_HARNESS_TRAJECTORY_RETIMING", "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def retime(
@@ -97,10 +100,15 @@ def retime(
 
 
 class Settler:
-    """Decide whether to keep commanding the final waypoint after a trajectory ends."""
+    """Decide whether to keep commanding the final waypoint after a trajectory ends.
 
-    def __init__(self, tolerance_rad: float) -> None:
+    ``extended=False`` is the published harness: at most ``SETTLE_MIN_STEPS`` settle steps,
+    whatever the progress.
+    """
+
+    def __init__(self, tolerance_rad: float, *, extended: bool = True) -> None:
         self.tolerance_rad = float(tolerance_rad)
+        self.extended = bool(extended)
         self.steps = 0
         self.best = float("inf")
         self.since_progress = 0
@@ -110,6 +118,11 @@ class Settler:
         """Call with the current error before each settle step; False means stop."""
         if error_rad <= self.tolerance_rad:
             return False
+        if not self.extended:
+            if self.steps >= SETTLE_MIN_STEPS:
+                return False
+            self.steps += 1
+            return True
         if error_rad < self.best - SETTLE_PROGRESS_RAD:
             self.best = error_rad
             self.since_progress = 0

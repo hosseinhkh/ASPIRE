@@ -282,13 +282,13 @@ def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Pa
     overlays.mkdir(parents=True)
     # An older recording without the call name, then a newer one that names it.
     (overlays / "sam3-000001-camera-agentview.json").write_text(
-        json.dumps({"camera_name": "agentview", "candidates": [{"label": "first"}]})
+        json.dumps({"camera_name": "agentview", "candidates": [{"label": "first", "score": 0.12}]})
     )
     (overlays / "sam3-000002-camera-agentview.json").write_text(
         json.dumps(
             {
                 "camera_name": "agentview",
-                "candidates": [{"label": "second"}],
+                "candidates": [{"label": "second", "score": 0.9}],
                 "call": "call-000004-sam3-segment-text",
             }
         )
@@ -301,17 +301,35 @@ def test_dashboard_store_pairs_media_compares_runs_and_filters_logs(tmp_path: Pa
     assert spans[1]["keyframes"]["before"][0].endswith("000002-before-move-to-pose/agentview.png")
     assert spans[1]["keyframes"]["after"][0].endswith("000003-after-move-to-pose/agentview.png")
     assert "overlay" not in spans[2]  # the failed request saved no image
-    assert spans[3]["overlay"]["candidates"] == [{"label": "first"}]
+    assert spans[3]["overlay"]["candidates"] == [{"label": "first", "score": 0.12}]
     assert spans[3]["overlay"]["image"].endswith("sam3-000001-camera-agentview.png")
-    assert spans[4]["overlay"]["candidates"] == [{"label": "second"}]
+    assert spans[4]["overlay"]["candidates"] == [{"label": "second", "score": 0.9}]
+    # Only the low-confidence segmentation is flagged, linked to its call.
+    assert [(w["level"], w["span"]) for w in episode["warnings"]] == [("warn", "span-000003")]
+    assert "first" in episode["warnings"][0]["text"]
     assert spans[4]["overlay"]["image"] is None
     assert episode["duration_s"] == 3.0
+
+    # A second agent that reports the window and thinking Claude Code really used.
+    usage = {"opus-4-6": {"contextWindow": 1_000_000, "thinkingTokens": 7, "costUSD": 1.0}}
+    _write_jsonl(
+        session / "agents/llm-two/transcript.jsonl",
+        [{"type": "result", "subtype": "success", "total_cost_usd": 1.0, "modelUsage": usage}],
+    )
+    meta = json.loads((session / "session.json").read_text())
+    meta.update(claude_effort="max", motion_retiming="0")
+    (session / "session.json").write_text(json.dumps(meta))
 
     # Comparing a session with itself gives two identical columns over the same task rows.
     compared = store.benchmark([session, session])
     assert [column["successes"] for column in compared["columns"]] == [1, 1]
     assert [row["task_id"] for row in compared["rows"]] == [0]
-    assert compared["columns"][0]["llm_cost_usd"] == 0.5
+    column = compared["columns"][0]
+    assert column["llm_cost_usd"] == 1.5
+    assert column["agent_models"] == {
+        "opus-4-6": {"context_window": 1_000_000, "thinking_tokens": 7}
+    }
+    assert (column["claude_effort"], column["motion_retiming"]) == ("max", "0")
     assert "provider: sam3.segment_text" in compared["columns"][0]["providers"]
 
     log = session / "logs/agent.log"

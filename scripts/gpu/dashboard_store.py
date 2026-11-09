@@ -36,6 +36,8 @@ MOTION_TOOLS = {
     "move_to_pose", "move_synchronized", "open_gripper", "close_gripper", "go_home",
 }  # fmt: skip
 PHASE = re.compile(r"^(dev_v\d+|heldout|unseen\w*|dev\w*|validation\w*)$")
+#: Below this SAM3 score the segmenter is guessing: the top mask is often another object.
+LOW_SAM3_SCORE = 0.3
 LOG_ALERT = re.compile(r"Traceback|Error|ERROR|Exception|FAIL|CRITICAL|WARN|Killed|out of memory")
 
 
@@ -312,6 +314,7 @@ class Store:
             ),
             "video_fps": video_index.get("fps"),
             "spans": spans,
+            "warnings": _warnings(spans, outcome),
             "calls": [s for s in spans if s.get("dir")],
             "charts": charts,
             "chart_steps": len(next(iter(next(iter(charts.values()), {}).values()), [])),
@@ -459,6 +462,15 @@ class Store:
                     turns=event.get("num_turns"),
                     cost_usd=event.get("total_cost_usd"),
                     minutes=round((event.get("duration_ms") or 0) / 60000, 1),
+                    # What Claude Code really ran with (window, thinking), per model.
+                    models={
+                        name: {
+                            "context_window": usage.get("contextWindow"),
+                            "thinking_tokens": usage.get("thinkingTokens"),
+                        }
+                        for name, usage in (event.get("modelUsage") or {}).items()
+                        if isinstance(usage, dict)
+                    },
                 )
             for block in (event.get("message") or {}).get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
@@ -560,10 +572,20 @@ class Store:
             episodes = [self._episode_row(run, path) for run in self.runs_in(path)]
             meta = read_json(path / "session.json") or {}
             agent_costs = []
+            agent_models: dict[str, dict[str, Any]] = {}
             for transcript in path.rglob("transcript.jsonl"):
-                cost = self._agent_stats(transcript).get("cost_usd")
-                if cost is not None:
-                    agent_costs.append(float(cost))
+                stats = self._agent_stats(transcript)
+                if stats.get("cost_usd") is not None:
+                    agent_costs.append(float(stats["cost_usd"]))
+                for model, usage in (stats.get("models") or {}).items():
+                    entry = agent_models.setdefault(
+                        model, {"context_window": None, "thinking_tokens": 0}
+                    )
+                    if usage.get("context_window"):
+                        entry["context_window"] = max(
+                            entry["context_window"] or 0, int(usage["context_window"])
+                        )
+                    entry["thinking_tokens"] += int(usage.get("thinking_tokens") or 0)
             lat = latency.collect(path)
             providers = {
                 name: {
@@ -587,6 +609,9 @@ class Store:
                     "successes": sum(1 for e in done if e["task_success"] is True),
                     "tasks": self._tasks(episodes),
                     "llm_cost_usd": round(sum(agent_costs), 2) if agent_costs else None,
+                    "agent_models": agent_models,
+                    "claude_effort": meta.get("claude_effort"),
+                    "motion_retiming": meta.get("motion_retiming"),
                     "providers": providers,
                     "simulator_ms": {k: round(v * 1000, 1) for k, v in simulator.items()},
                     "realtime_factor": statistics.median(lat["realtime"])
@@ -645,6 +670,32 @@ class Store:
             ],
             "size": path.stat().st_size,
         }
+
+
+def _warnings(spans: list[dict[str, Any]], outcome: dict[str, Any]) -> list[dict[str, Any]]:
+    """Things worth a look before trusting an episode, each linked to its call."""
+    notes: list[dict[str, Any]] = []
+    for span in spans:
+        candidates = (span.get("overlay") or {}).get("candidates") or []
+        scores = sorted((float(c.get("score") or 0.0) for c in candidates), reverse=True)
+        if not scores or scores[0] >= LOW_SAM3_SCORE:
+            continue
+        label = candidates[0].get("label") or span.get("name")
+        text = f'SAM3 is unsure what "{label}" is: best score {scores[0]:.2f}'
+        if len(scores) > 1 and scores[0] - scores[1] < 0.05:
+            text += f", next {scores[1]:.2f}"
+        text += ". The program may have used the wrong object: compare the candidates."
+        notes.append({"level": "warn", "text": text, "span": span["id"]})
+    if outcome.get("program_ok") is True and outcome.get("task_success") is False:
+        notes.append(
+            {
+                "level": "info",
+                "text": "The program finished without an error, but the benchmark's success "
+                "check never passed. Check the final frame and which object each call used.",
+                "span": None,
+            }
+        )
+    return notes
 
 
 def _slug(name: str) -> str:

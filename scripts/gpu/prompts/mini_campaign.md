@@ -1,6 +1,4 @@
-Run a deliberately small ASPIRE iterative-debugging campaign end to end, as a smoke test of the
-whole pipeline: coordinator, worker sub-agent, unseen-check, Stage-2 held-out validation,
-verifier, and skill promotion. Keep it small; do not expand the scope.
+{{SCOPE}}
 
 Ignore AGENTS.md and .agents/: they are the real-robot System-2 runbook and do not apply here.
 Do not read or run anything under src/cap_harness/yam_real, docs/system2*.md or docs/yam-real.md.
@@ -25,8 +23,7 @@ Do not read or run anything under src/cap_harness/yam_real, docs/system2*.md or 
    TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD. Use `.venv-libero/bin/cap-harness` for LIBERO and
    `.venv-robosuite/bin/cap-harness` for Robosuite.
 6. Spawn sub-agents with model "opus", as the prompts say. Here it resolves to Claude Opus 4.6.
-7. Budget: at most 4 program versions per worker. Dispatch the verifier only if the worker
-   proposes skills.
+7. {{VERSION_RULE}}
 8. When every task is done, write `{{RUN_ROOT}}/DEMO_SUMMARY.md` with the status of each stage:
    - exploration;
    - development results per version;

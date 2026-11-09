@@ -48,6 +48,7 @@ pre.prose { font-family: inherit; font-size: 13px; background: none; border: non
 .badge.ok { background: var(--ok-soft); color: var(--ok); } .badge.bad { background: var(--bad-soft); color: var(--bad); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); } .badge.muted { background: var(--soft); color: var(--muted); }
 .alert { padding: 8px 12px; border-radius: 8px; margin: 8px 0; } .alert.bad { background: var(--bad-soft); color: var(--bad); }
+.alert.warn { background: var(--warn-soft); color: var(--warn); } .alert.info { background: var(--soft); }
 .instruction { font-size: 16px; padding: 8px 14px; border-left: 4px solid var(--accent); background: var(--panel); border-radius: 6px; margin: 8px 0; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 10px 0; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }

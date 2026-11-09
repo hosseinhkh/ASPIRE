@@ -15,12 +15,17 @@
 #
 #   scripts/gpu/demo.sh campaign  [--tasks FILE] [--run | --headless] [--budget-usd 30]
 #                                 [--max-turns 400] [--dev-seeds "51 52 53"]
-#                                 [--unseen-seeds "66"] [--heldout-count 3]
+#                                 [--unseen-seeds "66"] [--heldout-count 3] [--paper]
 #       Initializes an ASPIRE iterative-debugging campaign (default: 1 task, 3 dev / 1 unseen /
 #       3 held-out seeds) and prints, with --run starts, the interactive Claude Code
 #       coordinator that runs the whole pipeline (worker, validation, verifier, skills).
 #       --headless runs it unattended under a hard dollar cap (Claude Code's --max-budget-usd
 #       works only headless) and records the transcript in the campaign folder.
+#       --paper uses the paper's protocol: LIBERO dev 51-65 / unseen 66-80 / held-out 1-50
+#       (Robosuite 101-125 / 126-130 / 1-100), no cap on program versions, $40 per task.
+#
+#   Claude runs with the paper's Opus 4.6 settings: max effort and the 1M-token context.
+#   ASPIRE_EFFORT=high (Claude Code's default) or ASPIRE_1M=0 change them.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,7 +35,7 @@ GPU="${ASPIRE_GPU:-0}"
 PY="${CAP_HARNESS_PYTHON:-python3}"
 cd "$REPO_ROOT"
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 
@@ -196,13 +201,37 @@ set_claude_flags() {  # set_claude_flags MINUTES_NEEDED; sets CLAUDE_FLAGS for b
     fi
   fi
   command -v claude >/dev/null || { echo "error: claude CLI not found" >&2; exit 1; }
+  # The paper ran Opus 4.6 at max effort with the 1M-token context (arXiv 2607.00272, Tables
+  # 19-20). Without these Claude Code uses high effort and a 200k window.
+  local model="$ANTHROPIC_MODEL" help
+  if [[ "${ASPIRE_1M:-1}" == 1 && "$model" != *"[1m]" ]]; then model="$model[1m]"; fi
+  export CLAUDE_CODE_EFFORT_LEVEL="${ASPIRE_EFFORT:-max}"
+  # Sub-agents ask for "opus": give them the same model and window.
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
   # bypassPermissions: the demo runs unattended and launches simulator processes itself.
-  CLAUDE_FLAGS=(--model "$ANTHROPIC_MODEL" --permission-mode bypassPermissions)
+  CLAUDE_FLAGS=(--model "$model" --permission-mode bypassPermissions)
+  help="$(claude --help 2>/dev/null || true)"
+  [[ "$help" == *--effort* ]] && CLAUDE_FLAGS+=(--effort "$CLAUDE_CODE_EFFORT_LEVEL")
+  echo "claude: $model, effort $CLAUDE_CODE_EFFORT_LEVEL"
+}
+
+model_usage() {  # model_usage RESULT_JSON: the window, thinking and cost each model really used
+  "$PY" - "$1" <<'PY'
+import json, sys
+try:
+    usage = json.load(open(sys.argv[1])).get("modelUsage") or {}
+except (OSError, ValueError):
+    raise SystemExit(0)
+for model, u in usage.items():
+    window = u.get("contextWindow")
+    head = f"  {model}: context window {window:,} tokens" if isinstance(window, int) else f"  {model}:"
+    print(head, f"| thinking {u.get('thinkingTokens') or 0:,} tokens | ${u.get('costUSD') or 0:.2f}")
+PY
 }
 
 cmd_llm() {
   local benchmark="libero-pro" suite="" task_id=0 dev="" heldout="1 2 3"
-  local max_versions=4 max_turns=120 budget=20 max_steps="" init_mode="" out=""
+  local max_versions=4 max_turns=120 budget=20 init_mode="" out=""
   while (($#)); do
     case "$1" in
       --benchmark) benchmark="$2"; shift 2 ;;
@@ -220,10 +249,10 @@ cmd_llm() {
   case "$benchmark" in
     libero-pro)
       suite="${suite:-libero_object_swap}"; dev="${dev:-51 52 53}"
-      max_steps=2000; init_mode=seeded; venv=.venv-libero ;;
+      init_mode=seeded; venv=.venv-libero ;;
     robosuite)
       suite="${suite:-cube_lifting}"; dev="${dev:-101 102 103}"
-      max_steps=3000; init_mode=saved; venv=.venv-robosuite ;;
+      init_mode=saved; venv=.venv-robosuite ;;
     *) echo "error: --benchmark must be libero-pro or robosuite" >&2; exit 2 ;;
   esac
   require_runtime_env
@@ -249,7 +278,7 @@ cmd_llm() {
   render scripts/gpu/prompts/llm_quick_demo.md "$ws/prompt.md" \
     "BENCHMARK=$benchmark" "SUITE=$suite" "TASK_ID=$task_id" "WS=$ws" "TASK_NOTE=$task_note" \
     "CAP_HARNESS=$venv/bin/cap-harness" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
-    "INIT_MODE=$init_mode" "MAX_STEPS=$max_steps" "MAX_VERSIONS=$max_versions" \
+    "INIT_MODE=$init_mode" "MAX_VERSIONS=$max_versions" \
     "CUROBO_NOTE=$curobo_note"
   local extra=(--max-turns "$max_turns")
   # Capture first: `| grep -q` under pipefail fails when grep exits before the writer.
@@ -271,6 +300,7 @@ cmd_llm() {
   step "Agent report"
   if [[ -f "$ws/REPORT.md" ]]; then cat "$ws/REPORT.md"; else echo "(no REPORT.md written)"; fi
   echo
+  model_usage "$ws/result.json"
   for batch in "$ws"/dev_v*/batch.json "$ws"/heldout/batch.json; do
     [[ -f "$batch" ]] || continue
     "$PY" - "$batch" <<'PY'
@@ -293,8 +323,10 @@ campaign_headless() {  # campaign_headless RUN_ROOT BUDGET_USD MAX_TURNS
     exit 1
   fi
   # session.json lets the dashboard name the run, and claude-logs pick out its sub-agents.
-  printf '{"name": "campaign %s", "started": "%s", "budget_usd": %s}\n' \
-    "$(basename "$run_root")" "$(date -Iseconds)" "$budget" > "$run_root/session.json"
+  printf '{"name": "campaign %s", "started": "%s", "budget_usd": %s, "model": "%s", "claude_effort": "%s", "motion_retiming": "%s", "git_commit": "%s"}\n' \
+    "$(basename "$run_root")" "$(date -Iseconds)" "$budget" "$ANTHROPIC_MODEL" \
+    "$CLAUDE_CODE_EFFORT_LEVEL" "${CAP_HARNESS_TRAJECTORY_RETIMING:-0}" \
+    "$(git rev-parse --short HEAD 2>/dev/null)" > "$run_root/session.json"
   step "Headless ASPIRE campaign (Claude Code, $ANTHROPIC_MODEL), cap \$$budget"
   echo "campaign: $run_root"
   echo "transcript: $run_root/transcript.jsonl   (Ctrl-C stops it; progress: gen_progress.py --print)"
@@ -317,17 +349,20 @@ print(f"\nended: {r.get('subtype')} | turns {r.get('num_turns')} | "
       f"{(r.get('duration_ms') or 0) / 60000:.1f} min | cost ${r.get('total_cost_usd') or 0:.2f} "
       f"of ${float(sys.argv[2]):.2f} cap")
 PY
+  model_usage "$run_root/result.json"
   echo "Browse it: python scripts/gpu/dashboard.py  (Runs -> campaign $(basename "$run_root"))"
   return "$status"
 }
 
 cmd_campaign() {
-  local tasks="" run=0 headless=0 budget=30 max_turns=400 dev="51 52 53" unseen="66" heldout=3
+  local tasks="" run=0 headless=0 budget="" max_turns="" dev="51 52 53" unseen="66" heldout=3
+  local paper=0
   while (($#)); do
     case "$1" in
       --tasks) tasks="$2"; shift 2 ;;
       --run) run=1; shift ;;
       --headless) headless=1; shift ;;
+      --paper) paper=1; shift ;;
       --budget-usd) budget="$2"; shift 2 ;;
       --max-turns) max_turns="$2"; shift 2 ;;
       --dev-seeds) dev="$2"; shift 2 ;;
@@ -349,7 +384,24 @@ cmd_campaign() {
 ]
 JSON
   fi
-  step "Initializing a mini campaign from $tasks"
+  local scope version_rule kind="" count=1 label=mini
+  scope="Run a deliberately small ASPIRE iterative-debugging campaign end to end, as a smoke test of the whole pipeline: coordinator, worker sub-agent, unseen-check, Stage-2 held-out validation, verifier, and skill promotion. Keep it small; do not expand the scope."
+  version_rule="Budget: at most 4 program versions per worker. Dispatch the verifier only if the worker proposes skills."
+  if ((paper)); then
+    # The paper's seed partitions (iterative-debugging/SKILL.md; arXiv 2607.00272 Sec. 3).
+    read -r kind count < <("$PY" scripts/gpu/checks/task_list_kind.py "$tasks")
+    case "$kind" in
+      libero-pro) dev="$(seq -s ' ' 51 65)"; unseen="$(seq -s ' ' 66 80)"; heldout=50 ;;
+      robosuite) dev="$(seq -s ' ' 101 125)"; unseen="$(seq -s ' ' 126 130)"; heldout=100 ;;
+      *) echo "error: --paper needs tasks from a single benchmark (got: $kind)" >&2; exit 2 ;;
+    esac
+    budget="${budget:-$((40 * count))}"; max_turns="${max_turns:-$((600 * count))}"
+    label=paper-protocol
+    scope="Run an ASPIRE iterative-debugging campaign with the paper's protocol (arXiv 2607.00272, Section 3 and Appendix E): the full seed partitions below, the skill's own stopping rules, Stage-2 held-out validation, the verifier, and skill promotion. Do not shorten the seed lists or skip a stage."
+    version_rule="Budget: no fixed cap on program versions; workers debug until the development threshold or a plateau, as subagent-prompt.md says. Dispatch the verifier whenever a worker proposes skills."
+  fi
+  budget="${budget:-30}"; max_turns="${max_turns:-400}"
+  step "Initializing a $label campaign from $tasks"
   # shellcheck disable=SC2086  # seed lists are space-separated on purpose
   "$PY" .claude/skills/iterative-debugging/scripts/init_run.py --tasks "$tasks" --name gpu-demo \
     --dev-seeds $dev --unseen-seeds $unseen --heldout-count "$heldout"
@@ -359,7 +411,7 @@ JSON
   ((CUROBO_UP)) && curobo_note=", cuRobo :8118"
   render scripts/gpu/prompts/mini_campaign.md "$run_root/kickoff_prompt.md" \
     "RUN_ROOT=$run_root" "DEV_SEEDS=${dev// /, }" "UNSEEN_SEEDS=${unseen// /, }" \
-    "HELDOUT_COUNT=$heldout" \
+    "HELDOUT_COUNT=$heldout" "SCOPE=$scope" "VERSION_RULE=$version_rule" \
     "GPU=$GPU" "CUROBO_NOTE=$curobo_note"
   echo "kickoff prompt: $run_root/kickoff_prompt.md"
   if ((headless)); then

@@ -430,7 +430,17 @@ Claude Code runs headless with Opus 4.6. It reads the API reference and the skil
 4. It evaluates the best version once on held-out seeds 1–3.
 5. It writes `REPORT.md`: versions, success rates, failure modes, and candidate skills.
 
-You see a live one-line-per-step view. The final line shows turns, minutes and estimated cost.
+You see a live one-line-per-step view. The final line shows turns, minutes and estimated cost,
+and the context window and thinking tokens the model really used.
+
+Claude runs with the paper's Opus 4.6 settings: max effort and the 1M-token context. For Claude
+Code's defaults (high effort, 200k window; cheaper), put `ASPIRE_EFFORT=high ASPIRE_1M=0` in
+front of the command. Episodes use the harness defaults the paper used (800×512 cameras, the
+task's own episode length).
+
+This demo is a smoke test: 3 development seeds, 3 held-out seeds, at most 4 versions and a short
+prompt. Its score is not comparable with the paper's; for that, run
+`scripts/gpu/demo.sh campaign --paper` (section 7).
 
 Other tasks and benchmarks:
 
@@ -478,7 +488,20 @@ mode. The coordinator:
 
 It finishes with `DEMO_SUMMARY.md`. You can watch and steer it.
 
-Without `--run`, the script prints the exact `claude` command instead. Check progress any time:
+Without `--run`, the script prints the exact `claude` command instead.
+
+**The paper's protocol.** `--paper` uses the paper's seed partitions (LIBERO-Pro: dev 51–65,
+unseen-check 66–80, held-out 1–50; Robosuite: 101–125, 126–130, 1–100), lifts the 4-version cap
+so workers debug until the threshold or a plateau, and caps the run at $40 per task:
+
+```bash
+scripts/gpu/demo.sh campaign --paper --headless
+```
+
+The default task is LIBERO-Pro `libero_object_swap` task 0, where the paper reports 100% on
+50 held-out seeds with Opus 4.6 (Table 10). Pass `--tasks FILE` for others.
+
+Check progress any time:
 
 ```bash
 python .claude/skills/iterative-debugging/scripts/gen_progress.py --print
@@ -732,15 +755,21 @@ busy and one recorded now. It reports:
 - per simulator step and per reset;
 - how far motions run from real time.
 
-**Motion timing.** On LIBERO-Pro and Robosuite the joint controller moves each joint at most
-about 0.008 rad per step, while planned trajectories can ask for 0.05. The harness used to
-send the waypoints at the planner's rate and then wait a fixed 120 steps, so long moves ended
-with "final trajectory waypoint did not converge" and the arm cut a low path between
-waypoints. Trajectories are now re-timed so no joint is asked to move more than 0.006 rad per
-step, and the final wait continues while the arm is still getting closer (up to 600 steps;
-it stops after 25 steps without progress). The step counts and the error details
-(`settle_steps`, `stalled`, `planned_waypoints`, `executed_waypoints`) are in each call's
-output. To get the original behaviour for a comparison, set `CAP_HARNESS_TRAJECTORY_RETIMING=0`.
+**Motion timing (optional).** On LIBERO-Pro and Robosuite the joint controller moves each joint
+about 0.008 rad per step, while planned trajectories can ask for 0.05. The published harness
+sends the waypoints at the planner's rate and then waits at most 120 steps, so long moves can
+end with "final trajectory waypoint did not converge", and the arm cuts a lower path between
+waypoints. The paper's agents work around this by staging long moves, and the default keeps
+this behaviour so results match the paper.
+
+`CAP_HARNESS_TRAJECTORY_RETIMING=1` turns on two changes:
+
+- trajectories are re-timed so no joint is asked to move more than 0.006 rad per step;
+- the final wait continues while the arm is still getting closer, up to 600 steps; it stops
+  after 25 steps without progress.
+
+Each call's output then also reports `settle_steps`, `stalled`, `planned_waypoints` and
+`executed_waypoints`. Compare a session with it against one without on the Compare page.
 
 ## Troubleshooting
 

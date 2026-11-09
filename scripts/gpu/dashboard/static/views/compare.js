@@ -24,6 +24,9 @@ export async function render(app, params) {
     <tbody>
       <tr><th>Code</th>${cols.map((c) => `<td class="mono">${esc(c.git_commit || "-")}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>GPU</th>${cols.map((c) => `<td>${esc(c.gpu ?? "-")}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
+      <tr><th>Agent</th>${cols.map((c) => `<td class="small">${agentModels(c)}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
+      <tr><th>Agent effort</th>${cols.map((c) => `<td>${esc(c.claude_effort ?? "-")}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
+      <tr><th>Motion timing</th>${cols.map((c) => `<td>${c.motion_retiming == null ? "-" : c.motion_retiming === "1" ? "re-timed" : "published"}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>All episodes</th>${cols.map((c) => `<td>${rate(c.successes, c.episodes)}</td>`).join("")}${two ? `<td>${delta(cols[0].successes, cols[0].episodes, cols[1].successes, cols[1].episodes)}</td>` : ""}</tr>
       <tr><th>LLM cost</th>${cols.map((c) => `<td>${c.llm_cost_usd != null ? "$" + num(c.llm_cost_usd, 2) : "-"}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
       <tr><th>Motion speed</th>${cols.map((c) => `<td>${c.realtime_factor ? num(c.realtime_factor, 2) + " s per simulated s" : "-"}</td>`).join("")}${two ? "<td></td>" : ""}</tr>
@@ -61,4 +64,13 @@ function delta(k1, n1, k2, n2) {
   if (!n1 || !n2) return "";
   const d = pct(k2, n2) - pct(k1, n1);
   return `<span class="${d > 0 ? "ok" : d < 0 ? "bad" : "muted"}">${d > 0 ? "+" : ""}${d} pts</span>`;
+}
+
+// The model(s) the agents ran, with the context window and thinking Claude Code reported.
+function agentModels(c) {
+  const rows = Object.entries(c.agent_models || {}).map(([model, u]) => {
+    const window = u.context_window ? (u.context_window >= 1e6 ? `${u.context_window / 1e6}M` : `${Math.round(u.context_window / 1000)}k`) : "?";
+    return `${esc(model)}<div class="muted">${window} window · ${num(u.thinking_tokens || 0, 0)} thinking tokens</div>`;
+  });
+  return rows.join("") || "-";
 }
