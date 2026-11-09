@@ -191,6 +191,158 @@ verified final tightness. Re-ground the current scene and verify the actual outc
 > [!WARNING]
 > ASPIRE executes language-model-generated Python with full import access. Trial processes and watchdogs are not a security sandbox. Run generated code on an isolated host without credentials or sensitive mounts, restrict network access, and never grant a simulation agent access to physical hardware. Real-robot work requires the controls in [`aspire/real/AGENTS.md`](https://github.com/NVlabs/ASPIRE/blob/v0.1/aspire/real/AGENTS.md) and separate operator authorization.
 
+## Step by step on a GPU server: check, test, run, view
+
+This assumes the conda env from [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md). Run
+every command from the repository folder, with the env active:
+
+```bash
+cd ~/robot2/ASPIRE && conda activate aspire
+```
+
+**1. See how busy the GPUs are.**
+
+```bash
+gpustat
+```
+
+```bash
+python scripts/gpu/check_gpu.py budget
+```
+
+**2. Check the model services.**
+
+```bash
+scripts/gpu/services.sh status
+```
+
+If any of the four services is `down`, start them. Wait for "all provider services ready".
+
+```bash
+scripts/gpu/services.sh start
+```
+
+**3. Decide where Contact-GraspNet runs: GPU or CPU.**
+
+```bash
+scripts/gpu/check_graspnet.sh
+```
+
+Then check the current setting:
+
+```bash
+echo "$ASPIRE_CPU_PROVIDERS"
+```
+
+- If the check says the GPU is faster and the setting prints `contact_graspnet`, switch back
+  to the GPU:
+
+  ```bash
+  conda env config vars unset -n aspire ASPIRE_CPU_PROVIDERS
+  ```
+
+- If the check says the CPU is faster and the setting prints nothing, switch to the CPU:
+
+  ```bash
+  conda env config vars set -n aspire ASPIRE_CPU_PROVIDERS=contact_graspnet
+  ```
+
+If you changed the setting, reload the env:
+
+```bash
+conda deactivate && conda activate aspire
+```
+
+Then restart the services:
+
+```bash
+scripts/gpu/services.sh stop && scripts/gpu/services.sh start
+```
+
+**4. Check the whole stack.** This takes about 10 minutes. It uses the running services and
+leaves them up. Every line should be PASS, including `probe: contact_graspnet`.
+
+```bash
+scripts/gpu/check_stack.sh
+```
+
+**5. Start the dashboard** in a second tmux window, so it keeps running:
+
+```bash
+python scripts/gpu/dashboard.py
+```
+
+It prints a port and an `ssh -L ...` line. Run that line on your laptop, then open the
+`http://localhost:...` address it shows.
+
+**6. Run tasks** in the first window. Three tasks, no LLM, about 5–10 minutes:
+
+```bash
+scripts/gpu/session.sh run --tasks quick --no-preflight --reserve 30
+```
+
+Or the same three tasks plus one Opus 4.6 agent, capped at $10:
+
+```bash
+scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_object_swap:0 --llm-budget 10 --reserve 30
+```
+
+**7. Look at the run in the dashboard.** Refresh **Runs** and open the newest session.
+
+- **An episode:** videos, calls (click one for its input and output), images and trajectories.
+- **The agent:** its whole conversation.
+- **Download:** a zip, complete or logs only.
+
+**8. If an episode failed,** print why:
+
+```bash
+scripts/gpu/session.sh why "$(ls -td outputs/sessions/* | head -1)/episodes"
+```
+
+**9. When you are done,** stop the services. Stop the dashboard with Ctrl-C in its window.
+
+```bash
+scripts/gpu/services.sh stop
+```
+
+### Switch to another GPU (e.g. GPU 1)
+
+Stop the services and release the memory reservation on the old GPU:
+
+```bash
+scripts/gpu/services.sh stop
+```
+
+```bash
+scripts/gpu/reserve.sh release
+```
+
+Point the env at GPU 1. This command also shows whether the stack fits there right now:
+
+```bash
+scripts/gpu/use_gpu.sh 1
+```
+
+Reload the env:
+
+```bash
+conda deactivate && conda activate aspire
+```
+
+Start the services. They now go to GPU 1, and the simulators render there.
+
+```bash
+scripts/gpu/services.sh start
+```
+
+Optionally, reserve memory on GPU 1:
+
+```bash
+scripts/gpu/reserve.sh hold 30
+```
+
+To go back, run the same steps with `scripts/gpu/use_gpu.sh 0`.
+
 ## Documentation
 
 | Topic | Guide |
