@@ -145,3 +145,56 @@ def test_redact_session_replaces_credential_values(tmp_path: Path) -> None:
     assert secret not in leak.read_text()
     assert "[REDACTED:MY_API_KEY]" in leak.read_text()
     assert "1 secret value(s) replaced in 1 file(s)" in result.stdout
+
+
+def test_dashboard_serves_runs_and_streams_zips(tmp_path: Path) -> None:
+    import io
+    import threading
+    from urllib.request import urlopen
+    import zipfile
+
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    import dashboard
+
+    outputs = tmp_path / "outputs"
+    (outputs / "sessions").mkdir(parents=True)
+    session = _fake_session(outputs / "sessions")
+    video = next(session.rglob("run-x")) / "media/videos/agentview.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"\x00" * 2048)
+    store = dashboard.Store(outputs)
+    server = dashboard.ThreadingHTTPServer(
+        ("127.0.0.1", 0), dashboard.make_handler(store, dashboard.LiveManager(store, []))
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def get(path: str) -> bytes:
+        with urlopen(base + path, timeout=10) as response:
+            return response.read()
+
+    try:
+        items = json.loads(get("/api/collections"))["items"]
+        assert [item["kind"] for item in items] == ["session"]
+        rel = items[0]["path"]
+        collection = json.loads(get(f"/api/collection?path={rel}"))
+        assert len(collection["episodes"]) == 1 and len(collection["agents"]) == 1
+        episode = json.loads(get(f"/api/episode?path={collection['episodes'][0]['path']}"))
+        assert episode["calls"][0]["name"] == "move_to_pose" and episode["media"]["videos"]
+        call = json.loads(get(f"/api/call?path={episode['calls'][0]['dir']}"))
+        assert call["input"] == {"target": [0.4, 0.0, 1.0]}
+        agent = json.loads(get(f"/api/agent?path={collection['agents'][0]['path']}"))
+        assert [e["kind"] for e in agent["events"]][:3] == ["init", "thinking", "tool_use"]
+        full = zipfile.ZipFile(io.BytesIO(get(f"/download?path={rel}&media=1")))
+        logs = zipfile.ZipFile(io.BytesIO(get(f"/download?path={rel}&media=0")))
+        assert full.testzip() is None and logs.testzip() is None
+        assert any(n.endswith(".mp4") for n in full.namelist())
+        assert not any(n.endswith(".mp4") for n in logs.namelist())
+        assert any(n.endswith("transcript.jsonl") for n in logs.namelist())
+        try:
+            get("/api/collection?path=../..")
+            raise AssertionError("a path outside the outputs directory was served")
+        except Exception as exc:  # urllib raises HTTPError 400
+            assert "400" in str(exc)
+    finally:
+        server.shutdown()

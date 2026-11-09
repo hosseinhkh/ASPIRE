@@ -206,6 +206,8 @@ verified final tightness. Re-ground the current scene and verify the actual outc
 | CPU-only development setup (no GPU) | [`docs/cpu-dev-setup.md`](docs/cpu-dev-setup.md) |
 | GPU workstation: conda env, Opus 4.6 on Bedrock, light demos | [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md) |
 | Code review, known issues, and extension roadmap | [`docs/review/README.md`](docs/review/README.md) |
+| How the core works and how to add a robot or a model | [`docs/big-picture.md`](docs/big-picture.md) |
+| Dashboard and live robot console | [`docs/gpu-quickstart.md`](docs/gpu-quickstart.md#9-dashboard-and-live-robots) |
 
 ## Contribution Guidelines
 

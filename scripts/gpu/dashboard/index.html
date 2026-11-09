@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASPIRE dashboard</title>
+<style>
+:root{--bg:#f7f8fa;--panel:#fff;--ink:#1c2230;--muted:#667085;--line:#e3e6ec;--accent:#2457c5;
+  --ok:#17803d;--bad:#c4271d;--warn:#b26a00;--chip:#eef1f7;--code:#f2f4f8;--hover:#f3f6fd}
+@media (prefers-color-scheme: dark){:root{--bg:#12151b;--panel:#1a1e26;--ink:#e6e9ef;--muted:#98a2b3;
+  --line:#2c323d;--accent:#7aa2ff;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--chip:#252b36;--code:#141820;--hover:#20262f}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;align-items:center;gap:18px;padding:10px 20px;background:var(--panel);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header b{font-size:16px} header nav a{margin-right:14px}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+main{padding:16px 20px;max-width:1500px;margin:0 auto}
+h1{font-size:20px;margin:6px 0 10px} h2{font-size:16px;margin:22px 0 8px} h3{font-size:14px;margin:14px 0 6px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;background:var(--panel);position:sticky;top:0}
+tr.click:hover{background:var(--hover);cursor:pointer}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}.warn{color:var(--warn);font-weight:600}
+.muted{color:var(--muted)} .small{font-size:12px} .mono{font-family:ui-monospace,Menlo,monospace}
+.chip{display:inline-block;padding:1px 8px;border-radius:10px;background:var(--chip);font-size:12px;margin-right:4px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:8px 10px;overflow:auto;
+  max-height:480px;font:12px/1.4 ui-monospace,Menlo,monospace;margin:6px 0;white-space:pre-wrap;word-break:break-word}
+button,.btn{font:inherit;background:var(--chip);color:var(--ink);border:1px solid var(--line);border-radius:6px;
+  padding:4px 10px;cursor:pointer;display:inline-block}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+input,select,textarea{font:inherit;background:var(--panel);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:4px 8px}
+textarea{width:100%;font:12px/1.4 ui-monospace,Menlo,monospace}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.grow{flex:1 1 380px;min-width:0}
+.grid{display:flex;flex-wrap:wrap;gap:10px}
+.grid figure{margin:0;font-size:11px;color:var(--muted)}
+.grid img{max-width:220px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in;display:block}
+video{max-width:100%;width:460px;border-radius:6px;background:#000}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:14px;flex-wrap:wrap}
+.tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none}
+.tabs button.on{border-bottom-color:var(--accent);color:var(--accent);font-weight:600}
+.msg{border-left:3px solid var(--line);padding:4px 10px;margin:8px 0;background:var(--panel)}
+.msg.text{border-color:var(--accent)} .msg.thinking{border-color:#8a63d2} .msg.tool_use{border-color:var(--warn)}
+.msg.tool_result{border-color:var(--ok)} .msg.err{border-color:var(--bad)} .msg.init,.msg.result{border-color:var(--muted)}
+.cams{display:flex;gap:10px;flex-wrap:wrap} .cams figure{margin:0} .cams img{width:420px;max-width:100%;border-radius:6px;border:1px solid var(--line);background:#000}
+svg{background:var(--panel);border:1px solid var(--line);border-radius:6px;max-width:100%}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;z-index:20}
+#lightbox img{max-width:94vw;max-height:94vh}
+.indent{display:inline-block}
+.right{float:right}
+</style>
+</head>
+<body>
+<header><b>ASPIRE</b><nav><a href="#/">Runs</a><a href="#/live">Live robots</a><a href="#/about">How it works</a></nav>
+<span class="muted small" id="where"></span></header>
+<main id="app">Loading...</main>
+<div id="lightbox" onclick="this.style.display='none'"><img id="lightbox-img" alt=""></div>
+<script>
+"use strict";
+const $app = document.getElementById("app");
+let OUTPUTS = "";
+const timers = [];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const q = s => encodeURIComponent(s);
+const file = p => `/files/${p.split("/").map(q).join("/")}`;
+const fmtBool = v => v === true ? '<span class="ok">yes</span>' : v === false ? '<span class="bad">no</span>' : '<span class="muted">-</span>';
+const fmtNum = (v, d = 1) => (v === null || v === undefined || v === "") ? "" : Number(v).toFixed(d);
+const fmtTime = t => t ? new Date(t * 1000).toLocaleString() : "";
+const statusClass = s => ({PASS:"ok",FAIL:"bad",WARN:"warn",BLOCKED:"warn",INTERRUPTED:"bad",SKIP:"muted"}[s] || "muted");
+const sizeFmt = b => b > 1e9 ? (b/1e9).toFixed(1)+" GB" : b > 1e6 ? (b/1e6).toFixed(1)+" MB" : b > 1e3 ? (b/1e3).toFixed(0)+" kB" : b+" B";
+function pretty(value, limit = 150000) {
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return text && text.length > limit ? text.slice(0, limit) + `\n... [${text.length - limit} more characters: download the file]` : (text ?? "");
+}
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const t = await r.text();
+  let d; try { d = JSON.parse(t); } catch { d = {error: t}; }
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
+function zoom(src) { document.getElementById("lightbox-img").src = src; document.getElementById("lightbox").style.display = "flex"; }
+function dl(path, label = "Download") {
+  return `<a class="btn" href="/download?path=${q(path)}&media=1">${label} (complete)</a>
+          <a class="btn" href="/download?path=${q(path)}&media=0">Logs only</a>`;
+}
+const PALETTE = ["#2457c5","#c4271d","#17803d","#b26a00","#8a63d2","#0f8b8d","#d4447c","#5b6273"];
+function chart(series, title, {width = 900, height = 200, bands = [], x = null} = {}) {
+  const names = Object.keys(series).filter(k => series[k] && series[k].length);
+  if (!names.length) return "";
+  const all = names.flatMap(k => series[k]);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+  const n = Math.max(...names.map(k => series[k].length));
+  const L = 52, T = 22, B = 20, W = width - L - 10, H = height - T - B;
+  const X = i => L + W * (i / Math.max(n - 1, 1)), Y = v => T + H * (1 - (v - lo) / (hi - lo));
+  let s = `<svg viewBox="0 0 ${width} ${height + 18 * Math.ceil(names.length / 4)}" width="${width}">`;
+  s += `<text x="${L}" y="14" font-size="12" font-weight="600" fill="currentColor">${esc(title)}</text>`;
+  s += `<text x="4" y="${T + 10}" font-size="10" fill="currentColor">${+hi.toPrecision(3)}</text><text x="4" y="${T + H}" font-size="10" fill="currentColor">${+lo.toPrecision(3)}</text>`;
+  bands.forEach((b, i) => {
+    const x0 = X(b.start), x1 = X(b.end);
+    s += `<rect x="${x0}" y="${T}" width="${Math.max(x1 - x0, 1)}" height="${H}" fill="${i % 2 ? "rgba(138,99,210,.10)" : "rgba(36,87,197,.08)"}"><title>${esc(b.title)}</title></rect>`;
+    s += `<text x="${x0 + 2}" y="${T + 10}" font-size="9" fill="currentColor" opacity=".6">${esc(b.label)}</text>`;
+  });
+  names.forEach((k, j) => {
+    const ys = series[k], pts = ys.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+    s += `<polyline fill="none" stroke="${PALETTE[j % 8]}" stroke-width="1.4" points="${pts}"/>`;
+    const lx = L + (j % 4) * 200, ly = height + 12 + 18 * Math.floor(j / 4);
+    s += `<rect x="${lx}" y="${ly - 9}" width="10" height="10" fill="${PALETTE[j % 8]}"/><text x="${lx + 14}" y="${ly}" font-size="11" fill="currentColor">${esc(k)}</text>`;
+  });
+  if (x) s += `<text x="${width - 10}" y="${T + H + 14}" font-size="10" text-anchor="end" fill="currentColor">${esc(x)}</text>`;
+  return s + "</svg>";
+}
+function tabs(id, names, active) {
+  return `<div class="tabs" id="${id}">${names.map(n => `<button data-tab="${esc(n)}" class="${n === active ? "on" : ""}">${esc(n)}</button>`).join("")}</div><div id="${id}-body"></div>`;
+}
+function bindTabs(id, render) {
+  const box = document.getElementById(id);
+  box.querySelectorAll("button").forEach(b => b.onclick = () => {
+    box.querySelectorAll("button").forEach(x => x.classList.remove("on")); b.classList.add("on");
+    document.getElementById(id + "-body").innerHTML = render(b.dataset.tab);
+    afterRender();
+  });
+  const on = box.querySelector("button.on") || box.querySelector("button");
+  document.getElementById(id + "-body").innerHTML = render(on.dataset.tab);
+}
+function afterRender() {
+  document.querySelectorAll("[data-zoom]").forEach(img => img.onclick = () => zoom(img.src));
+}
+
+// ------------------------------------------------------------------------------ runs --
+async function viewRuns() {
+  const d = await api("/api/collections");
+  OUTPUTS = d.outputs;
+  document.getElementById("where").textContent = d.outputs;
+  const kinds = ["all", ...new Set(d.items.map(i => i.kind))];
+  $app.innerHTML = `<h1>Runs</h1>
+   <div class="row"><input id="filter" placeholder="filter by name" style="width:260px">
+   <select id="kind">${kinds.map(k => `<option>${k}</option>`).join("")}</select>
+   <span class="muted small">Sessions from scripts/gpu/session.sh, live-console runs, checks, demos and campaigns under ${esc(d.outputs)}</span></div>
+   <div class="panel"><table><thead><tr><th>run</th><th>kind</th><th>modified</th><th>status</th><th>episodes</th><th>stages</th><th>download</th></tr></thead><tbody id="rows"></tbody></table></div>`;
+  const draw = () => {
+    const f = document.getElementById("filter").value.toLowerCase(), k = document.getElementById("kind").value;
+    document.getElementById("rows").innerHTML = d.items.filter(i => (k === "all" || i.kind === k) && (!f || (i.name + i.path).toLowerCase().includes(f))).map(i => {
+      const target = i.kind === "live" ? `#/e?path=${q(i.path)}` : `#/c?path=${q(i.path)}`;
+      return `<tr class="click" onclick="location.hash='${target}'"><td><b>${esc(i.name)}</b><div class="muted small mono">${esc(i.path)}</div></td>
+        <td><span class="chip">${esc(i.kind)}</span></td><td class="small">${fmtTime(i.modified)}</td><td>${esc(i.status || "")}</td>
+        <td>${i.episodes ?? ""}</td><td class="small">${esc(i.stage_counts || "")}</td>
+        <td onclick="event.stopPropagation()" class="small">${dl(i.path, "Zip")}</td></tr>`;
+    }).join("") || `<tr><td colspan="7" class="muted">No runs yet: scripts/gpu/session.sh run --tasks quick</td></tr>`;
+  };
+  document.getElementById("filter").oninput = draw; document.getElementById("kind").onchange = draw; draw();
+}
+
+// ------------------------------------------------------------------------ collection --
+async function viewCollection(path) {
+  const d = await api(`/api/collection?path=${q(path)}`);
+  const m = d.meta || {};
+  const stages = d.stages || [];
+  let gpu = "";
+  if (d.gpu) {
+    const t = d.gpu.t, idx = v => { let i = t.findIndex(x => x >= v); return i < 0 ? t.length - 1 : i; };
+    const bands = stages.filter(s => s.start !== null && s.end > s.start && !String(s.stage).startsWith("preflight: "))
+      .map(s => ({start: idx(s.start), end: idx(s.end), label: String(s.n), title: `#${s.n} ${s.stage}: ${s.status} (${(s.end - s.start).toFixed(0)} s)`}));
+    gpu = `<h2>GPU ${esc(d.gpu.target)}</h2><div class="muted small">Shaded bands are the numbered stages; hover for names. Peak of your services and simulators: <b>${Math.max(...d.gpu.yours).toFixed(1)} GiB</b></div>` +
+      chart({"GPU total used (GiB)": d.gpu.used, "your services and simulators (GiB)": d.gpu.yours, "your reservation (GiB)": d.gpu.reserved}, "memory", {bands, x: `${t[t.length - 1].toFixed(0)} s`}) +
+      chart({"utilization % (all users)": d.gpu.util}, "utilization", {height: 140, bands});
+  }
+  $app.innerHTML = `<p><a href="#/">&larr; runs</a></p>
+   <h1>${esc(m.name || path.split("/").pop())} ${m.status ? `<span class="chip">${esc(m.status)}</span>` : ""}</h1>
+   <div class="row"><div>${dl(d.path, "Download session")}</div>${d.has_report ? `<a class="btn" href="${file(d.path + "/report/index.html")}" target="_blank">Static report</a>` : ""}</div>
+   ${Object.keys(m).length ? `<details class="panel"><summary>Session details</summary><table>${Object.entries(m).map(([k, v]) => `<tr><th>${esc(k)}</th><td class="mono small">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</td></tr>`).join("")}</table></details>` : ""}
+   ${stages.length ? `<h2>Stages</h2><div class="panel"><table><tr><th>#</th><th>stage</th><th>status</th><th>detail</th><th>start s</th><th>duration s</th><th>your GPU peak GiB</th></tr>
+     ${stages.map(s => `<tr><td>${s.n}</td><td>${esc(s.stage)}</td><td class="${statusClass(s.status)}">${esc(s.status)}</td><td class="small">${esc(s.detail)}</td><td>${fmtNum(s.start, 0)}</td><td>${s.start === null ? "" : fmtNum(s.end - s.start, 0)}</td><td>${fmtNum(s.peak)}</td></tr>`).join("")}</table></div>` : ""}
+   ${gpu}
+   <h2>Episodes (${d.episodes.length})</h2><div class="panel"><table><tr><th>episode</th><th>program ok</th><th>task success</th><th>termination</th><th>steps</th><th>wall s</th><th>calls</th><th></th></tr>
+     ${d.episodes.map(e => `<tr class="click" onclick="location.hash='#/e?path=${q(e.path)}'"><td>${esc(e.benchmark)} / ${esc(e.suite)}:${esc(e.task_id)} <span class="muted">(${esc(e.task_name)})</span> seed ${esc(e.seed)}${e.agent ? ' <span class="chip">agent</span>' : ""}<div class="muted small mono">${esc(e.where)}</div></td>
+        <td>${fmtBool(e.program_ok)}</td><td>${fmtBool(e.task_success)}</td><td class="small">${esc(e.termination || (e.finalized ? "" : "not finalized"))}</td><td>${e.steps ?? ""}</td><td>${fmtNum(e.wall_s)}</td><td>${e.calls}</td>
+        <td onclick="event.stopPropagation()" class="small">${dl(e.path, "Zip")}</td></tr>`).join("") || '<tr><td colspan="8" class="muted">none</td></tr>'}</table></div>
+   <h2>Agent conversations (${d.agents.length})</h2><div class="panel"><table><tr><th>conversation</th><th>result</th><th>turns</th><th>tool calls</th><th>errors</th><th>minutes</th><th>cost</th></tr>
+     ${d.agents.map(a => `<tr class="click" onclick="location.hash='#/a?path=${q(a.path)}'"><td class="mono small">${esc(a.title)}</td><td>${esc(a.result || "")}</td><td>${a.turns ?? ""}</td><td>${a.tool_calls}</td><td>${a.tool_errors}</td><td>${a.minutes ?? ""}</td><td>${a.cost_usd !== undefined && a.cost_usd !== null ? "$" + Number(a.cost_usd).toFixed(2) : ""}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">none</td></tr>'}</table></div>
+   <h2>Logs and environment</h2><div class="panel small">${d.files.map(f => `<div><a href="${file(f.path)}" target="_blank">${esc(f.name)}</a> <span class="muted">${sizeFmt(f.size)}</span> <a class="muted" href="${file(f.path)}?download=1">download</a></div>`).join("") || '<span class="muted">none</span>'}</div>`;
+}
+
+// --------------------------------------------------------------------------- episode --
+async function viewEpisode(path) {
+  const d = await api(`/api/episode?path=${q(path)}`);
+  const m = d.meta, o = d.outcome || {};
+  const title = `${m.benchmark} / ${m.suite}:${m.task_id} (${m.task_name}) / seed ${m.seed}`;
+  const live = d.commands.length > 0;
+  const tabNames = ["Calls", "Trajectories", "Images", "Program & output", ...(live ? ["Console commands"] : []), "Files"];
+  $app.innerHTML = `<p><a href="javascript:history.back()">&larr; back</a></p><h1>${esc(title)}</h1>
+   <div class="muted small mono">${esc(d.path)}</div>
+   <div class="row" style="margin:8px 0">${dl(d.path, "Download episode")}</div>
+   <div class="panel"><table><tr><th>program ok</th><th>task success</th><th>termination</th><th>steps</th><th>simulated s</th><th>wall s</th><th>calls</th><th>failed calls</th></tr>
+    <tr><td>${fmtBool(o.program_ok)}</td><td>${fmtBool(o.task_success)}</td><td>${esc(o.termination_reason || "not finalized")}</td><td>${o.steps_executed ?? ""}</td><td>${fmtNum(o.simulator_duration_s)}</td><td>${fmtNum(o.wall_duration_s)}</td>
+    <td>${d.calls.length}</td><td>${d.calls.filter(c => c.ok === false).length}</td></tr></table>
+    ${d.program_error ? `<pre class="bad">${esc(pretty(d.program_error))}</pre>` : ""}
+    ${d.result !== null && d.result !== undefined ? `<details><summary>Program result</summary><pre>${esc(pretty(d.result))}</pre></details>` : ""}</div>
+   <div class="row">${d.media.videos.map(v => `<figure style="margin:0"><video controls preload="metadata" src="${file(v)}"></video><figcaption class="small muted">${esc(v.split("/").pop())}</figcaption></figure>`).join("") || '<span class="muted">no videos</span>'}</div>
+   ${tabs("ep", tabNames, "Calls")}`;
+  bindTabs("ep", tab => {
+    if (tab === "Calls") return callsTab(d);
+    if (tab === "Trajectories") return Object.entries(d.charts).map(([t, s]) => chart(s, t, {height: 190, x: "steps"})).join("") || '<p class="muted">no steps recorded</p>';
+    if (tab === "Images") return `<h3>SAM3 overlays (${d.media.overlays.length})</h3><div class="grid">${d.media.overlays.map(p => `<figure><img data-zoom src="${file(p)}" loading="lazy"><figcaption>${esc(p.split("/").pop())}</figcaption></figure>`).join("") || '<span class="muted">none</span>'}</div>
+       <h3>Keyframes before / after each motion (${d.media.keyframes.length})</h3><div class="grid">${d.media.keyframes.map(p => `<figure><img data-zoom src="${file(p)}" loading="lazy"><figcaption>${esc(p.split("/").slice(-2).join("/"))}</figcaption></figure>`).join("") || '<span class="muted">none</span>'}</div>`;
+    if (tab === "Program & output") return Object.entries(d.texts).map(([k, v]) => `<h3>${esc(k)}</h3><pre>${esc(pretty(v))}</pre>`).join("");
+    if (tab === "Console commands") return d.commands.map((c, i) => `<div class="msg ${c.error ? "err" : "tool_use"}"><b>${i + 1}. ${esc(c.kind)} ${esc(c.name)}</b> <span class="${c.error ? "bad" : "ok"}">${esc(c.status)}</span> <span class="muted small">${fmtNum(c.elapsed_s, 2)} s, steps after: ${c.steps_after ?? ""}</span>
+        ${c.code ? `<pre>${esc(c.code)}</pre>` : `<pre>${esc(pretty(c.arguments))}</pre>`}${c.error ? `<pre class="bad">${esc(c.error)}</pre>` : ""}<details><summary>result</summary><pre>${esc(pretty(c.result))}</pre></details></div>`).join("");
+    if (tab === "Files") return `<div class="small">${d.files.map(f => `<div><a href="${file(f.path)}" target="_blank">${esc(f.name)}</a> <span class="muted">${sizeFmt(f.size)}</span></div>`).join("")}</div><p class="muted small">Each call's input/output/error is in trace/calls (Calls tab, or the zip).</p>`;
+    return "";
+  });
+  afterRender();
+}
+function callsTab(d) {
+  const cats = [...new Set(d.calls.map(c => c.category).filter(Boolean))];
+  setTimeout(() => {
+    const draw = () => {
+      const cat = document.getElementById("cat").value, failed = document.getElementById("failed").checked;
+      document.getElementById("calls").innerHTML = d.calls.filter(c => (cat === "all" || c.category === cat) && (!failed || c.ok === false)).map(c =>
+        `<tr class="click" data-dir="${esc(c.dir)}"><td>${c.index}</td><td><span class="indent" style="width:${c.depth * 16}px"></span>${esc(c.name)}</td><td><span class="chip">${esc(c.category)}</span></td>
+         <td>${fmtBool(c.ok)}</td><td>${fmtNum(c.duration_s, 3)}</td><td>${fmtNum(c.sim_time_s, 2)}</td><td class="small ${c.error ? "bad" : "muted"}">${esc(c.error || c.summary)}</td></tr><tr class="detail" style="display:none"><td colspan="7"></td></tr>`).join("");
+      document.querySelectorAll("#calls tr.click").forEach(row => row.onclick = async () => {
+        const detail = row.nextElementSibling;
+        if (detail.style.display === "none") {
+          detail.style.display = ""; detail.firstElementChild.innerHTML = "loading...";
+          const c = await api(`/api/call?path=${q(row.dataset.dir)}`);
+          detail.firstElementChild.innerHTML = ["input", "output", "error"].filter(k => c[k] !== undefined).map(k => `<h3>${k}</h3><pre>${esc(pretty(c[k]))}</pre>`).join("") +
+            (c.other_files || []).map(f => /\.(png|jpe?g)$/.test(f) ? `<img data-zoom src="${file(f)}" style="max-width:300px">` : `<div><a href="${file(f)}" target="_blank">${esc(f.split("/").pop())}</a></div>`).join("") +
+            `<div class="small"><a href="${file(c.dir + "/input.json")}" target="_blank">raw input.json</a> &middot; <a href="${file(c.dir + "/output.json")}" target="_blank">raw output.json</a></div>`;
+          afterRender();
+        } else detail.style.display = "none";
+      });
+    };
+    document.getElementById("cat").onchange = draw; document.getElementById("failed").onchange = draw; draw();
+  });
+  return `<div class="row" style="margin:8px 0"><select id="cat"><option>all</option>${cats.map(c => `<option>${esc(c)}</option>`).join("")}</select>
+    <label><input type="checkbox" id="failed"> failed only</label><span class="muted small">program = calls your program made; api = stages inside the robot API; provider = model services (SAM3, Contact-GraspNet, PyRoki, cuRobo). Click a row for its full input and output.</span></div>
+    <div class="panel"><table><thead><tr><th>#</th><th>call</th><th>kind</th><th>ok</th><th>wall s</th><th>sim s</th><th>error / output</th></tr></thead><tbody id="calls"></tbody></table></div>`;
+}
+
+// ----------------------------------------------------------------------------- agent --
+async function viewAgent(path) {
+  const d = await api(`/api/agent?path=${q(path)}`);
+  const img = ref => `/api/agent-image?path=${q(d.path)}&ref=${ref}`;
+  const ev = e => {
+    if (e.kind === "init") return `<div class="msg init"><b>session start</b> model ${esc(e.model)} <span class="muted small">${esc((e.tools || []).join(", "))}</span></div>`;
+    if (e.kind === "text") return `<div class="msg text"><b>${esc(e.role)}</b><pre>${esc(e.text)}</pre></div>`;
+    if (e.kind === "thinking") return `<details class="msg thinking"><summary><b>thinking</b> <span class="muted small">${esc(e.text.slice(0, 120))}...</span></summary><pre>${esc(e.text)}</pre></details>`;
+    if (e.kind === "tool_use") return `<div class="msg tool_use"><b>tool call: ${esc(e.name)}</b><pre>${esc(e.input && e.input.command ? e.input.command : pretty(e.input))}</pre></div>`;
+    if (e.kind === "tool_result") return `<details class="msg ${e.is_error ? "err" : "tool_result"}" ${e.is_error ? "open" : ""}><summary><b>${esc(e.name)} result</b>${e.is_error ? ' <span class="bad">error</span>' : ""}</summary>${e.parts.map(p => p.type === "image" ? `<img data-zoom src="${img(p.ref)}" style="max-width:420px">` : `<pre>${esc(pretty(p.text, 20000))}</pre>`).join("")}</details>`;
+    if (e.kind === "result") return `<div class="msg result"><b>finished: ${esc(e.subtype)}</b> &middot; ${e.turns} turns &middot; ${e.minutes} min &middot; $${fmtNum(e.cost_usd, 2)}${e.text ? `<pre>${esc(e.text)}</pre>` : ""}</div>`;
+    return "";
+  };
+  $app.innerHTML = `<p><a href="javascript:history.back()">&larr; back</a></p><h1>Agent conversation</h1><div class="muted small mono">${esc(d.path)}</div>
+   <div class="panel">${esc(d.result || "")} &middot; ${d.turns ?? "?"} turns &middot; ${d.tool_calls} tool calls (${d.tool_errors} errors) &middot; ${d.minutes ?? "?"} min &middot; ${d.cost_usd !== undefined ? "$" + fmtNum(d.cost_usd, 2) : ""}</div>
+   ${Object.entries(d.texts).map(([k, v]) => `<details class="panel" ${k === "REPORT.md" ? "open" : ""}><summary><b>${esc(k)}</b></summary><pre>${esc(v)}</pre></details>`).join("")}
+   ${Object.keys(d.programs).length ? `<details class="panel"><summary><b>Programs written (${Object.keys(d.programs).length})</b></summary>${Object.entries(d.programs).map(([k, v]) => `<h3>${esc(k)}</h3><pre>${esc(v)}</pre>`).join("")}</details>` : ""}
+   <div class="row"><label><input type="checkbox" id="hide-think"> hide thinking</label><label><input type="checkbox" id="only-err"> tool errors only</label></div>
+   <div id="events"></div>`;
+  const draw = () => {
+    const hide = document.getElementById("hide-think").checked, only = document.getElementById("only-err").checked;
+    document.getElementById("events").innerHTML = d.events.filter(e => (!hide || e.kind !== "thinking") && (!only || (e.kind === "tool_result" && e.is_error))).map(ev).join("");
+    afterRender();
+  };
+  document.getElementById("hide-think").onchange = draw; document.getElementById("only-err").onchange = draw; draw();
+}
+
+// ------------------------------------------------------------------------------ live --
+const EXAMPLES = [
+  ["robosuite", "cube_lifting", 0], ["robosuite", "two_arm_lift", 0], ["robosuite", "two_arm_handover", 0],
+  ["libero-pro", "libero_object_swap", 0], ["libero-pro", "libero_90", 33], ["libero-pro", "libero_goal_swap", 0],
+  ["libero-pro", "libero_10_swap", 3],
+];
+async function viewLive() {
+  const d = await api("/api/live");
+  $app.innerHTML = `<h1>Live robots</h1>
+   <p class="muted">A live console keeps one robot running (a simulator here; a real robot uses the same API) and lets you call any of its tools &mdash; cameras, state, SAM3, Contact-GraspNet, PyRoki, cuRobo, motions &mdash; or run Code-as-Policy programs, one at a time. Everything is recorded like an episode and shows up under Runs when you close it. The model services must be running (scripts/gpu/services.sh start).</p>
+   <div class="panel"><h3>Start a simulator</h3><div class="row">
+    <label>benchmark <select id="b"><option>robosuite</option><option>libero-pro</option></select></label>
+    <label>suite <input id="s" list="suites" value="cube_lifting" style="width:180px"></label><datalist id="suites">${[...new Set(EXAMPLES.map(e => e[1]))].map(s => `<option>${s}</option>`).join("")}</datalist>
+    <label>task id <input id="t" type="number" value="0" style="width:70px"></label>
+    <label>seed <input id="seed" type="number" value="1" style="width:70px"></label>
+    <label>camera <input id="w" type="number" value="512" style="width:70px">x<input id="h" type="number" value="512" style="width:70px"></label>
+    <label>LIBERO init <select id="im"><option>saved</option><option>seeded</option></select></label>
+    <button class="primary" id="start">Start</button></div>
+    <div class="small muted" style="margin-top:6px">Examples: ${EXAMPLES.map(e => `<a href="javascript:void 0" data-ex='${JSON.stringify(e)}'>${e[0]} ${e[1]}:${e[2]}</a>`).join(" &middot; ")}</div>
+    <div id="start-msg" class="small"></div></div>
+   <h2>Consoles</h2><div class="panel"><table><tr><th>console</th><th>state</th><th>ready</th><th>log</th><th></th></tr>
+   ${d.consoles.map(c => `<tr><td><a href="#/live/${esc(c.id)}">${esc(c.label)}</a><div class="muted small">${esc(c.url)}</div></td><td>${esc(c.state)}</td><td>${fmtBool(c.ready)}</td><td>${c.log ? `<a href="${file(c.log)}" target="_blank">console log</a>` : ""}</td>
+     <td>${c.external ? "" : `<button data-stop="${esc(c.id)}">Close & save</button>`}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">none running</td></tr>'}</table></div>
+   <p class="muted small">From a terminal instead: <span class="mono">.venv-robosuite/bin/python -m cap_harness.live --benchmark robosuite --suite cube_lifting --port 8770</span>, then start the dashboard with <span class="mono">--live http://127.0.0.1:8770</span>.</p>`;
+  document.querySelectorAll("[data-ex]").forEach(a => a.onclick = () => { const [b, s, t] = JSON.parse(a.dataset.ex); document.getElementById("b").value = b; document.getElementById("s").value = s; document.getElementById("t").value = t; });
+  document.querySelectorAll("[data-stop]").forEach(b => b.onclick = async () => { b.disabled = true; b.textContent = "closing..."; await api(`/api/live/${b.dataset.stop}/stop`, {method: "POST"}); viewLive(); });
+  document.getElementById("start").onclick = async () => {
+    const msg = document.getElementById("start-msg"); msg.textContent = "starting (the simulator takes 10-60 s to load)...";
+    try {
+      const v = k => document.getElementById(k).value;
+      const c = await api("/api/live/start", {method: "POST", body: JSON.stringify({benchmark: v("b"), suite: v("s"), task_id: +v("t"), seed: +v("seed"), camera_width: +v("w"), camera_height: +v("h"), init_mode: v("im")})});
+      location.hash = `#/live/${c.id}`;
+    } catch (e) { msg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  };
+}
+async function viewConsole(id) {
+  const base = `/live/${id}`;
+  $app.innerHTML = `<p><a href="#/live">&larr; live robots</a></p><h1 id="ctitle">Connecting to ${esc(id)}...</h1><div id="cbody" class="muted">Waiting for the console to load the robot (the first start can take a minute). <a href="#/live">Console log</a></div>`;
+  let info = null;
+  for (let i = 0; i < 180 && !info; i++) {
+    try { info = await api(`${base}/api/info`); } catch { await new Promise(r => setTimeout(r, 1000)); }
+    if (!location.hash.startsWith(`#/live/${id}`)) return;
+  }
+  if (!info) { document.getElementById("cbody").innerHTML = '<span class="bad">The console did not come up; check its log on the Live robots page.</span>'; return; }
+  const tools = info.tools.filter(t => t.json_callable);
+  const relRun = OUTPUTS && info.run_dir.startsWith(OUTPUTS) ? info.run_dir.slice(OUTPUTS.length + 1) : null;
+  document.getElementById("ctitle").innerHTML = `${esc(info.benchmark)} ${esc(info.suite)}:${info.task_id} seed ${info.seed} <span class="chip">${esc(info.embodiment)}</span>`;
+  document.getElementById("cbody").className = "";
+  document.getElementById("cbody").innerHTML = `
+   ${info.language ? `<div class="panel"><b>Instruction:</b> ${esc(info.language)}</div>` : ""}
+   <div class="row"><div class="grow"><div class="cams">${info.cameras.map(c => `<figure><img data-cam="${esc(c)}" alt="${esc(c)}"><figcaption class="small muted">${esc(c)}</figcaption></figure>`).join("")}</div></div>
+   <div class="panel" style="flex:0 1 380px"><h3>Robot <span class="right small" id="phase"></span></h3><pre id="rstate" style="max-height:300px"></pre>
+    <button id="close">Close & save recording</button> ${relRun ? `<a class="btn" href="#/e?path=${q(relRun)}">Recording so far</a>` : ""}</div></div>
+   <div class="row"><div class="panel grow"><h3>Call a tool</h3>
+     <select id="tool" style="max-width:100%">${tools.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("")}</select>
+     <div class="small mono muted" id="sig"></div><div class="small" id="doc"></div>
+     <textarea id="args" rows="9"></textarea><button class="primary" id="run-tool">Run tool</button> <button id="fill">Fill from current state</button></div>
+    <div class="panel grow"><h3>Run a Code-as-Policy program</h3><textarea id="code" rows="12">state = get_robot_state()
+masks = segment_text("${esc(info.default_camera)}", "cube")
+print("masks:", len(masks.segmentations) if masks.ok else masks.error)
+result = {"ee": [float(v) for v in state.end_effector_poses["primary"].position]}</textarea>
+     <input id="label" placeholder="label" style="width:200px"> <button class="primary" id="run-prog">Run program</button></div></div>
+   <div class="row"><div class="panel grow"><h3>Current job</h3><div id="job" class="small muted">idle</div></div>
+    <div class="panel grow"><h3>Events</h3><div id="events" class="small mono" style="max-height:220px;overflow:auto"></div></div></div>
+   <h2>History</h2><div id="history"></div>`;
+  let state = null, after = 0, lastJob = null;
+  const schemaExample = (t) => {
+    const props = t.schema.properties || {}, req = new Set(t.schema.required || []), out = {};
+    for (const [k, p] of Object.entries(props)) {
+      if ("default" in p) { out[k] = p.default; continue; }
+      if (!req.has(k)) continue;
+      if (k.includes("camera")) out[k] = info.default_camera;
+      else if (k === "text" || k === "query") out[k] = "cube";
+      else if ((p.properties && p.properties.position) || k.endsWith("pose") || k === "goal") {
+        const ee = state?.robot_state?.end_effector_poses?.primary;
+        out[k] = ee ? {position: ee.position, quaternion_wxyz: ee.quaternion_wxyz, frame: ee.frame} : {position: [0.5, 0, 0.3], rpy_deg: [180, 0, 0], frame: "robot0_base"};
+      } else if (k === "target" || k.includes("joints")) out[k] = state?.robot_state?.joint_positions?.primary || [];
+      else if (k === "targets") out[k] = Object.fromEntries(Object.entries(state?.robot_state?.end_effector_poses || {}).map(([a, e]) => [a, {position: e.position, quaternion_wxyz: e.quaternion_wxyz, frame: e.frame}]));
+      else if (p.type === "number" || p.type === "integer") out[k] = 0;
+      else if (p.type === "string") out[k] = "";
+      else out[k] = null;
+    }
+    return out;
+  };
+  const pick = () => {
+    const t = tools.find(x => x.name === document.getElementById("tool").value);
+    document.getElementById("sig").textContent = t.signature; document.getElementById("doc").textContent = t.doc || "";
+    document.getElementById("args").value = JSON.stringify(schemaExample(t), null, 2);
+  };
+  document.getElementById("tool").onchange = pick; document.getElementById("fill").onclick = pick;
+  const submit = async (url, body) => {
+    try { const r = await api(base + url, {method: "POST", body: JSON.stringify(body)}); lastJob = r.job_id; poll(); }
+    catch (e) { document.getElementById("job").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  };
+  document.getElementById("run-tool").onclick = () => {
+    let args; try { args = JSON.parse(document.getElementById("args").value || "{}"); } catch (e) { document.getElementById("job").innerHTML = `<span class="bad">arguments are not valid JSON: ${esc(e.message)}</span>`; return; }
+    submit("/api/tool", {name: document.getElementById("tool").value, arguments: args});
+  };
+  document.getElementById("run-prog").onclick = () => submit("/api/program", {code: document.getElementById("code").value, label: document.getElementById("label").value || "console program"});
+  document.getElementById("close").onclick = async () => {
+    document.getElementById("close").disabled = true; document.getElementById("close").textContent = "saving...";
+    try { await api(`/api/live/${id}/stop`, {method: "POST"}); } catch {}
+    location.hash = relRun ? `#/e?path=${q(relRun)}` : "#/live";
+  };
+  const refreshCams = () => document.querySelectorAll("[data-cam]").forEach(img => { const n = new Image(); n.onload = () => img.src = n.src; n.src = `${base}/api/camera/${q(img.dataset.cam)}.jpg?t=${Date.now()}`; });
+  const poll = async () => {
+    if (!location.hash.startsWith(`#/live/${id}`)) return;
+    try {
+      state = await api(`${base}/api/state?after=${after}`);
+      const rs = state.robot_state || {};
+      document.getElementById("phase").innerHTML = `<span class="chip">${esc(state.phase)}</span> steps ${state.steps}`;
+      document.getElementById("rstate").textContent = JSON.stringify({end_effector_poses: rs.end_effector_poses, gripper_positions: rs.gripper_positions, joint_positions: rs.joint_positions}, null, 1);
+      const ev = document.getElementById("events");
+      state.events.forEach(e => { after = Math.max(after, e.seq); ev.insertAdjacentHTML("afterbegin", `<div>${new Date(e.timestamp_s * 1000).toLocaleTimeString()} [${esc(e.role)}] ${esc(e.text)}</div>`); });
+      const job = state.job;
+      document.getElementById("job").innerHTML = job ? `<b>${esc(job.label)}</b> <span class="${job.active ? "warn" : job.error ? "bad" : "ok"}">${job.active ? "running" : job.error ? "error" : "done"}</span> ${fmtNum(job.elapsed_s, 2)} s${job.error ? `<pre class="bad">${esc(job.error)}</pre>` : ""}${!job.active && job.result ? `<details ${job.id === lastJob ? "open" : ""}><summary>result</summary><pre>${esc(pretty(job.result, 30000))}</pre></details>` : ""}` : "idle";
+      if (!job || !job.active) {
+        const h = await api(`${base}/api/history`);
+        document.getElementById("history").innerHTML = h.history.slice().reverse().map((c, i) => `<div class="msg ${c.error ? "err" : "tool_use"}"><b>${h.history.length - i}. ${esc(c.kind)} ${esc(c.name)}</b> <span class="${c.status === "done" ? "ok" : c.status === "error" ? "bad" : "warn"}">${esc(c.status)}</span> <span class="muted small">${fmtNum(c.elapsed_s, 2)} s</span>
+          <details><summary>request and result</summary><pre>${esc(c.code || pretty(c.arguments))}</pre>${c.error ? `<pre class="bad">${esc(c.error)}</pre>` : ""}<pre>${esc(pretty(c.result, 30000))}</pre></details></div>`).join("");
+      }
+      refreshCams();
+    } catch (e) { document.getElementById("phase").innerHTML = `<span class="bad">disconnected: ${esc(e.message)}</span>`; }
+    const t = setTimeout(poll, state && state.job && state.job.active ? 400 : 1200); timers.push(t);
+  };
+  await poll(); pick();
+}
+
+// ----------------------------------------------------------------------------- about --
+function viewAbout() {
+  $app.innerHTML = `<h1>How it works</h1>
+  <div class="panel"><p>Every robot, simulated or real, sits behind one interface; everything above it is robot-agnostic.</p>
+  <pre>
+ Agent (Claude Code / Opus)  ->  writes Code-as-Policy programs, reads run artifacts, debugs, writes skills
+        |  cap-harness run / run-batch   or   live console (HTTP)   or   MCP (System 2, real robot)
+        v
+ ProgramExecutor (AST sandbox: only registered tools, import math)
+        v
+ ToolRegistry  ->  CapApi  (perception: segment_text, localize_object, mask_to_point_cloud, generate_grasps
+                             motion: solve_ik, plan_motion, move_to_pose, move_synchronized, grippers, step)
+        |                         \\
+        v                          v
+ EnvironmentAdapter            Providers over HTTP (model services)
+ robosuite | libero | behavior | yam_real     SAM3 :8114  Contact-GraspNet :8115  PyRoki :8116  cuRobo :8118
+ (reset, observe, step, state, success)
+        v
+ RunRecorder: run.json, outcome.json, trace/events.jsonl + trace/calls/*, episode/steps.jsonl, videos, keyframes, overlays
+  </pre>
+  <p>To add a robot: implement an <b>EnvironmentAdapter</b> (reset / get_observation / get_robot_state / step / check_success, plus kinematics for IK) and a task registry; CapApi, the providers, the sandbox, the recorder, this dashboard and the agents work unchanged. To add a tool (another segmenter, planner, VLM), implement a provider client with the same contract and register it in CapApi. See docs/big-picture.md.</p></div>`;
+}
+
+// ---------------------------------------------------------------------------- router --
+async function route() {
+  timers.splice(0).forEach(clearTimeout);
+  const h = location.hash || "#/";
+  const [p, qs] = h.slice(1).split("?");
+  const params = new URLSearchParams(qs || "");
+  try {
+    if (!OUTPUTS) { try { OUTPUTS = (await api("/api/collections")).outputs; } catch {} }
+    if (p === "/" || p === "") await viewRuns();
+    else if (p === "/c") await viewCollection(params.get("path"));
+    else if (p === "/e") await viewEpisode(params.get("path"));
+    else if (p === "/a") await viewAgent(params.get("path"));
+    else if (p === "/live") await viewLive();
+    else if (p.startsWith("/live/")) await viewConsole(p.slice(6));
+    else if (p === "/about") viewAbout();
+    else $app.innerHTML = "Not found";
+  } catch (e) { $app.innerHTML = `<p class="bad">${esc(e.message)}</p><p><a href="#/">back to runs</a></p>`; }
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

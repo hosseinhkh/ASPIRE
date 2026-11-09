@@ -612,6 +612,43 @@ scripts/gpu/session.sh why outputs/sessions/<session>
 Add `--graspnet-cpu` to `session.sh run` to run Contact-GraspNet on the CPU (see
 Troubleshooting).
 
+## 9. Dashboard and live robots
+
+The dashboard shows everything that was recorded and can drive a running robot. It needs no
+extra packages:
+
+```bash
+python scripts/gpu/dashboard.py
+```
+
+From your laptop, tunnel the port and open http://localhost:8765:
+
+```bash
+ssh -L 8765:localhost:8765 <you>@<server>
+```
+
+| Page | What you get |
+| --- | --- |
+| Runs | Every session, live-console run, check, demo and campaign under `outputs/`. Each has a **zip download**: complete (videos and images included) or logs only |
+| Session | Stages with timing and GPU peak, GPU memory and utilization charts with the stages shaded, episodes, agent conversations, and every log file (console, environment, preflight, service logs) |
+| Episode | The videos (seekable), joint / gripper / end-effector trajectories, SAM3 overlays, keyframes before and after each motion, and **every call**: the program's calls, the API stages inside them, and each model-service request (SAM3, Contact-GraspNet, PyRoki, cuRobo), each with its full input, output and error. Also the program, what it printed, and the commands of a live session |
+| Agent | The whole Claude Code conversation: prompt, text, thinking, each command, each result, every image the agent was shown, its report and the programs it wrote |
+| Live robots | Start a simulator as a **live console**. See its cameras and state, call any robot tool with JSON arguments (`segment_text`, `localize_object`, `generate_grasps`, `plan_motion`, `move_to_pose`, grippers, ...) or run a Code-as-Policy program, one at a time. **Close & save** finalizes the recording, which then appears under Runs like any episode |
+
+The model services must be running for perception and motion
+(`scripts/gpu/services.sh start`). A live console can also be started from a terminal and
+attached to the dashboard:
+
+```bash
+.venv-libero/bin/python -m cap_harness.live --benchmark libero-pro --suite libero_object_swap --task-id 0 --seed 1 --port 8770
+```
+
+```bash
+python scripts/gpu/dashboard.py --live http://127.0.0.1:8770
+```
+
+How the pieces fit, and how to add your own robot or model: [big-picture.md](big-picture.md).
+
 ## Troubleshooting
 
 | Symptom | Fix |

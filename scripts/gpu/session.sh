@@ -538,6 +538,7 @@ cmd_run() {
   cat <<EOF
 
 Session:  $SESSION
+Browse:   python scripts/gpu/dashboard.py   (videos, every call, agent conversation, zip downloads)
 Report:   $SESSION/report/index.html
           (on a remote server: cd $SESSION && python -m http.server 8000 --bind 127.0.0.1,
            then ssh -L 8000:localhost:8000 <server> and open http://localhost:8000/report/)

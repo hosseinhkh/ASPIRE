@@ -184,4 +184,5 @@ Setup complete. Next steps (docs/gpu-quickstart.md has the full walkthrough):
   scripts/gpu/demo.sh smoke                     # simulator + perception demo, no LLM
   scripts/gpu/demo.sh llm                       # Claude Opus 4.6 writes and debugs a program
   scripts/gpu/session.sh run --tasks quick      # recorded run: videos, traces, report, W&B
+  python scripts/gpu/dashboard.py               # browse runs, download logs, drive live robots
 EOF

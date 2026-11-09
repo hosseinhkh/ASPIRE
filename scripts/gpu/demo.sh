@@ -233,13 +233,8 @@ cmd_llm() {
   local instruction="" task_note
   if [[ "$benchmark" == libero-pro ]]; then
     # Resolved offline from the task's BDDL file (about a second, no simulator).
-    instruction="$("$REPO_ROOT/.venv-libero/bin/python" - "$suite" "$task_id" 2>/dev/null <<'PY' \
-      | sed -n 's/^INSTRUCTION=//p' | tail -n 1
-import sys
-from cap_harness.libero.registry import LiberoSuiteRegistry
-print("INSTRUCTION=" + LiberoSuiteRegistry().resolve(f"{sys.argv[1]}:{sys.argv[2]}").language)
-PY
-)"
+    instruction="$("$REPO_ROOT/.venv-libero/bin/python" scripts/gpu/checks/task_instruction.py \
+      "$suite" "$task_id" 2>/dev/null | sed -n 's/^INSTRUCTION=//p')"
   fi
   if [[ -n "$instruction" ]]; then
     task_note="The task instruction is: \"$instruction\"."
