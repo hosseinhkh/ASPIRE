@@ -388,6 +388,60 @@ are in Tables 10, 11, 13 and 19.
 Even with the same protocol, expect spread between runs: the paper's three Opus 4.6 runs differ
 by up to 47 points on one task (Table 25).
 
+### Does the skill library (memory) help? A three-campaign experiment
+
+The skill library in `.claude/skills/iterative-debugging/skills/` is the only memory between
+tasks (Claude Code's own memory and CLAUDE.md notes are switched off for these runs). Three
+campaigns on one suite, all with the paper's protocol and the same harness:
+
+| Run | Memory | Starts from | Question |
+|---|---|---|---|
+| 1 | off | empty library | How good is the agent alone? (paper, Opus 4.6: 55.6%) |
+| 2 | on | empty library | Do skills learned on earlier tasks help later ones? |
+| 3 | on | run 2's library | Does a full library help on a second pass? |
+
+Run them one after another, in a tmux window. Each takes most of a day; see the cost note below.
+
+```bash
+scripts/gpu/demo.sh campaign --paper --harness fixed --suite libero_goal_swap --memory off --library empty --name goal-nomem --headless --budget-usd 300
+```
+
+```bash
+scripts/gpu/demo.sh campaign --paper --harness fixed --suite libero_goal_swap --memory on --library empty --name goal-mem1 --headless --budget-usd 350
+```
+
+```bash
+scripts/gpu/demo.sh campaign --paper --harness fixed --suite libero_goal_swap --memory on --library goal-mem1-end --name goal-mem2 --headless --budget-usd 350
+```
+
+Compare them, task by task, next to the paper's numbers:
+
+```bash
+python scripts/gpu/campaign_results.py outputs/runs/*_goal-nomem outputs/runs/*_goal-mem1 outputs/runs/*_goal-mem2
+```
+
+or tick the three campaigns under **Runs** in the dashboard and press **Compare**.
+
+- `--memory off` is the no-memory baseline: no skill is promoted, and if anything edits the
+  library anyway it is restored afterwards. `--memory on` is the full loop: verifier, promotion,
+  curriculum and the backward-transfer rerun sweep.
+- Every campaign saves the library it started and ended with (`scripts/gpu/library.sh list`).
+  `scripts/gpu/library.sh status` shows the current one, `diff A B` what was learned, and
+  `released` puts the shipped library back.
+- A stopped campaign (budget, expired credentials, Ctrl-C) continues where it left off:
+  `scripts/gpu/demo.sh campaign --resume outputs/runs/<campaign> --headless --budget-usd 100`.
+  Progress at any time: `python .claude/skills/iterative-debugging/scripts/gen_progress.py --print`.
+- Credentials: a short-term Bedrock API key lasts at most 12 hours, shorter than a campaign. Use
+  access keys or a long-term API key (`scripts/gpu/set_credentials.sh`), or renew and resume.
+- **Cost and time.** The paper reports $23.58 and about an hour of agent time per task for Opus 4.6
+  on this suite (Table 18), so about $240 for run 1, and more with memory on (verifier and
+  reruns): plan for roughly $800-900 and two to three days for all three. `--budget-usd` is a hard
+  cap per campaign; the budget can be raised on `--resume`.
+- `--harness fixed` keeps the harness fixes on in all three, so only the memory differs; the
+  paper's 55.6% used the published harness (`--harness published`).
+- One campaign per condition is a small sample: with 50 held-out seeds a task's 95% interval is
+  about +/-14 points, and the paper's own runs of one task varied by up to 47 points.
+
 ### Switch to another GPU (e.g. GPU 1), keeping your reservation on GPU 0
 
 The memory reservation stays on GPU 0 the whole time. Services only touch a reservation on

@@ -13,9 +13,11 @@
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
 #
-#   scripts/gpu/demo.sh campaign  [--tasks FILE] [--run | --headless] [--budget-usd 30]
-#                                 [--max-turns 400] [--dev-seeds "51 52 53"]
+#   scripts/gpu/demo.sh campaign  [--tasks FILE | --suite SUITE] [--run | --headless]
+#                                 [--budget-usd 30] [--max-turns 400] [--dev-seeds "51 52 53"]
 #                                 [--unseen-seeds "66"] [--heldout-count 3] [--paper]
+#                                 [--memory on|off] [--library current|empty|released|NAME]
+#                                 [--harness fixed|published] [--name NAME] [--resume RUN_ROOT]
 #       Initializes an ASPIRE iterative-debugging campaign (default: 1 task, 3 dev / 1 unseen /
 #       3 held-out seeds) and prints, with --run starts, the interactive Claude Code
 #       coordinator that runs the whole pipeline (worker, validation, verifier, skills).
@@ -23,7 +25,11 @@
 #       works only headless) and records the transcript in the campaign folder.
 #       --paper uses the paper's protocol: LIBERO dev 51-65 / unseen 66-80 / held-out 1-50
 #       (Robosuite 101-125 / 126-130 / 1-100), no cap on program versions, $40 per task,
-#       and the published harness behaviour (CAP_HARNESS_COMPAT=published).
+#       and by default the published harness behaviour (--harness fixed to keep the fixes).
+#       --suite runs every task of a suite. --memory off is a no-memory baseline: no skill is
+#       promoted and the library is restored afterwards. --library picks the starting skill
+#       library (scripts/gpu/library.sh). The library is saved as <campaign>-start and -end.
+#       --resume continues an interrupted campaign with its own settings.
 #
 #   Claude runs with the paper's Opus 4.6 settings: max effort and the 1M-token context.
 #   ASPIRE_EFFORT=high (Claude Code's default) or ASPIRE_1M=0 change them.
@@ -36,7 +42,7 @@ GPU="${ASPIRE_GPU:-0}"
 PY="${CAP_HARNESS_PYTHON:-python3}"
 cd "$REPO_ROOT"
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 
@@ -207,6 +213,9 @@ set_claude_flags() {  # set_claude_flags MINUTES_NEEDED; sets CLAUDE_FLAGS for b
   local model="$ANTHROPIC_MODEL" help
   if [[ "${ASPIRE_1M:-1}" == 1 && "$model" != *"[1m]" ]]; then model="$model[1m]"; fi
   export CLAUDE_CODE_EFFORT_LEVEL="${ASPIRE_EFFORT:-max}"
+  # The skill library is the only memory an experiment should have: no Claude Code auto
+  # memory, no CLAUDE.md notes carried over from other sessions.
+  export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_DISABLE_CLAUDE_MDS=1
   # Sub-agents ask for "opus": give them the same model and window.
   export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
   # bypassPermissions: the demo runs unattended and launches simulator processes itself.
@@ -317,26 +326,47 @@ PY
 }
 
 # ---------------------------------------------------------------------------------- campaign --
-campaign_headless() {  # campaign_headless RUN_ROOT BUDGET_USD MAX_TURNS
-  local run_root="$1" budget="$2" max_turns="$3" status=0
+campaign_meta() {  # campaign_meta RUN_ROOT KEY=VALUE...: merge fields into the campaign's session.json
+  "$PY" - "$@" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1]) / "session.json"
+try:
+    data = json.loads(path.read_text())
+except (OSError, ValueError):
+    data = {}
+for pair in sys.argv[2:]:
+    key, _, value = pair.partition("=")
+    if key.startswith("?"):  # only when not already set (a resumed campaign keeps its start)
+        data.setdefault(key[1:], value)
+    else:
+        data[key] = value
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+}
+
+campaign_headless() {  # campaign_headless RUN_ROOT BUDGET_USD MAX_TURNS MEMORY
+  local run_root="$1" budget="$2" max_turns="$3" memory="$4" status=0 name
+  name="$(basename "$run_root")"
   if [[ "$(claude --help 2>/dev/null)" != *--max-budget-usd* ]]; then
     echo "error: this Claude Code has no --max-budget-usd; update it: npm install -g @anthropic-ai/claude-code" >&2
     exit 1
   fi
   # session.json lets the dashboard name the run, and claude-logs pick out its sub-agents.
-  printf '{"name": "campaign %s", "started": "%s", "budget_usd": %s, "model": "%s", "claude_effort": "%s", "harness": "%s", "git_commit": "%s"}\n' \
-    "$(basename "$run_root")" "$(date -Iseconds)" "$budget" "$ANTHROPIC_MODEL" \
-    "$CLAUDE_CODE_EFFORT_LEVEL" "${CAP_HARNESS_COMPAT:-fixed}" \
-    "$(git rev-parse --short HEAD 2>/dev/null)" > "$run_root/session.json"
-  step "Headless ASPIRE campaign (Claude Code, $ANTHROPIC_MODEL), cap \$$budget"
+  campaign_meta "$run_root" "?name=campaign $name" "?started=$(date -Iseconds)" "budget_usd=$budget" \
+    "model=$ANTHROPIC_MODEL" "claude_effort=$CLAUDE_CODE_EFFORT_LEVEL" \
+    "harness=${CAP_HARNESS_COMPAT:-fixed}" "memory=$memory" \
+    "git_commit=$(git rev-parse --short HEAD 2>/dev/null)"
+  step "Headless ASPIRE campaign (Claude Code, $ANTHROPIC_MODEL), memory $memory, cap \$$budget"
   echo "campaign: $run_root"
   echo "transcript: $run_root/transcript.jsonl   (Ctrl-C stops it; progress: gen_progress.py --print)"
   claude -p "$(cat "$run_root/kickoff_prompt.md")" "${CLAUDE_FLAGS[@]}" \
     --max-turns "$max_turns" --max-budget-usd "$budget" --output-format stream-json --verbose \
-    2> "$run_root/claude.stderr" \
+    2>> "$run_root/claude.stderr" \
     | "$PY" scripts/gpu/stream_view.py --raw "$run_root/transcript.jsonl" --summary "$run_root/result.json" \
     || status=$?
   scripts/gpu/session.sh claude-logs "$run_root" || true  # the sub-agents' own transcripts
+  campaign_library_end "$run_root" "$memory"
   step "Campaign summary"
   if [[ -f "$run_root/DEMO_SUMMARY.md" ]]; then cat "$run_root/DEMO_SUMMARY.md"
   else echo "(no DEMO_SUMMARY.md: the run stopped early; see result.json and the transcript)"; fi
@@ -351,19 +381,48 @@ print(f"\nended: {r.get('subtype')} | turns {r.get('num_turns')} | "
       f"of ${float(sys.argv[2]):.2f} cap")
 PY
   model_usage "$run_root/result.json"
-  echo "Browse it: python scripts/gpu/dashboard.py  (Runs -> campaign $(basename "$run_root"))"
+  "$PY" scripts/gpu/campaign_results.py "$run_root" || true
+  echo "Unfinished? Continue it: scripts/gpu/demo.sh campaign --resume $run_root --headless --budget-usd N"
+  echo "Browse it: python scripts/gpu/dashboard.py  (Runs -> campaign $name)"
   return "$status"
 }
 
+campaign_library_end() {  # campaign_library_end RUN_ROOT MEMORY: keep (memory on) or undo (off) changes
+  local run_root="$1" memory="$2" name start
+  name="$(basename "$run_root")"
+  start="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("library_start_snapshot", ""))' \
+    "$run_root/session.json" 2>/dev/null || true)"
+  scripts/gpu/library.sh save "$name-end" --force
+  # Also under the plain campaign name, so the next run can start from it: --library NAME-end
+  local plain
+  plain="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("campaign_name", ""))' \
+    "$run_root/session.json" 2>/dev/null || true)"
+  [[ -n "$plain" ]] && scripts/gpu/library.sh save "$plain-end" --force
+  if [[ "$memory" == off && -n "$start" ]]; then
+    if ! diff -rq "outputs/libraries/$start" "outputs/libraries/$name-end" >/dev/null; then
+      echo "warning: the library changed although memory was off; restoring $start" >&2
+      scripts/gpu/library.sh load "$start"
+    fi
+  fi
+  campaign_meta "$run_root" "library_end_words=$(cat "outputs/libraries/$name-end"/*.md | wc -w | tr -d ' ')" \
+    "library_end_snapshot=$name-end" "finished=$(date -Iseconds)"
+}
+
 cmd_campaign() {
-  local tasks="" run=0 headless=0 budget="" max_turns="" dev="51 52 53" unseen="66" heldout=3
-  local paper=0
+  local tasks="" suite="" run=0 headless=0 budget="" max_turns="" dev="51 52 53" unseen="66" heldout=3
+  local paper=0 memory=on library=current harness="" name=gpu-demo resume=""
   while (($#)); do
     case "$1" in
       --tasks) tasks="$2"; shift 2 ;;
+      --suite) suite="$2"; shift 2 ;;
       --run) run=1; shift ;;
       --headless) headless=1; shift ;;
       --paper) paper=1; shift ;;
+      --memory) memory="$2"; shift 2 ;;
+      --library) library="$2"; shift 2 ;;
+      --harness) harness="$2"; shift 2 ;;
+      --name) name="$2"; shift 2 ;;
+      --resume) resume="$2"; shift 2 ;;
       --budget-usd) budget="$2"; shift 2 ;;
       --max-turns) max_turns="$2"; shift 2 ;;
       --dev-seeds) dev="$2"; shift 2 ;;
@@ -372,58 +431,108 @@ cmd_campaign() {
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
+  [[ "$memory" == on || "$memory" == off ]] || { echo "error: --memory on|off" >&2; exit 2; }
   require_runtime_env
   require_services
   set_claude_flags 120
-  if [[ -z "$tasks" ]]; then
-    tasks="$OUT_BASE/campaign-tasks-$STAMP.json"
-    mkdir -p "$OUT_BASE"
-    cat > "$tasks" <<'JSON'
+  local scope version_rule memory_rule resume_note="" kind="" count=1 label=mini run_root
+  if [[ -n "$resume" ]]; then
+    run_root="$(cd "$resume" && pwd -P)"
+    # shellcheck disable=SC1091  # written by this script when the campaign was initialized
+    source "$run_root/campaign_settings.sh"
+    # Keep the earlier part's transcript and cost; campaign_results.py adds the parts up.
+    local part=1
+    while [[ -e "$run_root/result.part$part.json" ]]; do part=$((part + 1)); done
+    [[ -f "$run_root/result.json" ]] && mv "$run_root/result.json" "$run_root/result.part$part.json"
+    [[ -f "$run_root/transcript.jsonl" ]] && mv "$run_root/transcript.jsonl" "$run_root/transcript.part$part.jsonl"
+    resume_note="
+This campaign was interrupted and is being resumed. Regenerate progress with gen_progress.py,
+rebuild your ledger from disk as main-agent-prompt.md describes, and continue every unfinished
+task. Do not redo or overwrite finished stages, and keep the existing campaign settings.
+"
+    step "Resuming the $label campaign $run_root (memory $memory)"
+  else
+    if [[ -n "$suite" ]]; then
+      local bench=robosuite venv=.venv-robosuite
+      [[ "$suite" == libero* ]] && { bench=libero-pro; venv=.venv-libero; }
+      tasks="$OUT_BASE/campaign-tasks-$suite-$STAMP.json"
+      mkdir -p "$OUT_BASE"
+      "$REPO_ROOT/$venv/bin/python" scripts/gpu/checks/suite_tasks.py "$bench" "$suite" "$tasks"
+      [[ "$name" == gpu-demo ]] && name="$suite"
+    fi
+    if [[ -z "$tasks" ]]; then
+      tasks="$OUT_BASE/campaign-tasks-$STAMP.json"
+      mkdir -p "$OUT_BASE"
+      cat > "$tasks" <<'JSON'
 [
   {"benchmark": "libero-pro", "suite": "libero_object_swap", "task_id": 0,
    "task_name": "pick_up_the_alphabet_soup_and_place_it_in_the_basket"}
 ]
 JSON
-  fi
-  local scope version_rule kind="" count=1 label=mini
-  scope="Run a deliberately small ASPIRE iterative-debugging campaign end to end, as a smoke test of the whole pipeline: coordinator, worker sub-agent, unseen-check, Stage-2 held-out validation, verifier, and skill promotion. Keep it small; do not expand the scope."
-  version_rule="Budget: at most 4 program versions per worker. Dispatch the verifier only if the worker proposes skills."
-  if ((paper)); then
-    # The paper's seed partitions (iterative-debugging/SKILL.md; arXiv 2607.00272 Sec. 3).
-    read -r kind count < <("$PY" scripts/gpu/checks/task_list_kind.py "$tasks")
-    case "$kind" in
-      libero-pro) dev="$(seq -s ' ' 51 65)"; unseen="$(seq -s ' ' 66 80)"; heldout=50 ;;
-      robosuite) dev="$(seq -s ' ' 101 125)"; unseen="$(seq -s ' ' 126 130)"; heldout=100 ;;
-      *) echo "error: --paper needs tasks from a single benchmark (got: $kind)" >&2; exit 2 ;;
+    fi
+    scope="Run a deliberately small ASPIRE iterative-debugging campaign end to end, as a smoke test of the whole pipeline: coordinator, worker sub-agent, unseen-check, Stage-2 held-out validation, verifier, and skill promotion. Keep it small; do not expand the scope."
+    version_rule="Budget: at most 4 program versions per worker."
+    if ((paper)); then
+      # The paper's seed partitions (iterative-debugging/SKILL.md; arXiv 2607.00272 Sec. 3).
+      read -r kind count < <("$PY" scripts/gpu/checks/task_list_kind.py "$tasks")
+      case "$kind" in
+        libero-pro) dev="$(seq -s ' ' 51 65)"; unseen="$(seq -s ' ' 66 80)"; heldout=50 ;;
+        robosuite) dev="$(seq -s ' ' 101 125)"; unseen="$(seq -s ' ' 126 130)"; heldout=100 ;;
+        *) echo "error: --paper needs tasks from a single benchmark (got: $kind)" >&2; exit 2 ;;
+      esac
+      budget="${budget:-$((40 * count))}"; max_turns="${max_turns:-$((600 * count))}"
+      label=paper-protocol
+      # Paper comparisons default to the published harness (docs/harness-fixes.md).
+      harness="${harness:-published}"
+      scope="Run an ASPIRE iterative-debugging campaign with the paper's protocol (arXiv 2607.00272, Section 3 and Appendix E): the full seed partitions below, the skill's own stopping rules and Stage-2 held-out validation. Do not shorten the seed lists or skip a stage."
+      version_rule="Budget: no fixed cap on program versions; workers debug until the development threshold or a plateau, as subagent-prompt.md says."
+    fi
+    if [[ "$memory" == on ]]; then
+      memory_rule="Memory is ON (the full ASPIRE loop): when a worker proposes skills, dispatch the verifier, and promote what it reproduces into .claude/skills/iterative-debugging/skills/ as the skill describes, so later tasks read it. Choose the task order as the curriculum section says. When every task has its held-out results, run the phase-3 rerun sweep once."
+    else
+      memory_rule="Memory is OFF (a no-memory baseline): every task starts from the same skill library. Do not dispatch verifiers, do not promote skills, and do not edit anything under .claude/skills/iterative-debugging/skills/. Workers still write skill_report.json with their proposals; they are kept for analysis only. Skip the phase-3 rerun sweep: it exists to apply a changed library."
+    fi
+    harness="${harness:-fixed}"
+    case "$library" in
+      current) ;;
+      empty) scripts/gpu/library.sh empty ;;
+      released) scripts/gpu/library.sh released ;;
+      *) scripts/gpu/library.sh load "$library" ;;
     esac
-    budget="${budget:-$((40 * count))}"; max_turns="${max_turns:-$((600 * count))}"
-    label=paper-protocol
-    # The published release's behaviour too (motion timing, point clouds, boxes), so the
-    # numbers compare with the paper's (docs/harness-fixes.md).
-    export CAP_HARNESS_COMPAT=published
-    scope="Run an ASPIRE iterative-debugging campaign with the paper's protocol (arXiv 2607.00272, Section 3 and Appendix E): the full seed partitions below, the skill's own stopping rules, Stage-2 held-out validation, the verifier, and skill promotion. Do not shorten the seed lists or skip a stage."
-    version_rule="Budget: no fixed cap on program versions; workers debug until the development threshold or a plateau, as subagent-prompt.md says. Dispatch the verifier whenever a worker proposes skills."
+    step "Initializing a $label campaign from $tasks (memory $memory, library $library, harness $harness)"
+    # shellcheck disable=SC2086  # seed lists are space-separated on purpose
+    "$PY" .claude/skills/iterative-debugging/scripts/init_run.py --tasks "$tasks" --name "$name" \
+      --dev-seeds $dev --unseen-seeds $unseen --heldout-count "$heldout"
+    run_root="$(cd outputs/runs/LATEST && pwd -P)"
+    scripts/gpu/library.sh save "$(basename "$run_root")-start" --force
+    # Everything a --resume needs to continue with the same settings.
+    {
+      printf 'dev=%q unseen=%q heldout=%q memory=%q harness=%q label=%q\n' \
+        "$dev" "$unseen" "$heldout" "$memory" "$harness" "$label"
+      printf 'scope=%q\nversion_rule=%q\nmemory_rule=%q\n' "$scope" "$version_rule" "$memory_rule"
+    } > "$run_root/campaign_settings.sh"
+    campaign_meta "$run_root" "campaign_name=$name" "library_start=$library" \
+      "library_start_snapshot=$(basename "$run_root")-start" \
+      "library_start_words=$(cat .claude/skills/iterative-debugging/skills/*.md | wc -w | tr -d ' ')"
   fi
+  if [[ "$harness" == published ]]; then export CAP_HARNESS_COMPAT=published
+  else unset CAP_HARNESS_COMPAT; fi
   budget="${budget:-30}"; max_turns="${max_turns:-400}"
-  step "Initializing a $label campaign from $tasks"
-  # shellcheck disable=SC2086  # seed lists are space-separated on purpose
-  "$PY" .claude/skills/iterative-debugging/scripts/init_run.py --tasks "$tasks" --name gpu-demo \
-    --dev-seeds $dev --unseen-seeds $unseen --heldout-count "$heldout"
-  local run_root
-  run_root="$(cd outputs/runs/LATEST && pwd -P)"
   local curobo_note=""
   ((CUROBO_UP)) && curobo_note=", cuRobo :8118"
   render scripts/gpu/prompts/mini_campaign.md "$run_root/kickoff_prompt.md" \
     "RUN_ROOT=$run_root" "DEV_SEEDS=${dev// /, }" "UNSEEN_SEEDS=${unseen// /, }" \
     "HELDOUT_COUNT=$heldout" "SCOPE=$scope" "VERSION_RULE=$version_rule" \
+    "MEMORY_RULE=$memory_rule" "RESUME_NOTE=$resume_note" \
     "GPU=$GPU" "CUROBO_NOTE=$curobo_note"
   echo "kickoff prompt: $run_root/kickoff_prompt.md"
   if ((headless)); then
-    campaign_headless "$run_root" "$budget" "$max_turns"
+    campaign_headless "$run_root" "$budget" "$max_turns" "$memory"
     return
   fi
   if ((run)); then
     step "Starting the interactive coordinator (Claude Code, ${ANTHROPIC_MODEL})"
+    echo "When it is done: scripts/gpu/library.sh save $(basename "$run_root")-end"
     exec claude "${CLAUDE_FLAGS[@]}" "$(cat "$run_root/kickoff_prompt.md")"
   fi
   cat <<EOF

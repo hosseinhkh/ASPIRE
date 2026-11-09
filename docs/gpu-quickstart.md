@@ -499,7 +499,15 @@ scripts/gpu/demo.sh campaign --paper --headless
 ```
 
 The default task is LIBERO-Pro `libero_object_swap` task 0, where the paper reports 100% on
-50 held-out seeds with Opus 4.6 (Table 10). Pass `--tasks FILE` for others.
+50 held-out seeds with Opus 4.6 (Table 10). Pass `--tasks FILE` for others, or `--suite SUITE`
+for every task of a suite.
+
+Other campaign options: `--memory on|off` (off: a no-memory baseline that promotes nothing),
+`--library current|empty|released|NAME` (the skill library to start from;
+`scripts/gpu/library.sh` saves, lists and restores them), `--harness fixed|published`,
+`--name NAME`, and `--resume RUN_ROOT` to continue a stopped campaign. The README's
+"Does the skill library (memory) help?" section runs the three-campaign experiment, and
+`scripts/gpu/campaign_results.py` compares campaigns task by task with the paper.
 
 Check progress any time:
 

@@ -1,5 +1,5 @@
 {{SCOPE}}
-
+{{RESUME_NOTE}}
 Ignore AGENTS.md and .agents/: they are the real-robot System-2 runbook and do not apply here.
 Do not read or run anything under src/cap_harness/yam_real, docs/system2*.md or docs/yam-real.md.
 
@@ -24,7 +24,11 @@ Do not read or run anything under src/cap_harness/yam_real, docs/system2*.md or 
    `.venv-robosuite/bin/cap-harness` for Robosuite.
 6. Spawn sub-agents with model "opus", as the prompts say. Here it resolves to Claude Opus 4.6.
 7. {{VERSION_RULE}}
-8. When every task is done, write `{{RUN_ROOT}}/DEMO_SUMMARY.md` with the status of each stage:
+8. {{MEMORY_RULE}}
+   The skill library in `.claude/skills/iterative-debugging/skills/` is the only memory between
+   tasks: Claude Code's own memory is switched off for this run. Do not keep notes for later
+   tasks anywhere else.
+9. When every task is done, write `{{RUN_ROOT}}/DEMO_SUMMARY.md` with the status of each stage:
    - exploration;
    - development results per version;
    - unseen-check;

@@ -585,3 +585,72 @@ def test_failures_group_unsolved_runs_by_reason_with_numbers_blanked() -> None:
     assert [e["seed"] for e in groups[0]["episodes"]] == [2, 3]
     assert _column_name("sessions/x/agents/llm-a/dev_v03/libero-pro/s/00-t") == "llm-a · dev_v03"
     assert _column_name("sessions/20261109-tasks") == "20261109-tasks"
+
+
+def test_run_phase_reads_quick_agent_and_campaign_layouts() -> None:
+    sys.path.insert(0, str(GPU_SCRIPTS))
+    from dashboard_store import run_phase
+
+    task = ("libero-pro", "libero_goal_swap", "task_3")
+    cases = {
+        ("agents", "llm-x", "dev_v02", "libero-pro"): "dev_v02",
+        ("agents", "llm-x", "heldout", "libero-pro"): "heldout",
+        (*task, "debug", "initial", "run-a"): "dev_v00",
+        (*task, "debug", "attempts", "v04", "run-a"): "dev_v04",
+        (*task, "debug", "holdout", "run-a"): "unseen",
+        (*task, "validation", "runs", "run-a"): "heldout",
+        (*task, "rerun_02", "debug", "attempts", "v01", "run-a"): "rerun_02 dev_v01",
+        ("verification", "libero-pro__libero_goal_swap__task_3", "run-a"): "verifier",
+        ("episodes", "libero-pro", "libero_90", "33-x", "0001", "run-a"): "episode",
+    }
+    for parts, phase in cases.items():
+        assert run_phase(parts) == phase, parts
+
+
+def test_library_script_saves_empties_and_restores_a_library(tmp_path: Path) -> None:
+    import shutil
+
+    skills = tmp_path / "skills"
+    shutil.copytree(REPO / ".claude/skills/iterative-debugging/skills", skills)
+    original = {p.name: p.read_text() for p in skills.glob("*.md")}
+    env = {
+        **os.environ,
+        "ASPIRE_SKILLS_DIR": str(skills),
+        "ASPIRE_LIBRARY_STORE": str(tmp_path / "store"),
+    }
+
+    def library(*args: str) -> str:
+        return subprocess.run(
+            ["bash", str(GPU_SCRIPTS / "library.sh"), *args],
+            env=env, check=True, capture_output=True, text=True,
+        ).stdout  # fmt: skip
+
+    library("save", "base")
+    library("empty")
+    # Learned entries are gone; headers, the README and the exploration procedure stay.
+    assert "## " not in (skills / "grasp.md").read_text()
+    assert (skills / "grasp.md").read_text().startswith(original["grasp.md"][:40])
+    assert (skills / "task-exploration.md").read_text() == original["task-exploration.md"]
+    assert "base" in library("list") and "backup-" in library("list")
+    library("load", "base")
+    assert {p.name: p.read_text() for p in skills.glob("*.md")} == original
+
+
+def test_campaign_results_reports_held_out_success_per_task(tmp_path: Path) -> None:
+    campaign = tmp_path / "2026-11-10_goal"
+    for task_id, wins in ((0, 3), (5, 0)):
+        for seed in range(1, 6):
+            run = campaign / f"libero-pro/libero_goal_swap/task_{task_id}/validation/runs/r{seed}"
+            run.mkdir(parents=True)
+            (run / "outcome.json").write_text(json.dumps({"task_success": seed <= wins}))
+    (campaign / "session.json").write_text(json.dumps({"name": "goal", "memory": "off"}))
+    (campaign / "result.part1.json").write_text(json.dumps({"total_cost_usd": 10.0}))
+    (campaign / "result.json").write_text(json.dumps({"total_cost_usd": 2.5}))
+    out = subprocess.run(
+        [sys.executable, str(GPU_SCRIPTS / "campaign_results.py"), str(campaign)],
+        check=True, capture_output=True, text=True,
+    ).stdout  # fmt: skip
+    assert "3/5 (60%)" in out and "0/5 (0%)" in out
+    assert "30.0% (2 tasks)" in out  # mean over tasks
+    assert "cost $12.50" in out and "2 part(s)" in out
+    assert "55.6%" in out  # the paper's empty-library Opus 4.6 mean for this suite

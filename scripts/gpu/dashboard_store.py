@@ -206,7 +206,7 @@ class Store:
         meta = read_json(run / "run.json") or {}
         outcome = read_json(run / "outcome.json") or {}
         where = run.relative_to(root).parts if run != root else ()
-        phase = next((part for part in where if PHASE.match(part)), "episode")
+        phase = run_phase(where)
         agent = next((part for part in where if part.startswith("llm-")), None)
         result = read_json(run / "source/program-result.json") or {}
         error = result.get("error") or outcome.get("error")
@@ -1059,6 +1059,35 @@ def _has_masks(run: Path, span: dict[str, Any]) -> bool:
 
 RUN_FIELDS = ("path", "seed", "task_success", "program_ok", "termination", "steps", "wall_s",
               "error", "program", "finalized")  # fmt: skip
+
+
+def run_phase(parts: tuple[str, ...]) -> str:
+    """Which stage a run belongs to, from its folders.
+
+    Quick agents: dev_vNN/, heldout/. Campaigns (iterative-debugging): task_N/debug/initial
+    (v00), debug/attempts/vNN, debug/holdout (the unseen check), validation/ (held-out),
+    rerun_NN/ (backward transfer) and verification/ (the skill verifier).
+    """
+    phase = None
+    for index, part in enumerate(parts):
+        previous = parts[index - 1] if index else ""
+        following = parts[index + 1] if index + 1 < len(parts) else ""
+        if part == "verification":
+            phase = "verifier"
+            break
+        if part == "validation":
+            phase = "heldout"
+        elif part == "holdout" and previous == "debug":
+            phase = "unseen"
+        elif part == "initial" and previous == "debug":
+            phase = "dev_v00"
+        elif part == "attempts" and re.fullmatch(r"v\d+", following):
+            phase = f"dev_{following}"
+        elif PHASE.match(part):
+            phase = part
+    rerun = next((part for part in parts if re.fullmatch(r"rerun_\d+", part)), None)
+    phase = phase or "episode"
+    return f"{rerun} {phase}" if rerun and phase != "verifier" else phase
 
 
 def _column_name(rel: str) -> str:
