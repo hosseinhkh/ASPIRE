@@ -305,16 +305,16 @@ scripts/gpu/session.sh why "$(ls -td outputs/sessions/* | head -1)/episodes"
 scripts/gpu/services.sh stop
 ```
 
-### Switch to another GPU (e.g. GPU 1)
+### Switch to another GPU (e.g. GPU 1), keeping your reservation on GPU 0
 
-Stop the services and release the memory reservation on the old GPU:
+The memory reservation stays on GPU 0 the whole time. Services only touch a reservation on
+their own GPU.
+
+Stop the services. Your GPU 0 reservation then grows back to its full size: it lets go of
+the memory for a moment and takes it back.
 
 ```bash
 scripts/gpu/services.sh stop
-```
-
-```bash
-scripts/gpu/reserve.sh release
 ```
 
 Point the env at GPU 1. This command also shows whether the stack fits there right now:
@@ -329,19 +329,32 @@ Reload the env:
 conda deactivate && conda activate aspire
 ```
 
-Start the services. They now go to GPU 1, and the simulators render there.
+Start the services. They now go to GPU 1, and the simulators render there. Your GPU 0
+reservation is not touched.
 
 ```bash
 scripts/gpu/services.sh start
 ```
 
-Optionally, reserve memory on GPU 1:
+Check that the reservation is still on GPU 0 and the services are on GPU 1:
 
 ```bash
-scripts/gpu/reserve.sh hold 30
+scripts/gpu/reserve.sh status
 ```
 
-To go back, run the same steps with `scripts/gpu/use_gpu.sh 0`.
+```bash
+gpustat
+```
+
+Run sessions **without** `--reserve`, for example
+`scripts/gpu/session.sh run --tasks quick --no-preflight`. On GPU 1, `--reserve` would move
+your reservation from GPU 0 to GPU 1.
+
+To go back, run the same steps with `scripts/gpu/use_gpu.sh 0`. When the services start on
+GPU 0 again, they share your reservation automatically.
+
+To move the reservation itself to GPU 1 instead, run `scripts/gpu/reserve.sh hold 30 --gpu 1`.
+That releases GPU 0.
 
 ## Documentation
 
