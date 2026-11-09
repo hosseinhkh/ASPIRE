@@ -13,10 +13,14 @@
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
 #
-#   scripts/gpu/demo.sh campaign  [--tasks FILE] [--run]
-#       Initializes a tiny ASPIRE iterative-debugging campaign (1 task, 3 dev / 1 unseen /
-#       3 held-out seeds) and prints, or with --run starts, the interactive Claude Code
-#       coordinator that exercises the whole pipeline (worker, validation, verifier, skills).
+#   scripts/gpu/demo.sh campaign  [--tasks FILE] [--run | --headless] [--budget-usd 30]
+#                                 [--max-turns 400] [--dev-seeds "51 52 53"]
+#                                 [--unseen-seeds "66"] [--heldout-count 3]
+#       Initializes an ASPIRE iterative-debugging campaign (default: 1 task, 3 dev / 1 unseen /
+#       3 held-out seeds) and prints, with --run starts, the interactive Claude Code
+#       coordinator that runs the whole pipeline (worker, validation, verifier, skills).
+#       --headless runs it unattended under a hard dollar cap (Claude Code's --max-budget-usd
+#       works only headless) and records the transcript in the campaign folder.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,7 +30,7 @@ GPU="${ASPIRE_GPU:-0}"
 PY="${CAP_HARNESS_PYTHON:-python3}"
 cd "$REPO_ROOT"
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 
@@ -282,12 +286,53 @@ PY
 }
 
 # ---------------------------------------------------------------------------------- campaign --
+campaign_headless() {  # campaign_headless RUN_ROOT BUDGET_USD MAX_TURNS
+  local run_root="$1" budget="$2" max_turns="$3" status=0
+  if [[ "$(claude --help 2>/dev/null)" != *--max-budget-usd* ]]; then
+    echo "error: this Claude Code has no --max-budget-usd; update it: npm install -g @anthropic-ai/claude-code" >&2
+    exit 1
+  fi
+  # session.json lets the dashboard name the run, and claude-logs pick out its sub-agents.
+  printf '{"name": "campaign %s", "started": "%s", "budget_usd": %s}\n' \
+    "$(basename "$run_root")" "$(date -Iseconds)" "$budget" > "$run_root/session.json"
+  step "Headless ASPIRE campaign (Claude Code, $ANTHROPIC_MODEL), cap \$$budget"
+  echo "campaign: $run_root"
+  echo "transcript: $run_root/transcript.jsonl   (Ctrl-C stops it; progress: gen_progress.py --print)"
+  claude -p "$(cat "$run_root/kickoff_prompt.md")" "${CLAUDE_FLAGS[@]}" \
+    --max-turns "$max_turns" --max-budget-usd "$budget" --output-format stream-json --verbose \
+    2> "$run_root/claude.stderr" \
+    | "$PY" scripts/gpu/stream_view.py --raw "$run_root/transcript.jsonl" --summary "$run_root/result.json" \
+    || status=$?
+  scripts/gpu/session.sh claude-logs "$run_root" || true  # the sub-agents' own transcripts
+  step "Campaign summary"
+  if [[ -f "$run_root/DEMO_SUMMARY.md" ]]; then cat "$run_root/DEMO_SUMMARY.md"
+  else echo "(no DEMO_SUMMARY.md: the run stopped early; see result.json and the transcript)"; fi
+  "$PY" - "$run_root/result.json" "$budget" <<'PY'
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    raise SystemExit("no result.json written")
+print(f"\nended: {r.get('subtype')} | turns {r.get('num_turns')} | "
+      f"{(r.get('duration_ms') or 0) / 60000:.1f} min | cost ${r.get('total_cost_usd') or 0:.2f} "
+      f"of ${float(sys.argv[2]):.2f} cap")
+PY
+  echo "Browse it: python scripts/gpu/dashboard.py  (Runs -> campaign $(basename "$run_root"))"
+  return "$status"
+}
+
 cmd_campaign() {
-  local tasks="" run=0
+  local tasks="" run=0 headless=0 budget=30 max_turns=400 dev="51 52 53" unseen="66" heldout=3
   while (($#)); do
     case "$1" in
       --tasks) tasks="$2"; shift 2 ;;
       --run) run=1; shift ;;
+      --headless) headless=1; shift ;;
+      --budget-usd) budget="$2"; shift 2 ;;
+      --max-turns) max_turns="$2"; shift 2 ;;
+      --dev-seeds) dev="$2"; shift 2 ;;
+      --unseen-seeds) unseen="$2"; shift 2 ;;
+      --heldout-count) heldout="$2"; shift 2 ;;
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
@@ -305,16 +350,22 @@ cmd_campaign() {
 JSON
   fi
   step "Initializing a mini campaign from $tasks"
+  # shellcheck disable=SC2086  # seed lists are space-separated on purpose
   "$PY" .claude/skills/iterative-debugging/scripts/init_run.py --tasks "$tasks" --name gpu-demo \
-    --dev-seeds 51 52 53 --unseen-seeds 66 --heldout-count 3
+    --dev-seeds $dev --unseen-seeds $unseen --heldout-count "$heldout"
   local run_root
   run_root="$(cd outputs/runs/LATEST && pwd -P)"
   local curobo_note=""
   ((CUROBO_UP)) && curobo_note=", cuRobo :8118"
   render scripts/gpu/prompts/mini_campaign.md "$run_root/kickoff_prompt.md" \
-    "RUN_ROOT=$run_root" "DEV_SEEDS=51-53" "UNSEEN_SEEDS=66" "HELDOUT_COUNT=3" \
+    "RUN_ROOT=$run_root" "DEV_SEEDS=${dev// /, }" "UNSEEN_SEEDS=${unseen// /, }" \
+    "HELDOUT_COUNT=$heldout" \
     "GPU=$GPU" "CUROBO_NOTE=$curobo_note"
   echo "kickoff prompt: $run_root/kickoff_prompt.md"
+  if ((headless)); then
+    campaign_headless "$run_root" "$budget" "$max_turns"
+    return
+  fi
   if ((run)); then
     step "Starting the interactive coordinator (Claude Code, ${ANTHROPIC_MODEL})"
     exec claude "${CLAUDE_FLAGS[@]}" "$(cat "$run_root/kickoff_prompt.md")"

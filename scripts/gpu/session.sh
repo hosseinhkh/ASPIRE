@@ -3,7 +3,8 @@
 # everything recorded in one directory, then an HTML report and Weights & Biases runs.
 #
 #   scripts/gpu/session.sh run [--name NAME] [--tasks quick|standard|full|FILE] [--seeds "1 2"]
-#                              [--llm BENCHMARK:SUITE:TASK_ID]... [--llm-budget USD]
+#                              [--llm BENCHMARK:SUITE:TASK_ID]... [--llm-tasks FILE]
+#                              [--llm-budget USD] [--llm-total-budget USD]
 #                              [--llm-max-turns N] [--llm-dev-seeds "51 52"]
 #                              [--llm-heldout-seeds "1 2 3"] [--no-preflight] [--no-curobo]
 #                              [--keep-services] [--graspnet-cpu] [--reserve GIB]
@@ -34,7 +35,7 @@ SERVICE_LOG_DIR="${CAP_HARNESS_SERVICE_LOG_DIR:-$REPO_ROOT/validation-artifacts/
 TOOLS_VENV="${ASPIRE_TOOLS_VENV:-$REPO_ROOT/.venv-tools}"
 declare -A PORTS=([sam3]=8114 [contact_graspnet]=8115 [pyroki]=8116 [curobo]=8118)
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 now() { printf '%s' "${EPOCHREALTIME:-$(date +%s.%N)}"; }
@@ -329,7 +330,7 @@ run_agent() {  # run_agent BENCHMARK:SUITE:TASK
   local ws="$SESSION/agents/llm-$benchmark-$suite-$task"
   stage_begin "agent $spec"
   local args=(--benchmark "$benchmark" --suite "$suite" --task-id "${task:-0}" --out "$ws"
-    --budget-usd "$LLM_BUDGET" --max-turns "$LLM_MAX_TURNS")
+    --budget-usd "${LLM_BUDGET_NOW:-$LLM_BUDGET}" --max-turns "$LLM_MAX_TURNS")
   [[ -n "$LLM_DEV_SEEDS" ]] && args+=(--dev-seeds "$LLM_DEV_SEEDS")
   [[ -n "$LLM_HELDOUT_SEEDS" ]] && args+=(--heldout-seeds "$LLM_HELDOUT_SEEDS")
   local status=0
@@ -408,12 +409,18 @@ cmd_run() {
   local graspnet_cpu=0
   local -a llm=()
   KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
+  local llm_total="" llm_spent=0
   while (($#)); do
     case "$1" in
       --name) name="$2"; shift 2 ;;
       --tasks) tasks="$2"; shift 2 ;;
       --seeds) seeds="$2"; shift 2 ;;
       --llm) llm+=("$2"); shift 2 ;;
+      --llm-tasks)
+        [[ -f "$2" ]] || { echo "error: --llm-tasks: no such file: $2" >&2; exit 2; }
+        while read -r line; do llm+=("$line"); done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$2")
+        shift 2 ;;
+      --llm-total-budget) llm_total="$2"; shift 2 ;;
       --llm-budget) LLM_BUDGET="$2"; shift 2 ;;
       --llm-max-turns) LLM_MAX_TURNS="$2"; shift 2 ;;
       --llm-dev-seeds) LLM_DEV_SEEDS="$2"; shift 2 ;;
@@ -516,11 +523,25 @@ cmd_run() {
     done <<< "$task_lines"
   done
 
-  local spec
+  local spec cost
   for spec in "${llm[@]}"; do
-    step "Claude agent on $spec (budget \$$LLM_BUDGET)"
+    LLM_BUDGET_NOW="$LLM_BUDGET"
+    if [[ -n "$llm_total" ]]; then
+      LLM_BUDGET_NOW="$(awk -v t="$llm_total" -v s="$llm_spent" -v b="$LLM_BUDGET" \
+        'BEGIN { r = t - s; printf "%.2f", (r < b ? r : b) }')"
+      if awk -v r="$LLM_BUDGET_NOW" 'BEGIN { exit !(r < 0.5) }'; then
+        stage_begin "agent $spec"
+        stage_end SKIP "total LLM budget reached (\$$llm_spent of \$$llm_total spent)"
+        continue
+      fi
+    fi
+    step "Claude agent on $spec (budget \$$LLM_BUDGET_NOW${llm_total:+, \$$llm_spent of \$$llm_total spent so far})"
     run_agent "$spec"
+    cost="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("total_cost_usd") or 0)' \
+      "$SESSION/agents/llm-${spec//:/-}/result.json" 2>/dev/null || echo 0)"
+    llm_spent="$(awk -v a="$llm_spent" -v b="$cost" 'BEGIN { printf "%.2f", a + b }')"
   done
+  ((${#llm[@]})) && write_meta "llm_cost_usd=$llm_spent" "llm_total_budget_usd=${llm_total:-none}"
   if ((${#llm[@]})); then cmd_claude_logs "$SESSION"; fi
 
   finish

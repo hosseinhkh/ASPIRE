@@ -655,6 +655,74 @@ python scripts/gpu/dashboard.py --live http://127.0.0.1:8770
 
 How the pieces fit, and how to add your own robot or model: [big-picture.md](big-picture.md).
 
+## 10. Benchmarks with Opus 4.6 under a cost cap
+
+There are two ways to run Opus 4.6 under a dollar cap. Claude Code enforces it
+(`--max-budget-usd`), but only in headless runs. The cap is Claude Code's own estimate from
+list prices and is checked between turns, so a run can end slightly over it. For a hard
+backstop, also set an AWS Budgets alert on the account.
+
+**A. Many tasks, one agent each.** This is the quick demo's agent: it writes a program,
+debugs it on the dev seeds, then evaluates it on the held-out seeds. Put one
+`benchmark:suite:task_id` per line in a text file (`#` starts a comment), for example
+`outputs/llm-tasks.txt`:
+
+```text
+libero-pro:libero_object_swap:0
+libero-pro:libero_goal_swap:0
+libero-pro:libero_90:33
+robosuite:cube_lifting:0
+```
+
+```bash
+scripts/gpu/session.sh run --tasks quick --llm-tasks outputs/llm-tasks.txt --llm-budget 8 --llm-total-budget 25 --reserve 30
+```
+
+- `--llm-budget` caps each agent.
+- `--llm-total-budget` caps the whole session. Each agent's cap is lowered to what is left,
+  and an agent that would start with less than $0.50 is skipped (stage SKIP).
+- `session.json` records `llm_cost_usd`.
+
+**B. The full ASPIRE pipeline, unattended.** This runs the coordinator, the worker
+sub-agents, the unseen check, held-out validation, the verifier and the skill updates:
+
+```bash
+scripts/gpu/demo.sh campaign --headless --budget-usd 30
+```
+
+- `--tasks FILE` takes a JSON task list, in the same format as
+  `outputs/gpu-demo/campaign-tasks-*.json`.
+- `--dev-seeds "51 52 53"`, `--unseen-seeds "66"` and `--heldout-count 3` set its size.
+- `--max-turns` limits the coordinator's turns.
+
+The campaign folder, `outputs/runs/<time>_gpu-demo/`, gets:
+
+- the coordinator's transcript and the sub-agents' transcripts;
+- `result.json`, with the cost;
+- `DEMO_SUMMARY.md`.
+
+The dashboard lists it under Runs.
+
+## 11. Testing, latency and GPU checks
+
+| What | Command | Time |
+| --- | --- | --- |
+| Unit tests (CPU) | `.venv-dev/bin/python -m pytest -q -p no:cacheprovider` | about 6 min |
+| One test file | `.venv-dev/bin/python -m pytest -q tests/test_live_console.py` | seconds |
+| Quick stack check (no services) | `scripts/gpu/check_stack.sh --quick` | about 2 min |
+| Full stack check | `scripts/gpu/check_stack.sh` | about 10 min |
+| ... with an Opus 4.6 coding check | `scripts/gpu/check_stack.sh --with-llm` | about $1–3 |
+| Example programs end to end | `scripts/gpu/demo.sh smoke` | 10–20 min |
+| Contact-GraspNet: GPU vs CPU right now | `scripts/gpu/check_graspnet.sh` | about 2 min |
+| Latency of every service and the simulator | `python scripts/gpu/latency.py SESSION [SESSION ...]` | seconds |
+
+`latency.py` reads recorded runs. To compare, give it a session recorded while the GPU was
+busy and one recorded now. It reports:
+
+- for each model service: median, p90 and max seconds per call;
+- per simulator step and per reset;
+- how far motions run from real time.
+
 ## Troubleshooting
 
 | Symptom | Fix |

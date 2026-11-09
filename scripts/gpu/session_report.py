@@ -172,6 +172,7 @@ def trajectories(run: Path) -> dict[str, dict[str, list[float]]]:
 
 def call_rows(run: Path) -> list[dict[str, object]]:
     spans: dict[str, dict[str, object]] = {}
+    started: dict[str, float] = {}  # simulator clock when each span began
     events = run / "trace/events.jsonl"
     if events.exists():
         for line in events.read_text(encoding="utf-8").splitlines():
@@ -179,6 +180,8 @@ def call_rows(run: Path) -> list[dict[str, object]]:
                 event = json.loads(line)
             except ValueError:
                 continue
+            if event.get("event") == "span_start" and event.get("simulator_time_s") is not None:
+                started[event["span_id"]] = float(event["simulator_time_s"])
             if event.get("event") == "span_end":
                 spans[event["span_id"]] = event
     depth: dict[str, int] = {}
@@ -199,7 +202,13 @@ def call_rows(run: Path) -> list[dict[str, object]]:
                 "depth": depth[f"span-{number}"],
                 "ok": span.get("ok"),
                 "duration_s": span.get("duration_s"),
-                "sim_time_s": span.get("simulator_time_s"),
+                # Every event carries the absolute simulator clock: the call's own
+                # simulated time is its end clock minus its start clock.
+                "sim_time_s": (
+                    round(float(span["simulator_time_s"]) - started[f"span-{number}"], 3)
+                    if span.get("simulator_time_s") is not None and f"span-{number}" in started
+                    else None
+                ),
                 "error": (
                     f"{error.get('code')}: {error.get('message')}"
                     if isinstance(error, dict)

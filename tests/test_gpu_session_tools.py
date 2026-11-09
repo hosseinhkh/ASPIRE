@@ -198,3 +198,41 @@ def test_dashboard_serves_runs_and_streams_zips(tmp_path: Path) -> None:
             assert "400" in str(exc)
     finally:
         server.shutdown()
+
+
+def test_latency_report_uses_simulated_durations(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    (run / "trace").mkdir(parents=True)
+    (run / "run.json").write_text("{}")
+    _write_jsonl(
+        run / "trace/events.jsonl",
+        [
+            # simulator_time_s is the absolute clock: 10 s in when the motion starts
+            {"event": "span_start", "span_id": "span-000001", "simulator_time_s": 10.0},
+            {"event": "span_start", "span_id": "span-000002", "simulator_time_s": 10.0},
+            {
+                "event": "span_end",
+                "span_id": "span-000002",
+                "name": "pyroki.solve_ik",
+                "category": "provider",
+                "duration_s": 0.25,
+                "simulator_time_s": 10.0,
+            },
+            {
+                "event": "span_end",
+                "span_id": "span-000001",
+                "name": "execute_trajectory",
+                "category": "api",
+                "duration_s": 4.0,
+                "simulator_time_s": 12.0,
+            },
+        ],
+    )
+    out = subprocess.run(
+        [sys.executable, str(GPU_SCRIPTS / "latency.py"), str(tmp_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "provider: pyroki.solve_ik" in out and "0.250" in out
+    assert "median 2.00" in out  # 4 s of wall time for 2 simulated seconds
