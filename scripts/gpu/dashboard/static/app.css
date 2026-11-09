@@ -164,3 +164,4 @@ img.big { max-width: 100%; width: 420px; border-radius: 6px; cursor: zoom-in; }
 .table.tasks tr.task-detail > td { background: var(--soft); padding-top: 4px; }
 .table.runs .err-cell { color: var(--bad); max-width: 420px; word-break: break-word; }
 .seed:not(.ok):not(.bad) { background: var(--soft); color: var(--muted); }
+.chapter.skill { border-left-color: var(--ok); }

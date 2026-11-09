@@ -5,7 +5,7 @@
 #   scripts/gpu/session.sh run [--name NAME] [--tasks quick|standard|full|FILE] [--seeds "1 2"]
 #                              [--llm BENCHMARK:SUITE:TASK_ID]... [--llm-tasks FILE]
 #                              [--llm-budget USD] [--llm-total-budget USD]
-#                              [--llm-max-turns N] [--llm-dev-seeds "51 52"]
+#                              [--llm-max-turns N] [--llm-dev-seeds "51 52"] [--llm-write-skills]
 #                              [--llm-heldout-seeds "1 2 3"] [--no-preflight] [--no-curobo]
 #                              [--keep-services] [--graspnet-cpu] [--reserve GIB]
 #                              [--wandb offline|online|off] [--gpu N]
@@ -333,6 +333,7 @@ run_agent() {  # run_agent BENCHMARK:SUITE:TASK
     --budget-usd "${LLM_BUDGET_NOW:-$LLM_BUDGET}" --max-turns "$LLM_MAX_TURNS")
   [[ -n "$LLM_DEV_SEEDS" ]] && args+=(--dev-seeds "$LLM_DEV_SEEDS")
   [[ -n "$LLM_HELDOUT_SEEDS" ]] && args+=(--heldout-seeds "$LLM_HELDOUT_SEEDS")
+  ((LLM_WRITE_SKILLS)) && args+=(--write-skills)
   local status=0
   scripts/gpu/demo.sh llm "${args[@]}" || status=$?
   local detail
@@ -353,6 +354,10 @@ held = ws / "heldout/batch.json"
 if held.exists():
     b = json.loads(held.read_text())
     parts.append(f"held-out task_success {b.get('passes')}/{b.get('seeds')}")
+diff = ws / "skills.diff"
+if diff.exists():
+    added = sum(1 for line in diff.read_text().splitlines() if line.startswith("+") and not line.startswith("+++"))
+    parts.append(f"wrote {added} skill lines (skills.diff)")
 print("; ".join(parts) or "no result written")
 PY
 )"
@@ -421,6 +426,7 @@ cmd_run() {
   local graspnet_cpu=0
   local -a llm=()
   KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
+  LLM_WRITE_SKILLS=0
   local llm_total="" llm_spent=0
   while (($#)); do
     case "$1" in
@@ -435,6 +441,7 @@ cmd_run() {
       --llm-total-budget) llm_total="$2"; shift 2 ;;
       --llm-budget) LLM_BUDGET="$2"; shift 2 ;;
       --llm-max-turns) LLM_MAX_TURNS="$2"; shift 2 ;;
+      --llm-write-skills) LLM_WRITE_SKILLS=1; shift ;;
       --llm-dev-seeds) LLM_DEV_SEEDS="$2"; shift 2 ;;
       --llm-heldout-seeds) LLM_HELDOUT_SEEDS="$2"; shift 2 ;;
       --no-preflight) preflight=0; shift ;;

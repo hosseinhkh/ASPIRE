@@ -15,7 +15,7 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
 `get_task_context().language` inside the program rather than hard-coding it.
 
 1. Read `docs/api-reference.md` and `docs/run-artifacts.md`, then
-   `.claude/skills/iterative-debugging/skills/README.md` and the skill files it indexes.
+   `{{SKILLS_DIR}}/README.md` and the skill files it indexes.
    Do NOT read `examples/` or any `*_fix_code.py`: write your own program.
 2. Write `{{WS}}/program_v01.py` and run it on the development seeds:
 
@@ -46,9 +46,8 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    - versions tried, with the development success of each;
    - held-out success;
    - the main failure modes you saw, with the evidence (file paths);
-   - one to three reusable lessons, written as candidate skill entries in the style of
-     `.claude/skills/iterative-debugging/skills/*.md`. Do not edit those skill files.
-
+   - {{LESSONS_LINE}}
+{{SKILLS_STEP}}
 The perception services are already running (SAM3 :8114, Contact-GraspNet :8115, PyRoki :8116{{CUROBO_NOTE}}).
 Do not start, stop or restart them. If one is down, stop and say so in REPORT.md.
 The environment variables for rendering and LIBERO are already set in this shell.

@@ -414,6 +414,14 @@ scripts/gpu/demo.sh campaign --paper --harness fixed --suite libero_goal_swap --
 scripts/gpu/demo.sh campaign --paper --harness fixed --suite libero_goal_swap --memory on --library goal-mem1-end --name goal-mem2 --headless --budget-usd 350
 ```
 
+To see how the agent writes skills before spending on campaigns, give a quick agent its own
+copy of the library to write into (the shared library is not touched; the run prints what it
+wrote, saves it as `skills.diff`, and the dashboard shows it on the agent page):
+
+```bash
+scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_object_swap:0 --llm-budget 10 --llm-write-skills --reserve 30
+```
+
 Compare them, task by task, next to the paper's numbers:
 
 ```bash

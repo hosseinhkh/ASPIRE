@@ -438,6 +438,10 @@ Code's defaults (high effort, 200k window; cheaper), put `ASPIRE_EFFORT=high ASP
 front of the command. Episodes use the harness defaults the paper used (800×512 cameras, the
 task's own episode length).
 
+`--write-skills` (`session.sh run --llm-write-skills`) gives the agent a private copy of the skill
+library in its workspace (`skills/`) and asks it to write its lessons there, as the pipeline
+would; the shared library is untouched, and `skills.diff` shows what it wrote.
+
 This demo is a smoke test: 3 development seeds, 3 held-out seeds, at most 4 versions and a short
 prompt. Its score is not comparable with the paper's; for that, run
 `scripts/gpu/demo.sh campaign --paper` (section 7).

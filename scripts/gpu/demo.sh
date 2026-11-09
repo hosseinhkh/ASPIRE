@@ -9,7 +9,7 @@
 #   scripts/gpu/demo.sh llm       [--benchmark libero-pro|robosuite] [--suite S] [--task-id N]
 #                                 [--dev-seeds "51 52 53"] [--heldout-seeds "1 2 3"]
 #                                 [--max-versions 4] [--max-turns 120] [--budget-usd 20]
-#                                 [--out DIR]
+#                                 [--out DIR] [--write-skills]
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
 #
@@ -241,7 +241,7 @@ PY
 
 cmd_llm() {
   local benchmark="libero-pro" suite="" task_id=0 dev="" heldout="1 2 3"
-  local max_versions=4 max_turns=120 budget=20 init_mode="" out=""
+  local max_versions=4 max_turns=120 budget=20 init_mode="" out="" write_skills=0
   while (($#)); do
     case "$1" in
       --benchmark) benchmark="$2"; shift 2 ;;
@@ -253,6 +253,7 @@ cmd_llm() {
       --max-turns) max_turns="$2"; shift 2 ;;
       --budget-usd) budget="$2"; shift 2 ;;
       --out) out="$2"; shift 2 ;;
+      --write-skills) write_skills=1; shift ;;
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
@@ -285,11 +286,33 @@ cmd_llm() {
   else
     task_note="Read the instruction from \`get_task_context().language\` (or from a first run) before writing the program."
   fi
+  # --write-skills: the agent writes its lessons into a private copy of the skill library in
+  # its workspace (the shared library is never touched), so you can see how it writes them.
+  local skills_dir=.claude/skills/iterative-debugging/skills skills_step="" lessons_line
+  lessons_line="one to three reusable lessons, written as candidate skill entries in the style of \`$skills_dir/*.md\`. Do not edit those skill files."
+  if ((write_skills)); then
+    mkdir -p "$ws/skills" "$ws/.skills-before"
+    cp "$skills_dir"/*.md "$ws/skills/"
+    cp "$skills_dir"/*.md "$ws/.skills-before/"
+    skills_dir="$ws/skills"
+    lessons_line="the lessons you added to the skill library in step 7."
+    skills_step="
+7. Write what you learned into the skill library at \`$ws/skills/\`. It is a private copy for
+   this run: the shared library in \`.claude/skills/\` is not touched, and you must not edit it.
+   Add each lesson to the file it belongs in (grasp.md, localize.md, transport.md or
+   manipulation.md), following that file's header: a new subsection with the trigger (when it
+   applies), the code, and the evidence (task, seeds, the versions with their development and
+   held-out results, file paths). Write only lessons your results support, and say plainly when
+   one is not confirmed. Keep each entry general enough that an agent on a different task can
+   use it.
+"
+  fi
   render scripts/gpu/prompts/llm_quick_demo.md "$ws/prompt.md" \
     "BENCHMARK=$benchmark" "SUITE=$suite" "TASK_ID=$task_id" "WS=$ws" "TASK_NOTE=$task_note" \
     "CAP_HARNESS=$venv/bin/cap-harness" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
     "INIT_MODE=$init_mode" "MAX_VERSIONS=$max_versions" \
-    "CUROBO_NOTE=$curobo_note"
+    "CUROBO_NOTE=$curobo_note" "SKILLS_DIR=$skills_dir" "LESSONS_LINE=$lessons_line" \
+    "SKILLS_STEP=$skills_step"
   local extra=(--max-turns "$max_turns")
   # Capture first: `| grep -q` under pipefail fails when grep exits before the writer.
   if [[ "$(claude --help 2>/dev/null)" == *--max-budget-usd* ]]; then
@@ -311,6 +334,16 @@ cmd_llm() {
   if [[ -f "$ws/REPORT.md" ]]; then cat "$ws/REPORT.md"; else echo "(no REPORT.md written)"; fi
   echo
   model_usage "$ws/result.json"
+  if ((write_skills)); then
+    diff -ru "$ws/.skills-before" "$ws/skills" > "$ws/skills.diff" || true
+    step "Skills the agent wrote (private copy: $ws/skills; diff: $ws/skills.diff)"
+    if [[ -s "$ws/skills.diff" ]]; then
+      echo "$(grep -c '^+[^+]' "$ws/skills.diff" || true) non-empty lines added in: $(grep '^+++ ' "$ws/skills.diff" | awk '{print $2}' | xargs -n1 basename | tr '\n' ' ')"
+      sed -n '1,200p' "$ws/skills.diff"
+    else
+      echo "(no skill written)"
+    fi
+  fi
   for batch in "$ws"/dev_v*/batch.json "$ws"/heldout/batch.json; do
     [[ -f "$batch" ]] || continue
     "$PY" - "$batch" <<'PY'

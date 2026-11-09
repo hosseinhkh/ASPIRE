@@ -676,7 +676,13 @@ class Store:
                     )
         texts = {
             name: (workspace / name).read_text(encoding="utf-8", errors="replace")
-            for name in ("prompt.md", "REPORT.md", "DEMO_SUMMARY.md", "kickoff_prompt.md")
+            for name in (
+                "prompt.md",
+                "REPORT.md",
+                "DEMO_SUMMARY.md",
+                "kickoff_prompt.md",
+                "skills.diff",
+            )
             if (workspace / name).exists()
         }
         programs = {
@@ -720,7 +726,24 @@ class Store:
                 continue
             name, data = event.get("name"), event.get("input") or {}
             program = str(data.get("file_path") or "")
-            if name in ("Write", "Edit", "MultiEdit") and PROGRAM_FILE.search(program):
+            if name in ("Write", "Edit", "MultiEdit") and SKILL_FILE.search(program):
+                # A skill the agent wrote: into the shared library (campaigns) or a copy.
+                label = Path(program).name
+                edits = data.get("edits") or [data]
+                if name == "Write":
+                    diff = None
+                    code = str(data.get("content") or "")[:20000]
+                else:
+                    diff = "\n".join(
+                        _diff(str(e.get("old_string", "")), str(e.get("new_string", "")), label)
+                        for e in edits
+                    )
+                    code = None
+                chapters.append({"kind": "skill", "file": label, "tool": name,
+                                 "path": program, "reasoning": reasoning, "diff": diff,
+                                 "code": code, "awaiting": True})  # fmt: skip
+                reasoning = []
+            elif name in ("Write", "Edit", "MultiEdit") and PROGRAM_FILE.search(program):
                 label = Path(program).name
                 if name == "Write":
                     new = str(data.get("content") or "")
@@ -948,6 +971,10 @@ def _slug(name: str) -> str:
 
 #: Generated programs: the quick agent's program_vNN.py and the campaign's code/vNN_slug.py.
 PROGRAM_FILE = re.compile(r"(program_[\w-]+|(^|/)v\d+[\w-]*|fix_code[\w-]*)\.py$")
+
+
+#: Skill library files: the shared library or a run's private copy (``<workspace>/skills/``).
+SKILL_FILE = re.compile(r"/skills/[\w-]+\.md$")
 
 
 def _version_family(name: str) -> str:

@@ -548,8 +548,22 @@ def test_agent_story_links_reasoning_code_changes_and_batch_results(tmp_path: Pa
             done("t3", "written"),
         ],
     )
-    story = Store(tmp_path).agent(workspace / "transcript.jsonl")["story"]
-    assert [c["kind"] for c in story] == ["code", "run", "code"]
+    _write_jsonl(
+        workspace / "transcript.jsonl",
+        [json.loads(line) for line in (workspace / "transcript.jsonl").read_text().splitlines()]
+        + [
+            said("text", "the colour prompt is a reusable lesson"),
+            use("t4", "Edit", {"file_path": f"{ws}/skills/localize.md",
+                               "old_string": "| Object |", "new_string": "| Object |\n| soup | blue can |"}),
+            done("t4", "edited"),
+        ],
+    )  # fmt: skip
+    (workspace / "skills.diff").write_text("+| soup | blue can |\n")
+    agent = Store(tmp_path).agent(workspace / "transcript.jsonl")
+    story = agent["story"]
+    assert [c["kind"] for c in story] == ["code", "run", "code", "skill"]
+    assert story[3]["file"] == "localize.md" and "+| soup | blue can |" in story[3]["diff"]
+    assert agent["texts"]["skills.diff"].startswith("+| soup")
     assert story[0]["reasoning"] == [{"kind": "thinking", "text": "start with the plain name"}]
     assert story[0]["code"] == v1 and story[0]["diff"] is None
     assert story[1]["seeds"] == ["51"] and story[1]["output_tail"] == "0/1 succeeded"

@@ -14,7 +14,7 @@ export async function render(app, params) {
       ${card("Minutes", d.minutes ?? "-")}${card("Cost", d.cost_usd != null ? "$" + num(d.cost_usd, 2) : "-")}
     </div>
     ${d.versions.length ? `<h2>Program versions</h2><div class="panel"><table class="table compact"><thead><tr><th>Phase</th><th>Task success</th></tr></thead><tbody>${d.versions.map((v) => `<tr><td class="mono">${esc(v.phase)}</td><td>${rate(v.passes || 0, v.seeds || 0)}</td></tr>`).join("")}</tbody></table></div>` : ""}
-    ${Object.entries(d.texts).map(([k, v]) => `<details class="panel" ${/REPORT|SUMMARY/.test(k) ? "open" : ""}><summary><b>${esc(k)}</b></summary><pre class="code">${esc(v)}</pre></details>`).join("")}
+    ${Object.entries(d.texts).map(([k, v]) => `<details class="panel" ${/REPORT|SUMMARY|\.diff$/.test(k) ? "open" : ""}><summary><b>${k === "skills.diff" ? "Skills it wrote (skills.diff)" : esc(k)}</b></summary>${k.endsWith(".diff") ? diffView(v) : `<pre class="code">${esc(v)}</pre>`}</details>`).join("")}
     ${Object.keys(d.programs).length ? `<details class="panel"><summary><b>Programs written (${Object.keys(d.programs).length})</b></summary>${Object.entries(d.programs).map(([k, v]) => `<h3>${esc(k)}</h3><pre class="code">${esc(v)}</pre>`).join("")}</details>` : ""}
     ${d.story && d.story.length ? `<h2>How it debugged</h2><p class="muted small">Each step: what the agent was thinking, the code it changed, and how the runs went. Click a seed to replay that episode.</p><div class="story">${d.story.map(chapter).join("")}</div>` : ""}
     <h2>Conversation</h2>
@@ -51,6 +51,10 @@ function chapter(c, n) {
   if (c.kind === "code") {
     return `<div class="chapter code"><b>${c.tool === "Write" ? "Wrote" : "Edited"} ${esc(c.file)}</b> ${c.ok === false ? '<span class="badge bad">failed</span>' : ""}${why}
       ${c.diff ? `<details open><summary class="small">Change</summary>${diffView(c.diff)}</details>` : c.code ? `<details><summary class="small">Program (${c.code.split("\n").length} lines)</summary><pre class="code">${esc(c.code)}</pre></details>` : ""}</div>`;
+  }
+  if (c.kind === "skill") {
+    return `<div class="chapter skill"><b>${c.tool === "Write" ? "Wrote" : "Edited"} skill ${esc(c.file)}</b> <span class="muted small mono">${esc(c.path || "")}</span>${why}
+      ${c.diff ? `<details open><summary class="small">Change</summary>${diffView(c.diff)}</details>` : c.code ? `<details open><summary class="small">Skill file</summary><pre class="code">${esc(c.code)}</pre></details>` : ""}</div>`;
   }
   if (c.kind === "run") {
     const r = c.results;
