@@ -9,6 +9,7 @@ UV_CACHE_ROOT="$REPO_ROOT/.uv-cache"
 LIBERO_CONFIG_DIR="${LIBERO_CONFIG_PATH:-$REPO_ROOT/.libero}"
 PYTHON_BIN="${CAP_HARNESS_PYTHON:-python3}"
 INSTALL=1
+WITH_VLA=0
 
 usage() {
   cat <<'EOF'
@@ -21,6 +22,8 @@ Options:
                               (default: <repo>/.libero).
   --python PATH               Python interpreter (default: python3).
   --no-install                Initialize dependencies and configuration only.
+  --vla                       Also install the VLA student (LeRobot + SmolVLA, the `vla`
+                              extra from third_party/lerobot) into the same venv.
   -h, --help                  Show this help.
 
 The repository is the single source of truth. This script does not copy source
@@ -40,6 +43,10 @@ while (($#)); do
       ;;
     --no-install)
       INSTALL=0
+      shift
+      ;;
+    --vla)
+      WITH_VLA=1
       shift
       ;;
     -h|--help)
@@ -84,6 +91,7 @@ SUBMODULES=(
   third_party/robosuite
   third_party/sam3
 )
+((WITH_VLA)) && SUBMODULES+=(third_party/lerobot)
 
 git -C "$REPO_ROOT" submodule update --init "${SUBMODULES[@]}"
 
@@ -171,9 +179,17 @@ if [[ "$INSTALL" -eq 1 ]]; then
   # Create the environment explicitly, as the sibling bootstrap scripts do.  Without this
   # `uv sync` selects its own interpreter and --python/CAP_HARNESS_PYTHON is silently ignored.
 # No-op re-bootstrap when the resolved deps, arch, and pins are unchanged.
-FINGERPRINT="$(compute_venv_fingerprint "$REPO_ROOT" "${CAP_HARNESS_PROFILE:-rtx5090}" "sim:libero:libero" "third_party/LIBERO-PRO" "third_party/robosuite" "third_party/sam3" "third_party/contact_graspnet_pytorch")"
+EXTRAS=(--extra libero --extra dev)
+VENV_KEY="sim:libero:libero"
+FINGERPRINT_PATHS=(third_party/LIBERO-PRO third_party/robosuite third_party/sam3 third_party/contact_graspnet_pytorch)
+if ((WITH_VLA)); then
+  EXTRAS+=(--extra vla)
+  VENV_KEY="sim:libero:libero+vla"
+  FINGERPRINT_PATHS+=(third_party/lerobot)
+fi
+FINGERPRINT="$(compute_venv_fingerprint "$REPO_ROOT" "${CAP_HARNESS_PROFILE:-rtx5090}" "$VENV_KEY" "${FINGERPRINT_PATHS[@]}")"
 if venv_fingerprint_current "$VENV_ROOT" "$FINGERPRINT"; then
-  printf '%s is up to date (fingerprint %s); skipping rebuild\n' "sim:libero:libero" "${FINGERPRINT:0:12}"
+  printf '%s is up to date (fingerprint %s); skipping rebuild\n' "$VENV_KEY" "${FINGERPRINT:0:12}"
   exit 0
 fi
   UV_CACHE_DIR="$UV_CACHE_ROOT" uv venv --allow-existing --python "$PYTHON_BIN" "$VENV_ROOT"
@@ -185,8 +201,7 @@ fi
     UV_CACHE_DIR="$UV_CACHE_ROOT" \
     uv sync --frozen --active \
       --project "$REPO_ROOT" \
-      --extra libero \
-      --extra dev
+      "${EXTRAS[@]}"
 
   "$VENV_ROOT/bin/python" - "$DEPENDENCY_LOCK" <<'PY'
 import importlib.metadata
@@ -215,7 +230,7 @@ print(
 PY
 fi
 
-write_venv_fingerprint "$VENV_ROOT" "$FINGERPRINT" "sim:libero:libero" "${CAP_HARNESS_PROFILE:-rtx5090}"
+write_venv_fingerprint "$VENV_ROOT" "$FINGERPRINT" "$VENV_KEY" "${CAP_HARNESS_PROFILE:-rtx5090}"
 cat <<EOF
 Bootstrap complete.
   repository:    $REPO_ROOT

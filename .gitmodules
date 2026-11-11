@@ -16,3 +16,8 @@
 [submodule "third_party/BEHAVIOR-1K"]
 	path = third_party/BEHAVIOR-1K
 	url = https://github.com/StanfordVL/BEHAVIOR-1K.git
+[submodule "third_party/lerobot"]
+	path = third_party/lerobot
+	url = https://github.com/hosseinhkh/lerobot
+	branch = aspire-v0.4.4
+	shallow = true

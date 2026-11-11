@@ -25,6 +25,7 @@ def test_dependency_lock_has_exact_required_git_pins() -> None:
     expected_dependencies = {
         "behavior_1k",
         "contact_graspnet_pytorch",
+        "lerobot",
         "libero_pro",
         "pyroki",
         "robosuite",
@@ -40,6 +41,8 @@ def test_dependency_lock_has_exact_required_git_pins() -> None:
         "github.com/uynitsuj/contact_graspnet_pytorch",
         "github.com/chungmin99/pyroki",
         "github.com/StanfordVL/BEHAVIOR-1K",
+        # LeRobot v0.4.4 for the VLA student (the vla extra), from the fork the project owns.
+        "github.com/hosseinhkh/lerobot",
     }
 
     assert lock["schema_version"] == 2
@@ -84,9 +87,10 @@ def test_standalone_runtime_owns_direct_submodules_and_service_entrypoints() -> 
         "third_party/sam3",
         "third_party/curobo",
         "third_party/BEHAVIOR-1K",
+        "third_party/lerobot",
     ):
         assert f"path = {path}" in gitmodules
-    assert gitmodules.count("[submodule ") == 6
+    assert gitmodules.count("[submodule ") == 7
 
     bootstrap = (REPOSITORY_ROOT / "scripts/bootstrap_libero.sh").read_text(encoding="utf-8")
     supervisor = (REPOSITORY_ROOT / "scripts/supervise_services.sh").read_text(encoding="utf-8")

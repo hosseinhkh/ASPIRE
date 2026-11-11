@@ -34,6 +34,16 @@ TRAJECTORY_JOINT_TOLERANCE_RAD = 0.01
 #: The published settle budget. With CAP_HARNESS_TRAJECTORY_RETIMING=1 settling continues past
 #: it while the arm is still converging (cap_harness.trajectory_timing).
 TRAJECTORY_MAX_STEPS_PER_WAYPOINT = 120
+#: JOINT_POSITION drives ASPIRE's harness (joint targets, trajectories, gripper tools).
+#: OSC_POSE is LIBERO's own default controller and the action space of the published LIBERO
+#: VLA checkpoints (SmolVLA, pi0.5, OpenVLA): 7 values in [-1, 1], a hand position change, a
+#: hand rotation change (axis-angle) and the gripper (-1 open, +1 close).  It is driven with
+#: raw action vectors through step_native_action(); the harness tools refuse to run in it.
+SUPPORTED_CONTROLLERS: tuple[str, ...] = ("JOINT_POSITION", "OSC_POSE")
+OSC_ACTION_DIMENSION = 7
+#: LeRobot's LIBERO no-op: hold the hand still with the gripper open.  Used to settle after
+#: reset in OSC_POSE mode exactly as lerobot-eval does.
+OSC_SETTLE_ACTION: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0)
 
 _LiberoAdapterT = TypeVar("_LiberoAdapterT", bound="LiberoAdapter")
 
@@ -196,8 +206,10 @@ class LiberoAdapter:
             raise ValueError("controller must be a non-empty string")
         if init_mode not in ("saved", "seeded"):
             raise ValueError("init_mode must be 'saved' or 'seeded'")
-        if controller != "JOINT_POSITION":
-            raise ValueError("LiberoAdapter requires the JOINT_POSITION controller")
+        if controller not in SUPPORTED_CONTROLLERS:
+            raise ValueError(
+                f"LiberoAdapter supports the {' and '.join(SUPPORTED_CONTROLLERS)} controllers"
+            )
         try:
             max_opening = float(gripper_max_opening_m)
         except (TypeError, ValueError) as exc:
@@ -320,6 +332,24 @@ class LiberoAdapter:
             raise RuntimeError("reset() must be called before using the LIBERO adapter")
         return self._env
 
+    @property
+    def joint_controlled(self) -> bool:
+        return self.controller == "JOINT_POSITION"
+
+    def _require_joint_controller(self, operation: str) -> None:
+        if not self.joint_controlled:
+            raise RuntimeError(
+                f"{operation} needs the JOINT_POSITION controller; this adapter runs "
+                f"{self.controller} (drive it with step_native_action)"
+            )
+
+    @property
+    def raw_observation(self) -> Mapping[str, Any]:
+        """The latest native LIBERO observation (camera images as rendered, robot0_* state)."""
+        if self._raw_observation is None:
+            raise RuntimeError("reset() must be called before reading observations")
+        return self._raw_observation
+
     def _trackable_step_rad(self) -> float:
         """Per-step joint change this environment's joint controllers follow (from their gains)."""
         env = self._require_env()
@@ -347,7 +377,18 @@ class LiberoAdapter:
             spec = spec()
         if hasattr(spec, "low") and hasattr(spec, "high"):
             spec = (spec.low, spec.high)
-        return LiberoActionCodec.validate_action_spec(spec)
+        if self.joint_controlled:
+            return LiberoActionCodec.validate_action_spec(spec)
+        if isinstance(spec, str | bytes) or not isinstance(spec, tuple | list) or len(spec) != 2:
+            raise ValueError("action_spec must be a (low, high) pair")
+        low, high = (np.asarray(bound, dtype=np.float64).reshape(-1) for bound in spec)
+        if low.shape != (OSC_ACTION_DIMENSION,) or high.shape != (OSC_ACTION_DIMENSION,):
+            raise ValueError(f"{self.controller} expects a {OSC_ACTION_DIMENSION}-D action spec")
+        if not bool(np.all(np.isfinite(low)) and np.all(np.isfinite(high))) or bool(
+            np.any(low > high)
+        ):
+            raise ValueError("action_spec bounds must be finite with low <= high")
+        return low.copy(), high.copy()
 
     def _close_environment(self) -> None:
         if self._env is None:
@@ -410,11 +451,16 @@ class LiberoAdapter:
         for _ in range(self.post_settle_steps):
             if self._raw_observation is None:
                 raise RuntimeError("cannot settle without a raw observation")
-            normalized_gripper = self._normalized_gripper(self._raw_observation)
-            native_action = np.zeros(LIBERO_ACTION_DIMENSION, dtype=np.float64)
-            native_action[-1] = LiberoActionCodec.normalized_gripper_to_native(normalized_gripper)
             if self._action_bounds is None:  # pragma: no cover - established at env creation
                 raise RuntimeError("LIBERO action bounds are unavailable")
+            if self.joint_controlled:
+                normalized_gripper = self._normalized_gripper(self._raw_observation)
+                native_action = np.zeros(LIBERO_ACTION_DIMENSION, dtype=np.float64)
+                native_action[-1] = LiberoActionCodec.normalized_gripper_to_native(
+                    normalized_gripper
+                )
+            else:
+                native_action = np.asarray(OSC_SETTLE_ACTION, dtype=np.float64)
             native_action = np.clip(native_action, *self._action_bounds)
             (
                 self._raw_observation,
@@ -662,8 +708,56 @@ class LiberoAdapter:
             timestamp_s=timestamp_s,
         )
 
+    def step_native_action(self, action: Any) -> Mapping[str, Any]:
+        """Advance one control period with a raw native action vector; return the raw observation.
+
+        This is the path for policies that act in LIBERO's own action space, such as a VLA
+        in OSC_POSE mode (7 values: hand position change, hand rotation change, gripper).
+        The vector is clipped to the controller's bounds, as robosuite itself does.
+        Termination, truncation and reward are available as last_terminated, last_truncated
+        and last_reward; check_success() reads the task predicate.
+        """
+        env = self._require_env()
+        if self._action_bounds is None:  # pragma: no cover - established by reset
+            raise RuntimeError("LIBERO action bounds are unavailable")
+        low, high = self._action_bounds
+        native_action = np.asarray(action, dtype=np.float64).reshape(-1)
+        if native_action.shape != low.shape:
+            raise ValueError(
+                f"{self.controller} expects {low.shape[0]} action values, got {native_action.size}"
+            )
+        if not bool(np.all(np.isfinite(native_action))):
+            raise ValueError("action values must be finite")
+        native_result = env.step(np.clip(native_action, low, high))
+        self._elapsed_steps += 1
+        (
+            self._raw_observation,
+            self._last_reward,
+            self._last_terminated,
+            self._last_truncated,
+            self._last_native_info,
+        ) = self._unpack_native_result(native_result)
+        return self._raw_observation
+
+    @property
+    def elapsed_steps(self) -> int:
+        return self._elapsed_steps
+
+    @property
+    def last_terminated(self) -> bool:
+        return self._last_terminated
+
+    @property
+    def last_truncated(self) -> bool:
+        return self._last_truncated
+
+    @property
+    def last_reward(self) -> float | None:
+        return self._last_reward
+
     def native_step(self, action: RobotAction) -> StepResult:
         """Runtime-only step retaining native reward and sanitized-at-boundary info."""
+        self._require_joint_controller("native_step")
         env = self._require_env()
         if action.embodiment != self.embodiment:
             raise ValueError(
@@ -749,6 +843,7 @@ class LiberoAdapter:
         )
 
     def execute_trajectory(self, trajectory: Trajectory) -> ExecutionResult:
+        self._require_joint_controller("execute_trajectory")
         if not isinstance(trajectory, Trajectory):
             # Preserve the invalid-data ValueError contract.
             raise ValueError("trajectory must be a Trajectory")
@@ -951,6 +1046,7 @@ class LiberoAdapter:
 
     def set_grippers(self, positions: Mapping[str, float]) -> ExecutionResult:
         """One-arm compatibility wrapper with one-control-tick semantics."""
+        self._require_joint_controller("set_grippers")
         if not isinstance(positions, Mapping) or set(positions) != {PRIMARY_ARM}:
             return ExecutionResult(
                 ok=False,
@@ -1017,6 +1113,7 @@ class LiberoAdapter:
         arm: str,
         accept_contact_stall: bool,
     ) -> ExecutionResult:
+        self._require_joint_controller("gripper commands")
         if arm != PRIMARY_ARM:
             return ExecutionResult(
                 ok=False,

@@ -788,6 +788,37 @@ recorded runs):
 sets it, so paper comparisons stay like for like. Compare a session with it against one without
 on the Compare page.
 
+## 12. VLA student: SmolVLA baseline
+
+SmolVLA (LeRobot) runs in `.venv-libero` through the same LIBERO adapter as ASPIRE, on GPU 1 by
+default. [vla-student.md](vla-student.md) has the protocol, the parity checks and what each
+episode records.
+
+```bash
+scripts/gpu/vla.sh setup
+```
+
+```bash
+scripts/gpu/vla.sh parity --policy
+```
+
+```bash
+scripts/gpu/vla.sh sanity --quick
+```
+
+```bash
+scripts/gpu/vla.sh baseline
+```
+
+- `setup` installs LeRobot v0.4.4 and SmolVLA, downloads the checkpoint and runs the tests.
+- `parity` checks that LeRobot's LIBERO env and our adapter produce identical images, robot
+  states and simulator states, and (with `--policy`) identical SmolVLA actions.
+- `sanity` reproduces `lerobot/smolvla_libero` on standard LIBERO-Object (paper: 96%).
+- `baseline` runs SmolVLA on LIBERO-Pro `libero_object_swap`: 10 tasks, 50 official scenes,
+  3 seeds.
+
+Results are in `outputs/vla/<run>/results.md`.
+
 ## Troubleshooting
 
 | Symptom | Fix |

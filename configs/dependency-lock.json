@@ -13,6 +13,13 @@
       "repository": "https://github.com/uynitsuj/contact_graspnet_pytorch",
       "license": "NVIDIA Source Code License (non-commercial research and evaluation)"
     },
+    "lerobot": {
+      "commit": "8fff0fde7c79f23a93d845d1a50e985de01f8b8a",
+      "license": "Apache-2.0",
+      "path": "third_party/lerobot",
+      "repository": "https://github.com/hosseinhkh/lerobot",
+      "tag": "v0.4.4"
+    },
     "libero_pro": {
       "commit": "47aaa8038930bcdc84ab9ea2867e2ffc8039ab4a",
       "path": "third_party/LIBERO-PRO",

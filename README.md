@@ -511,6 +511,7 @@ That releases GPU 0.
 | Run artifacts and traces | [`docs/run-artifacts.md`](docs/run-artifacts.md) |
 | Harness fixes (motion timing, point clouds, boxes, diagnostics) and why | [`docs/harness-fixes.md`](docs/harness-fixes.md) |
 | LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
+| VLA student: SmolVLA on LIBERO / LIBERO-Pro in ASPIRE's simulator (setup, parity, baseline) | [`docs/vla-student.md`](docs/vla-student.md) |
 | Robosuite | [`docs/robosuite.md`](docs/robosuite.md) |
 | BEHAVIOR-1K | [`docs/behavior.md`](docs/behavior.md) |
 | Optional backends | [`docs/optional-backends.md`](docs/optional-backends.md) |
