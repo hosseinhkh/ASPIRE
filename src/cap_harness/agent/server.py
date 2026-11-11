@@ -95,9 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-motion", action="store_true")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8222)
-    parser.add_argument(
-        "--viser-port", type=int, default=8080, help="Camera viewer and Home button"
-    )
+    parser.add_argument("--viser-port", type=int, default=8080, help="Camera viewer and Home button")
     parser.add_argument("--no-viser", action="store_true", help="Disable the browser visualizer")
     parser.add_argument("--record-dir", type=Path)
     parser.add_argument("--no-video", action="store_true")
@@ -172,10 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             from .visualizer import System2Visualizer
 
             visualizer = System2Visualizer(
-                runtime.session,
-                allow_motion=args.allow_motion,
-                host=args.host,
-                port=args.viser_port,
+                runtime.session, allow_motion=args.allow_motion, host=args.host, port=args.viser_port
             )
             stack.callback(visualizer.close)
         uvicorn.run(create_app(runtime.session), host=args.host, port=args.port)
