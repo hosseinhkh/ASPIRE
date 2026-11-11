@@ -29,15 +29,46 @@ SETTLE_STEPS = 10
 IMAGE_SIZE = 256
 CONTROLLER = "OSC_POSE"
 
+#: SmolVLA (0.45B) success on standard LIBERO, % (SmolVLA paper, arXiv 2506.01844, Table 2).
+SMOLVLA_PAPER: dict[str, float] = {
+    "libero_spatial": 90.0,
+    "libero_object": 96.0,
+    "libero_goal": 92.0,
+    "libero_10": 71.0,
+}
+#: pi0.5 success per LIBERO-Pro perturbation, % (LIBERO-PRO, arXiv 2510.03827, Tables 2-5).
+#: No source reports SmolVLA on LIBERO-Pro.
+PI05_LIBERO_PRO: dict[str, dict[str, float]] = {
+    #               original  _object  _swap  _lan  _task  _env
+    "libero_goal": dict(
+        zip(("", "_object", "_swap", "_lan", "_task", "_env"), (97, 97, 38, 97, 0, 46))
+    ),
+    "libero_spatial": dict(
+        zip(("", "_object", "_swap", "_lan", "_task", "_env"), (98, 97, 20, 97, 1, 46))
+    ),
+    "libero_10": dict(
+        zip(("", "_object", "_swap", "_lan", "_task", "_env"), (93, 92, 8, 93, 1, 46))
+    ),
+    "libero_object": dict(
+        zip(("", "_object", "_swap", "_lan", "_task", "_env"), (98, 98, 17, 96, 1, 73))
+    ),
+}
+#: Warn when a run with a published SmolVLA number trails it by more than this many points.
+WARN_BELOW_REFERENCE = 25.0
+WARN_AFTER_EPISODES = 20
+
 __all__ = [
     "CONTROLLER",
     "DEFAULT_MAX_STEPS",
     "IMAGE_SIZE",
     "OSC_SETTLE_ACTION",
+    "PI05_LIBERO_PRO",
     "SETTLE_STEPS",
+    "SMOLVLA_PAPER",
     "SUITE_MAX_STEPS",
     "max_steps_for",
     "parse_int_list",
+    "references",
     "suite_family",
     "task_count",
     "task_language",
@@ -55,6 +86,25 @@ def suite_family(suite: str) -> str | None:
 def max_steps_for(suite: str) -> int:
     family = suite_family(suite)
     return SUITE_MAX_STEPS[family] if family else DEFAULT_MAX_STEPS
+
+
+def references(suite: str, policy: str) -> dict[str, object]:
+    """Published numbers to read a run against: the expected value and context."""
+    family = suite_family(suite)
+    out: dict[str, object] = {"expected": None, "notes": []}
+    notes: list[str] = out["notes"]  # type: ignore[assignment]
+    smolvla = "smolvla" in policy.lower()
+    if family and suite == family and family in SMOLVLA_PAPER:
+        if smolvla:
+            out["expected"] = SMOLVLA_PAPER[family]
+        notes.append(f"SmolVLA paper: {SMOLVLA_PAPER[family]:.0f}%")
+    if family in PI05_LIBERO_PRO:
+        perturbation = suite[len(family) :]
+        if perturbation in PI05_LIBERO_PRO[family]:
+            notes.append(f"pi0.5 (LIBERO-PRO paper): {PI05_LIBERO_PRO[family][perturbation]:.0f}%")
+        if perturbation and smolvla:
+            notes.append("no published SmolVLA number on LIBERO-Pro")
+    return out
 
 
 def _benchmark(suite: str):

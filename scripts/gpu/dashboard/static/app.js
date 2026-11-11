@@ -8,6 +8,7 @@ import * as compare from "./views/compare.js";
 import * as logs from "./views/logs.js";
 import * as live from "./views/live.js";
 import * as about from "./views/about.js";
+import * as vla from "./views/vla.js";
 
 const app = document.getElementById("app");
 const ctx = { outputs: "", timers: [] };
@@ -22,6 +23,9 @@ const routes = [
   [/^\/live$/, () => live.renderList(app, params(), ctx)],
   [/^\/live\/(.+)$/, (m) => live.renderConsole(app, m[1], ctx)],
   [/^\/about$/, () => about.render(app)],
+  [/^\/vla$/, () => vla.renderList(app, params(), ctx)],
+  [/^\/vla\/run$/, () => vla.renderRun(app, params(), ctx)],
+  [/^\/vla\/episode$/, () => vla.renderEpisode(app, params(), ctx)],
   // Links from older versions of the dashboard.
   [/^\/c$/, () => session.render(app, params(), ctx)],
   [/^\/e$/, () => episode.render(app, params(), ctx)],
@@ -32,7 +36,7 @@ async function route() {
   ctx.timers.splice(0).forEach(clearTimeout);
   document.querySelectorAll("video").forEach((v) => v.pause());
   const path = (location.hash.slice(1).split("?")[0] || "/").replace(/\/$/, "") || "/";
-  const others = ["/compare", "/live", "/about"];
+  const others = ["/compare", "/live", "/about", "/vla"];
   document.querySelectorAll("header nav a").forEach((a) => {
     const section = a.dataset.section;
     const on = section === "/" ? !others.some((p) => path.startsWith(p)) : path.startsWith(section);

@@ -107,6 +107,35 @@ def write_video(path: Path, frames: list[np.ndarray], fps: int = 20) -> None:
             writer.append_data(np.asarray(frame, dtype=np.uint8))
 
 
+def episode_diagnostics(
+    actions: np.ndarray, hand_positions: np.ndarray, policy_s: float
+) -> dict[str, Any]:
+    """Signs of a policy or pipeline problem, per episode (all plain numbers).
+
+    action_saturated_fraction: share of hand-motion values at the controller limit (|a| >= 0.999);
+    a high share means the policy is pushing as hard as it can (a scale or frame problem).
+    hand_path_m / hand_net_m: how far the hand travelled, and how far it ended from its start;
+    a hand that barely moves points at wrong inputs.  gripper_switches: open/close changes.
+    """
+    steps = int(actions.shape[0]) if actions.ndim == 2 else 0
+    if steps == 0:
+        return {"policy_ms_per_step": None}
+    motion = np.abs(actions[:, :6])
+    gripper = actions[:, 6] > 0
+    moves = (
+        np.linalg.norm(np.diff(hand_positions, axis=0), axis=1) if len(hand_positions) > 1 else []
+    )
+    return {
+        "action_abs_mean": round(float(motion.mean()), 4),
+        "action_saturated_fraction": round(float((motion >= 0.999).mean()), 4),
+        "gripper_closed_fraction": round(float(gripper.mean()), 4),
+        "gripper_switches": int(np.count_nonzero(gripper[1:] != gripper[:-1])),
+        "hand_path_m": round(float(np.sum(moves)), 4),
+        "hand_net_m": round(float(np.linalg.norm(hand_positions[-1] - hand_positions[0])), 4),
+        "policy_ms_per_step": round(1000.0 * policy_s / steps, 2),
+    }
+
+
 def run_episode(
     adapter: Any,
     policy: StudentPolicy,
@@ -126,6 +155,8 @@ def run_episode(
     terminated = False
     steps = 0
     policy_s = 0.0
+    actions: list[np.ndarray] = []
+    hand = [np.asarray(raw["robot0_eef_pos"], dtype=np.float64).reshape(3)]
     while steps < spec.max_steps:
         tick = time.monotonic()
         action = np.asarray(policy.act(raw, spec.instruction), dtype=np.float64).reshape(-1)
@@ -133,6 +164,8 @@ def run_episode(
         if recorder is not None:
             recorder.record_step(raw, action)
         raw = adapter.step_native_action(action)
+        actions.append(action)
+        hand.append(np.asarray(raw["robot0_eef_pos"], dtype=np.float64).reshape(3))
         steps += 1
         success = bool(adapter.check_success())
         terminated = bool(adapter.last_terminated)
@@ -153,6 +186,9 @@ def run_episode(
         "ended": "success" if success else ("terminated" if terminated else "step_limit"),
         "wall_s": round(time.monotonic() - started, 3),
         "policy_s": round(policy_s, 3),
+        "diagnostics": episode_diagnostics(
+            np.stack(actions) if actions else np.zeros((0, 7)), np.stack(hand), policy_s
+        ),
     }
     if recorder is not None:
         recorder.finish(raw, summary)

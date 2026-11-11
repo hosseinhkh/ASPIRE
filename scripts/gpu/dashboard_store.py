@@ -1049,12 +1049,27 @@ _NPY_TYPES = {"<f8": "d", "<f4": "f", "<i8": "q", "<i4": "i", "<u1": "B", "|u1":
 
 def read_npy(path: Path) -> dict[str, Any]:
     """Read a C-order .npy file with the standard library (the dashboard needs no NumPy)."""
+    return parse_npy(path.read_bytes(), path.name)
+
+
+def read_npz(path: Path) -> dict[str, dict[str, Any]]:
+    """Every array in an .npz archive (as numpy.savez / savez_compressed write it)."""
+    import zipfile
+
+    with zipfile.ZipFile(path) as archive:
+        return {
+            name[: -len(".npy")]: parse_npy(archive.read(name), name)
+            for name in archive.namelist()
+            if name.endswith(".npy")
+        }
+
+
+def parse_npy(raw: bytes, name: str = "array") -> dict[str, Any]:
     import array
     import ast
 
-    raw = path.read_bytes()
     if raw[:6] != b"\x93NUMPY":
-        raise ValueError(f"not a .npy file: {path.name}")
+        raise ValueError(f"not a .npy file: {name}")
     major = raw[6]
     header_len = int.from_bytes(raw[8:10] if major == 1 else raw[8:12], "little")
     start = (10 if major == 1 else 12) + header_len

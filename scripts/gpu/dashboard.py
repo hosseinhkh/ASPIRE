@@ -44,6 +44,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 from dashboard_store import MEDIA_SUFFIXES, Store, dir_size  # noqa: E402
+from dashboard_vla import VlaStore  # noqa: E402
 
 UI_DIR = HERE / "dashboard"
 UI = UI_DIR / "index.html"
@@ -203,6 +204,8 @@ class _ZipStream:
 
 
 def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler]:
+    vla = VlaStore(store)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "aspire-dashboard/1"
 
@@ -290,6 +293,12 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
                         query.get("media", "1") == "1",
                         query.get("name"),
                     )
+                if path == "/api/vla/runs":
+                    return self._json(vla.runs())
+                if path == "/api/vla/run":
+                    return self._json(vla.run(store.resolve(query["path"])))
+                if path == "/api/vla/episode":
+                    return self._json(vla.episode(store.resolve(query["path"])))
                 if path == "/api/live":
                     return self._json({"consoles": live.list()})
                 if path.startswith("/live/"):

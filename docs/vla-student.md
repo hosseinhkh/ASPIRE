@@ -63,8 +63,8 @@ not modified: the packages go into `.venv-libero`, the simulator venv inside the
 * **GPU.** `vla.sh` sets `CUDA_VISIBLE_DEVICES` and `MUJOCO_EGL_DEVICE_ID` for its own command
   only (GPU 1 by default) and says so. It warns when that is also ASPIRE's GPU (`ASPIRE_GPU`).
   SmolVLA needs about 3 GB.
-* **Outputs.** Runs go to `outputs/vla/`. The dashboard does not list that folder yet, and
-  nothing there is read by ASPIRE.
+* **Outputs.** Runs go to `outputs/vla/`, which ASPIRE never reads. The dashboard shows them on
+  their own page (VLA student); ASPIRE's Runs page does not list them.
 * **Running both at once** is fine: separate processes, the same simulator code. Do not run
   `vla.sh setup` while an ASPIRE run is going: it rewrites `.venv-libero` in place.
 
@@ -111,14 +111,50 @@ would be the same scenes as 1–15.
 
 | File | Contents |
 |---|---|
-| `episode.json` | task, instruction, scene and init state, policy seed, success, steps, how it ended, wall time, policy time |
+| `episode.json` | task, instruction, scene and init state, policy seed, success, steps, how it ended, wall time, policy time, and `diagnostics`: share of hand commands at the controller limit, hand path length and net displacement, gripper switches, policy ms per step |
 | `steps.npz` | per step: `action` (7), `state` (8, the policy input), `joint_pos` (7), `eef_pos` (3), `eef_quat_xyzw` (4), `gripper_qpos` (2); `final_*` hold the observation after the last action |
 | `video.mp4` | both cameras as the policy saw them, side by side, 20 fps (`--video all/failures/none`) |
 
-`run.json` holds the settings, the protocol, the policy (source, revision, local path, chunk
-size) and the versions (LeRobot commit, PyTorch, MuJoCo, robosuite, GPU). `results.json` and
-`results.md` hold the table. A run directory is resumable: rerunning the same command skips
-finished episodes. A different protocol in the same directory is refused.
+And for the whole run, in `outputs/vla/<run>/`:
+
+| File | Contents |
+|---|---|
+| `run.json` | settings, protocol, policy (source, revision, local path, chunk size), versions (LeRobot commit, PyTorch, MuJoCo, robosuite, GPU) |
+| `benchmark.log` | one timestamped line per episode (outcome, steps, time, success so far, ETA), warnings, start and stop |
+| `progress.json` | live: status (running, finished, interrupted, failed; stopped if the process died), done/planned, success so far, s per episode, ETA, current episode, warnings |
+| `results.json`, `results.md` | the table, refreshed after every episode, with the published numbers to compare against |
+| `console.log` | everything the process printed, for runs started with `--detach` |
+
+**Warnings while it runs.** The log, `progress.json`, `vla.sh status` and the dashboard show a
+warning when:
+* a run with a published SmolVLA number (standard LIBERO) trails it by more than 25 points
+  after 20 episodes, which points at the setup rather than the model;
+* more than 30% of episodes have most hand commands at the controller limit (a scale or frame
+  mismatch);
+* more than 30% of episodes have a hand that barely moves (wrong inputs).
+
+A run directory is resumable: rerunning the same command skips finished episodes. It refuses a
+different protocol, and a second process while one is still writing.
+
+## Watching a run
+
+* **Dashboard:** `scripts/gpu/dashboard.py`, page **VLA student**. It reads only
+  `outputs/vla/`, so ASPIRE's Runs page is unchanged. It shows:
+  - the parity checks and every run, with status, progress, success so far, the published
+    number and ETA;
+  - per run, the per-task table (success, 95% interval, per seed), the episode list (filter by
+    task, seed, outcome), the log and the settings;
+  - per episode, the video (agentview | wrist, as the policy saw them) synced with charts of
+    the hand-position, rotation and gripper commands, the hand position and the gripper
+    fingers.
+
+  Pages refresh every 10 s while a run is going.
+* **Terminal:** `scripts/gpu/vla.sh status` lists every run. `scripts/gpu/vla.sh status RUN`
+  shows one: progress, warnings, the table and the last log lines. Or follow
+  `tail -f outputs/vla/RUN/benchmark.log`.
+* **Long runs:** add `--detach` (sanity, baseline, benchmark). The run continues after the
+  terminal closes. `scripts/gpu/vla.sh stop RUN` ends it with status `interrupted`; the episode in
+  progress is dropped and rerun on resume.
 
 ## Commands
 
@@ -147,7 +183,23 @@ scripts/gpu/vla.sh baseline
 ```
 
 ```bash
-scripts/gpu/vla.sh report outputs/vla/baseline-smolvla-libero_object_swap
+scripts/gpu/vla.sh baseline --detach
+```
+
+```bash
+scripts/gpu/vla.sh status
+```
+
+```bash
+scripts/gpu/vla.sh status baseline-smolvla-libero_object_swap
+```
+
+```bash
+scripts/gpu/vla.sh stop baseline-smolvla-libero_object_swap
+```
+
+```bash
+scripts/gpu/vla.sh report baseline-smolvla-libero_object_swap
 ```
 
 * `setup` installs the `vla` extra into `.venv-libero`, downloads the checkpoint and runs
@@ -161,6 +213,8 @@ scripts/gpu/vla.sh report outputs/vla/baseline-smolvla-libero_object_swap
   `n_action_steps` were suspected (lerobot#2354).
 * `baseline` runs 10 `libero_object_swap` tasks × 50 scenes × 3 seeds = 1,500 episodes
   (`--quick`: 10 scenes, 1 seed).
+* `--quick` and the full run share a run folder, so the full run resumes from the quick one and
+  only runs the missing episodes.
 
 Other suites and options go through `benchmark`:
 

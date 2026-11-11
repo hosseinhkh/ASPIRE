@@ -11,8 +11,10 @@ physics are deterministic.  The run directory is resumable: finished episodes ar
 
     <out>/run.json         settings, policy, versions
     <out>/episodes/<suite>/task_<id>/seed_<s>/scene_<k>/   one episode each
-    <out>/results.json     success per task and seed, means, spread across seeds
-    <out>/results.md       the same as a table
+    <out>/benchmark.log    one timestamped line per episode, warnings, start and stop
+    <out>/progress.json    status, done/planned, success so far, ETA, warnings (live)
+    <out>/results.json     success per task and seed, means, spread across seeds (live)
+    <out>/results.md       the same as a table, with the published numbers to compare against
 """
 
 from __future__ import annotations
@@ -24,21 +26,24 @@ from datetime import datetime
 import importlib.metadata
 import json
 import math
+import os
 from pathlib import Path
 import platform
+import signal
 import statistics
 import subprocess
 import sys
-import time
 from typing import Any
 
 from cap_harness.vla.libero_compat import REPOSITORY_ROOT, ensure_runtime_env
+from cap_harness.vla.monitor import RunMonitor, atomic_write, read_progress
 from cap_harness.vla.protocol import (
     CONTROLLER,
     IMAGE_SIZE,
     SETTLE_STEPS,
     max_steps_for,
     parse_int_list,
+    references,
     task_count,
     task_language,
 )
@@ -162,9 +167,13 @@ def summarize(episodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def format_table(summary: Mapping[str, Any], title: str) -> str:
+def format_table(
+    summary: Mapping[str, Any], title: str, notes: Iterable[str] = (), planned: int | None = None
+) -> str:
     seeds = list(summary["per_seed_mean"])
     lines = [f"## {title}", ""]
+    if planned is not None and summary["episodes"] < planned:
+        lines += [f"_In progress: {summary['episodes']} of {planned} episodes._", ""]
     header = "| task | success | 95% interval | " + " | ".join(f"seed {s}" for s in seeds)
     lines += [header + " | mean steps (successes) |", "|" + "---|" * (4 + len(seeds))]
     for task in summary["tasks"]:
@@ -181,6 +190,9 @@ def format_table(summary: Mapping[str, Any], title: str) -> str:
         f"(**{100 * summary['mean']:.1f}%** ± {100 * summary['std_across_seeds']:.1f} across seeds) | "
         f"{100 * summary['ci95'][0]:.0f}-{100 * summary['ci95'][1]:.0f}% | {per_seed} | |"
     )
+    notes = list(notes)
+    if notes:
+        lines += ["", "Published numbers to compare: " + "; ".join(notes) + "."]
     return "\n".join(lines) + "\n"
 
 
@@ -194,12 +206,29 @@ def load_episodes(root: Path) -> list[dict[str, Any]]:
     return episodes
 
 
-def write_results(root: Path, title: str) -> dict[str, Any]:
-    summary = summarize(load_episodes(root))
-    (root / "results.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    table = format_table(summary, title)
-    (root / "results.md").write_text(table, encoding="utf-8")
+def write_results(
+    root: Path,
+    title: str,
+    episodes: list[Mapping[str, Any]] | None = None,
+    notes: Iterable[str] = (),
+    planned: int | None = None,
+) -> dict[str, Any]:
+    summary = summarize(load_episodes(root) if episodes is None else episodes)
+    summary["references"] = list(notes)
+    summary["planned"] = planned
+    atomic_write(root / "results.json", json.dumps(summary, indent=2) + "\n")
+    table = format_table(summary, title, notes, planned)
+    atomic_write(root / "results.md", table)
     return {"summary": summary, "table": table}
+
+
+def _interrupt_on_sigterm() -> None:
+    """Let `kill` (and vla.sh stop) end a run like Ctrl-C: with a final status written."""
+
+    def handler(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, handler)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -267,8 +296,9 @@ def main(argv: list[str] | None = None) -> int:
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     root = args.out or REPOSITORY_ROOT / "outputs" / "vla" / f"{stamp}-{args.suite}"
     title = f"{source} on {args.suite}"
+    notes = references(args.suite, source)["notes"]
     if args.report:
-        print(write_results(root, title)["table"])
+        print(write_results(root, title, notes=notes)["table"])
         return 0
 
     tasks = parse_int_list(args.tasks, default=range(task_count(args.suite)))
@@ -298,6 +328,14 @@ def main(argv: list[str] | None = None) -> int:
     }
     # Everything that changes an episode's outcome; a run directory holds one protocol only.
     protocol = {key: settings[key] for key in PROTOCOL_KEYS}
+    running = read_progress(root)
+    if running and running.get("status") == "running" and running.get("pid") != os.getpid():
+        print(
+            f"error: run {running.get('pid')} on {running.get('host')} is still writing to {root} "
+            "(scripts/gpu/vla.sh stop to end it)",
+            file=sys.stderr,
+        )
+        return 2
     run_path = root / "run.json"
     previous = json.loads(run_path.read_text(encoding="utf-8")) if run_path.is_file() else None
     if previous and previous.get("protocol") != protocol:
@@ -340,46 +378,69 @@ def main(argv: list[str] | None = None) -> int:
         init_mode=args.init_mode,
         post_settle_steps=SETTLE_STEPS,
     )
-    total = len(tasks) * len(seeds) * len(scenes)
-    done = 0
-    started = time.monotonic()
-    print(f"{title}: {len(tasks)} tasks x {len(seeds)} seeds x {len(scenes)} scenes = {total} episodes, "
-          f"limit {max_steps} steps, results in {root}", flush=True)  # fmt: skip
+    plan = [
+        (task_id, seed_index, scene)
+        for task_id in tasks
+        for seed_index in seeds
+        for scene in scenes
+    ]
+    finished = {}
+    for task_id, seed_index, scene in plan:
+        path = episode_dir(root, args.suite, task_id, seed_index, scene) / "episode.json"
+        if path.is_file():
+            finished[(task_id, seed_index, scene)] = json.loads(path.read_text(encoding="utf-8"))
+    reference = references(args.suite, source)
+    monitor = RunMonitor(
+        root,
+        title=title,
+        planned=len(plan),
+        resumed=list(finished.values()),
+        references=reference,
+        write_results=lambda episodes: write_results(root, title, episodes, notes, len(plan)),
+    )
+    monitor.log(
+        f"start: {title}: {len(tasks)} tasks x {len(seeds)} seeds x {len(scenes)} scenes = "
+        f"{len(plan)} episodes ({len(finished)} already done), limit {max_steps} steps, "
+        f"GPU {os.environ.get('CUDA_VISIBLE_DEVICES', 'default')}, results in {root}"
+    )
+    for note in notes:
+        monitor.log(f"compare with: {note}")
+    _interrupt_on_sigterm()
+    status, error = "finished", None
+    instructions: dict[int, str] = {}
     try:
-        for task_id in tasks:
-            instruction = task_language(args.suite, task_id)
-            for seed_index in seeds:
-                for scene in scenes:
-                    done += 1
-                    directory = episode_dir(root, args.suite, task_id, seed_index, scene)
-                    if (directory / "episode.json").is_file():
-                        continue
-                    spec = EpisodeSpec(
-                        suite=args.suite,
-                        task_id=task_id,
-                        scene=scene,
-                        policy_seed=policy_seed_for(seed_index, task_id, scene),
-                        max_steps=max_steps,
-                        instruction=instruction,
-                        seed_index=seed_index,
-                    )
-                    recorder = EpisodeRecorder(directory, video=args.video)
-                    summary = run_episode(
-                        adapter, policy, spec, recorder=recorder, seed_fn=seed_everything
-                    )
-                    elapsed = time.monotonic() - started
-                    print(
-                        f"[{done}/{total}] {spec.task_ref} seed {seed_index} scene {scene}: "
-                        f"{'success' if summary['success'] else 'fail'} in {summary['steps']} steps "
-                        f"({summary['wall_s']:.1f} s; {elapsed / 60:.1f} min so far)",
-                        flush=True,
-                    )
+        monitor.write()
+        for task_id, seed_index, scene in plan:
+            if (task_id, seed_index, scene) in finished:
+                continue
+            if task_id not in instructions:
+                instructions[task_id] = task_language(args.suite, task_id)
+            spec = EpisodeSpec(
+                suite=args.suite,
+                task_id=task_id,
+                scene=scene,
+                policy_seed=policy_seed_for(seed_index, task_id, scene),
+                max_steps=max_steps,
+                instruction=instructions[task_id],
+                seed_index=seed_index,
+            )
+            monitor.start({"task_id": task_id, "policy_seed_index": seed_index, "scene": scene})
+            directory = episode_dir(root, args.suite, task_id, seed_index, scene)
+            recorder = EpisodeRecorder(directory, video=args.video)
+            summary = run_episode(adapter, policy, spec, recorder=recorder, seed_fn=seed_everything)
+            monitor.add(summary)
+    except KeyboardInterrupt:
+        status = "interrupted"
+    except Exception as exc:
+        status, error = "failed", f"{type(exc).__name__}: {exc}"
+        monitor.log(f"ERROR: {error}")
+        raise
     finally:
         adapter.close()
-        result = write_results(root, title)
-        print("\n" + result["table"])
+        monitor.finish(status, error)
+        print("\n" + (root / "results.md").read_text(encoding="utf-8"))
         print(f"run directory: {root}")
-    return 0
+    return 0 if status == "finished" else 130
 
 
 if __name__ == "__main__":

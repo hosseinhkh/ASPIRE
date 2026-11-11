@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -303,3 +304,130 @@ def test_policy_seeds_are_distinct_per_episode() -> None:
         for k in range(1, 51)
     }
     assert len(seeds) == 3 * 10 * 50
+
+
+# ------------------------------------------------------------------ monitoring and dashboard --
+
+
+def _summary(task_id: int, scene: int, success: bool, seed: int = 0, **diagnostics) -> dict:
+    return {
+        "suite": "libero_object", "task_id": task_id, "task_ref": f"libero_object:{task_id}",
+        "instruction": f"task {task_id}", "scene": scene, "init_state_index": scene - 1,
+        "policy_seed": scene, "policy_seed_index": seed, "max_steps": 280, "success": success,
+        "steps": 90 if success else 280, "ended": "success" if success else "step_limit",
+        "wall_s": 4.0, "policy_s": 0.5, "diagnostics": {"hand_path_m": 0.5, **diagnostics},
+    }  # fmt: skip
+
+
+def test_run_monitor_writes_progress_log_results_and_warns(tmp_path) -> None:
+    from cap_harness.vla.monitor import RunMonitor, read_progress
+
+    written = []
+    monitor = RunMonitor(
+        tmp_path,
+        title="smolvla on libero_object",
+        planned=40,
+        resumed=[_summary(0, 1, True)],
+        references={"expected": 96.0, "notes": ["SmolVLA paper: 96%"]},
+        write_results=lambda episodes: written.append(len(episodes)),
+    )
+    monitor.start({"task_id": 0, "policy_seed_index": 0, "scene": 2})
+    assert read_progress(tmp_path)["current"]["scene"] == 2
+    for scene in range(2, 25):
+        monitor.add(_summary(0, scene, False, action_saturated_fraction=0.9))
+    progress = read_progress(tmp_path)
+    assert progress["status"] == "running" and progress["done"] == 24 and progress["planned"] == 40
+    assert progress["resumed"] == 1 and progress["ran"] == 23 and progress["successes"] == 1
+    assert progress["eta_s"] == pytest.approx(16 * 4.0)
+    assert any("far below the published 96%" in w for w in progress["warnings"])
+    assert any("controller limit" in w for w in progress["warnings"])
+    assert written[-1] == 24
+    monitor.finish("interrupted")
+    progress = read_progress(tmp_path)
+    assert progress["status"] == "interrupted" and progress["current"] is None
+    log = (tmp_path / "benchmark.log").read_text()
+    assert "[24/40] libero_object:0 seed 0 scene 24: fail in 280 steps" in log
+    assert log.count("WARNING:") == 2 and "run interrupted: 1/24 successful of 40 planned" in log
+
+
+def test_a_running_status_whose_process_is_gone_reads_as_stopped(tmp_path) -> None:
+    import socket
+
+    from cap_harness.vla.monitor import read_progress
+
+    (tmp_path / "progress.json").write_text(
+        json.dumps({"status": "running", "pid": 2**22 + 12345, "host": socket.gethostname()})
+    )
+    progress = read_progress(tmp_path)
+    assert progress["status"] == "stopped" and "process is gone" in progress["warnings"][-1]
+
+
+def _fake_run(root, episodes):
+    from cap_harness.vla.benchmark import episode_dir, write_results
+
+    root.mkdir(parents=True)
+    (root / "run.json").write_text(
+        json.dumps({"settings": {"suite": "libero_object", "policy": "lerobot/smolvla_libero"}})
+    )
+    (root / "progress.json").write_text(
+        json.dumps({"status": "finished", "done": len(episodes), "planned": 4})
+    )
+    for summary in episodes:
+        folder = episode_dir(root, "libero_object", summary["task_id"], 0, summary["scene"])
+        folder.mkdir(parents=True)
+        (folder / "episode.json").write_text(json.dumps(summary))
+        steps = 5
+        np.savez_compressed(
+            folder / "steps.npz",
+            action=np.tile(np.linspace(-1, 1, 7), (steps, 1)),
+            eef_pos=np.arange(steps * 3, dtype=np.float64).reshape(steps, 3),
+            gripper_qpos=np.full((steps, 2), 0.04),
+            state=np.zeros((steps, 8), dtype=np.float32),
+        )
+    write_results(root, "t", episodes, ["SmolVLA paper: 96%"], 4)
+
+
+def test_status_lists_runs_and_shows_one(tmp_path, capsys) -> None:
+    from cap_harness.vla import status
+
+    _fake_run(tmp_path / "vla" / "sanity", [_summary(0, 1, True), _summary(0, 2, False)])
+    status.list_runs(tmp_path / "vla")
+    assert "sanity" in capsys.readouterr().out
+    status.show_run(tmp_path / "vla" / "sanity")
+    out = capsys.readouterr().out
+    assert "finished" in out and "Published numbers to compare: SmolVLA paper: 96%" in out
+
+
+def test_dashboard_vla_store_reads_runs_episodes_and_stays_in_outputs_vla(tmp_path) -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "gpu"))
+    from dashboard_store import Store
+    from dashboard_vla import VlaStore
+
+    outputs = tmp_path / "outputs"
+    _fake_run(outputs / "vla" / "sanity", [_summary(0, 1, True), _summary(1, 1, False)])
+    (outputs / "vla" / "parity-libero_object.json").write_text(
+        json.dumps({"suite": "libero_object", "task": 0, "scene": 1, "environment": {"passed": True},
+                    "policy": {"passed": True, "aspire": {"steps": 138, "success": True}, "max_action_difference": 0.0}})
+    )  # fmt: skip
+    (outputs / "sessions" / "s1").mkdir(parents=True)
+    store = Store(outputs)
+    vla = VlaStore(store)
+
+    listing = vla.runs()
+    assert [r["name"] for r in listing["runs"]] == ["sanity"]
+    assert listing["parity"][0]["environment"] is True and listing["parity"][0]["policy"] is True
+    assert listing["runs"][0]["progress"]["status"] == "finished"
+
+    run = vla.run(store.resolve("vla/sanity"))
+    assert len(run["episodes"]) == 2 and run["instructions"] == {"0": "task 0", "1": "task 1"}
+    assert run["results"]["successes"] == 1
+
+    episode = vla.episode(store.resolve(run["episodes"][0]["path"]))
+    assert episode["run"] == "vla/sanity" and episode["summary"]["task_id"] == 0
+    assert episode["series"]["action"]["gripper"] == [1.0] * 5
+    assert episode["series"]["eef_pos"]["z"] == [2.0, 5.0, 8.0, 11.0, 14.0]
+    with pytest.raises(ValueError, match="outside outputs/vla"):
+        vla.run(store.resolve("sessions/s1"))
+    assert all(item["kind"] != "vla" for item in store.collections())  # ASPIRE's list is unchanged
