@@ -9,7 +9,7 @@ UV_CACHE_ROOT="$REPO_ROOT/.uv-cache"
 LIBERO_CONFIG_DIR="${LIBERO_CONFIG_PATH:-$REPO_ROOT/.libero}"
 PYTHON_BIN="${CAP_HARNESS_PYTHON:-python3}"
 INSTALL=1
-WITH_VLA=0
+WITH_VLA=""  # empty: keep whatever the venv has now
 
 usage() {
   cat <<'EOF'
@@ -24,6 +24,8 @@ Options:
   --no-install                Initialize dependencies and configuration only.
   --vla                       Also install the VLA student (LeRobot + SmolVLA, the `vla`
                               extra from third_party/lerobot) into the same venv.
+  --no-vla                    Remove it again. Without either flag the venv keeps the
+                              student if it is installed (uv sync would otherwise drop it).
   -h, --help                  Show this help.
 
 The repository is the single source of truth. This script does not copy source
@@ -47,6 +49,10 @@ while (($#)); do
       ;;
     --vla)
       WITH_VLA=1
+      shift
+      ;;
+    --no-vla)
+      WITH_VLA=0
       shift
       ;;
     -h|--help)
@@ -83,6 +89,18 @@ DEPENDENCY_LOCK="$REPO_ROOT/configs/dependency-lock.json"
   printf 'error: dependency lock missing: %s\n' "$DEPENDENCY_LOCK" >&2
   exit 1
 }
+
+# `uv sync` removes every package the selected extras do not list, so a plain re-run (for
+# example scripts/gpu/setup_conda_env.sh) would uninstall the VLA student.  Keep it unless
+# --no-vla says otherwise.
+if [[ -z "$WITH_VLA" ]]; then
+  WITH_VLA=0
+  if [[ -x "$VENV_ROOT/bin/python" ]] && "$VENV_ROOT/bin/python" -c \
+    "import importlib.util, sys; sys.exit(importlib.util.find_spec('lerobot') is None)" 2>/dev/null; then
+    WITH_VLA=1
+    printf 'LeRobot is installed in %s: keeping the vla extra (--no-vla removes it)\n' "$VENV_ROOT"
+  fi
+fi
 
 # The LIBERO runtime needs only these submodules.
 SUBMODULES=(

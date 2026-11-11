@@ -28,6 +28,13 @@ need_vla() {
   }
 }
 
+announce_gpu() {
+  echo "VLA on GPU $GPU (CUDA_VISIBLE_DEVICES for this command only; the conda env is unchanged)" >&2
+  if [[ -n "${ASPIRE_GPU:-}" && "$ASPIRE_GPU" == "$GPU" ]]; then
+    echo "note: ASPIRE also uses GPU $GPU (ASPIRE_GPU). SmolVLA needs about 3 GB; pass --gpu N to move it." >&2
+  fi
+}
+
 run_py() {  # run a module on the VLA GPU, rendering there too
   CUDA_VISIBLE_DEVICES="$GPU" MUJOCO_EGL_DEVICE_ID="$GPU" MUJOCO_GL="${MUJOCO_GL:-egl}" \
     PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}" \
@@ -37,6 +44,7 @@ run_py() {  # run a module on the VLA GPU, rendering there too
 
 cmd="${1:-}"
 [[ -n "$cmd" ]] && shift
+case "$cmd" in parity|sanity|baseline|benchmark|lerobot-eval) announce_gpu ;; esac
 case "$cmd" in
   setup)
     "$REPO_ROOT/scripts/bootstrap_libero.sh" --vla --python "${CAP_HARNESS_PYTHON:-python3}"

@@ -43,6 +43,31 @@ so ASPIRE keeps GPU 0. Results go to `outputs/vla/`.
   as plain `libero`. `cap_harness.vla.libero_compat` registers the upstream names. Neither
   package is modified.
 
+### Same folder, same environment: what changes for ASPIRE
+
+The student lives in the ASPIRE checkout and the `aspire` conda env. The conda env itself is
+not modified: the packages go into `.venv-libero`, the simulator venv inside the repository.
+
+* **Packages that change in `.venv-libero`.** LeRobot and its dependencies are added (about
+  65 packages: transformers 4.57, datasets, accelerate, wandb, and others). Four existing
+  packages move: einops 0.4.1 → 0.8.2 (same API), and, with the `vla` extra, fsspec,
+  packaging 26.2 → 25.0 and protobuf 7.35 → 6.33. numpy, PyTorch, MuJoCo, robosuite, LIBERO-Pro
+  and OpenCV keep their versions. The SAM3, GraspNet, PyRoki and cuRobo venvs are untouched,
+  and W&B logging keeps its own `.venv-tools`.
+* **Checked after installing.** The full test suite passes. ASPIRE's close-microwave program
+  runs in `.venv-libero` with LeRobot installed (`program_ok=True task_success=True`, joint
+  control, PyRoki service).
+* **Re-running setup.** `uv sync` removes every package the requested extras do not list.
+  `scripts/bootstrap_libero.sh` (and so `scripts/gpu/setup_conda_env.sh`) therefore keeps the
+  `vla` extra when LeRobot is already installed; `--no-vla` removes it.
+* **GPU.** `vla.sh` sets `CUDA_VISIBLE_DEVICES` and `MUJOCO_EGL_DEVICE_ID` for its own command
+  only (GPU 1 by default) and says so. It warns when that is also ASPIRE's GPU (`ASPIRE_GPU`).
+  SmolVLA needs about 3 GB.
+* **Outputs.** Runs go to `outputs/vla/`. The dashboard does not list that folder yet, and
+  nothing there is read by ASPIRE.
+* **Running both at once** is fine: separate processes, the same simulator code. Do not run
+  `vla.sh setup` while an ASPIRE run is going: it rewrites `.venv-libero` in place.
+
 ### Parity: what was checked
 
 `python -m cap_harness.vla.parity` builds LeRobot's `LiberoEnv` and our adapter on the same
