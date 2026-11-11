@@ -104,12 +104,17 @@ PY
     for target in "libero_object 0 1" "libero_object_swap 3 7"; do
       read -r suite task scene <<< "$target"
       echo "== $suite task $task scene $scene"
-      run_py -m cap_harness.vla.parity --suite "$suite" --task "$task" --scene "$scene" "${extra[@]}" \
-        --out "$VLA_OUT/parity-$suite.json" 2>/dev/null \
-        | "$VENV_PY" -c 'import json,sys; r=json.load(sys.stdin); e=r["environment"]; p=r.get("policy");
-print("environment:", "PASS" if e["passed"] else "FAIL", {k: v for k, v in e["worst"].items() if v})
-if p: print("policy:", "PASS" if p["passed"] else "FAIL", p["lerobot"], p["aspire"], "max action difference", p["max_action_difference"])' \
-        || status=1
+      log="$VLA_OUT/parity-$suite.log"
+      # The module prints its own summary as its last lines; LIBERO's own chatter and any
+      # traceback go to the log.
+      if run_py -m cap_harness.vla.parity --suite "$suite" --task "$task" --scene "$scene" \
+        "${extra[@]+"${extra[@]}"}" --out "$VLA_OUT/parity-$suite.json" > "$log" 2>&1; then
+        grep -E "^(environment|policy|report):" "$log"
+      else
+        status=1
+        if grep -qE "^(environment|policy):" "$log"; then grep -E "^(environment|policy|report):" "$log"
+        else echo "parity check crashed; last lines of $log:"; tail -n 15 "$log"; fi
+      fi
     done
     exit "$status"
     ;;

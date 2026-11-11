@@ -431,3 +431,17 @@ def test_dashboard_vla_store_reads_runs_episodes_and_stays_in_outputs_vla(tmp_pa
     with pytest.raises(ValueError, match="outside outputs/vla"):
         vla.run(store.resolve("sessions/s1"))
     assert all(item["kind"] != "vla" for item in store.collections())  # ASPIRE's list is unchanged
+
+
+def test_parity_summary_is_readable_without_parsing_stdout() -> None:
+    from cap_harness.vla.parity import summary
+
+    report = {
+        "environment": {"passed": True, "steps": 120, "worst": {"image:image": 0.0, "mujoco_state": 0.0}, "first_mismatch_step": None},
+        "policy": {"passed": True, "lerobot": {"steps": 138, "success": True}, "aspire": {"steps": 138, "success": True}, "max_action_difference": 0.0},
+    }  # fmt: skip
+    text = summary(report, Path("outputs/vla/parity-libero_object.json"))
+    assert text.splitlines()[0].startswith("environment: PASS") and "identical" in text
+    assert "policy: PASS (LeRobot 138 steps success; ASPIRE adapter 138 steps success" in text
+    report["environment"].update(passed=False, first_mismatch_step=7, worst={"mujoco_state": 1e-3})
+    assert "environment: FAIL" in summary(report) and "first mismatch at step 7" in summary(report)

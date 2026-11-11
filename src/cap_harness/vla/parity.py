@@ -10,7 +10,8 @@
    one with ``run_episode`` on the adapter, from the same noise seed.  The actions, the step
    count and the outcome must match.
 
-Exit status 0 means every check passed; the report is printed as JSON.
+Prints a short PASS/FAIL summary (``--json`` prints the whole report instead) and writes the
+full report to ``--out``. Exit status 0 means every check passed.
 """
 
 from __future__ import annotations
@@ -282,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=None, help="also write the report here")
+    parser.add_argument("--json", action="store_true", help="print the full report as JSON")
     args = parser.parse_args(argv)
 
     report: dict[str, Any] = {
@@ -300,11 +302,43 @@ def main(argv: list[str] | None = None) -> int:
         part["passed"] for part in (report["environment"], report.get("policy", {"passed": True}))
     )
     text = json.dumps(report, indent=2)
-    print(text)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(text + "\n", encoding="utf-8")
+    print(text if args.json else summary(report, args.out))
     return 0 if report["passed"] else 1
+
+
+def summary(report: Mapping[str, Any], path: Path | None = None) -> str:
+    """The report in a few lines (LIBERO prints its own lines to stdout, so no parsing of it)."""
+    environment = report["environment"]
+    differences = {k: v for k, v in environment["worst"].items() if v}
+    lines = [
+        f"environment: {'PASS' if environment['passed'] else 'FAIL'} "
+        f"({environment.get('steps')} scripted steps; "
+        + (
+            f"differences {differences}"
+            if differences
+            else "images, robot and MuJoCo state identical"
+        )
+        + (
+            f"; first mismatch at step {environment['first_mismatch_step']}"
+            if environment.get("first_mismatch_step") is not None
+            else ""
+        )
+        + ")"
+    ]
+    policy = report.get("policy")
+    if policy:
+        lines.append(
+            f"policy: {'PASS' if policy['passed'] else 'FAIL'} (LeRobot {policy['lerobot']['steps']} steps "
+            f"{'success' if policy['lerobot']['success'] else 'fail'}; ASPIRE adapter {policy['aspire']['steps']} "
+            f"steps {'success' if policy['aspire']['success'] else 'fail'}; largest action difference "
+            f"{policy['max_action_difference']:.3g})"
+        )
+    if path:
+        lines.append(f"report: {path}")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
