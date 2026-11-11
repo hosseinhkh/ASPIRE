@@ -58,8 +58,16 @@ class VlaStore:
         return self.store.outputs / "vla"
 
     def _require(self, path: Path) -> Path:
-        if path != self.root and self.root not in path.parents:
-            raise ValueError("not a VLA student run (outside outputs/vla)")
+        """A student run lives in outputs/vla, or in a Trace2VLA experiment's evals folder."""
+        experiments = self.store.outputs / "trace2vla"
+        in_vla = path == self.root or self.root in path.parents
+        in_evals = (
+            experiments in path.parents and "evals" in path.relative_to(experiments).parts[1:2]
+        )
+        if not (in_vla or in_evals):
+            raise ValueError(
+                "not a VLA student run (outputs/vla or outputs/trace2vla/<name>/evals)"
+            )
         return path
 
     # ------------------------------------------------------------------------ list --
@@ -133,6 +141,8 @@ class VlaStore:
                     "ended": episode.get("ended"),
                     "wall_s": episode.get("wall_s"),
                     "video": (path.parent / "video.mp4").is_file(),
+                    "family": (episode.get("labels") or {}).get("failure_family"),
+                    "chosen": (episode.get("labels") or {}).get("chosen"),
                     "saturated": diagnostics.get("action_saturated_fraction"),
                     "hand_path_m": diagnostics.get("hand_path_m"),
                     "policy_ms_per_step": diagnostics.get("policy_ms_per_step"),

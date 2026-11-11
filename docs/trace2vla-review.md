@@ -94,7 +94,7 @@ Fifty seeded layouts of `libero_object_swap` : 0 have the same ranges as the 50 
   and the butter. LIBERO-Pro's generator picks the partner from five candidates per task
   (`libero_ood/ood_spatial_relation.yaml`); the official suite is one draw.
 * Offline grading with simulator state (never shown to the policy), one episode per task
-  (scene 1, seed 0) for tasks 0–5:
+  (scene 1, seed 0), all ten tasks:
 
   | Task | Asked for | What the student lifted | Ended in the basket |
   |---|---|---|---|
@@ -104,12 +104,16 @@ Fifty seeded layouts of `libero_object_swap` : 0 have the same ranges as the 50 
   | 3 | bbq sauce | chocolate pudding | chocolate pudding |
   | 4 | ketchup | cream cheese | nothing |
   | 5 | tomato sauce | nothing | nothing |
+  | 6 | butter | nothing | nothing |
+  | 7 | milk | nothing | nothing |
+  | 8 | chocolate pudding | ketchup | ketchup |
+  | 9 | orange juice | nothing | nothing |
 
-  The student never lifted the requested object. In four of six episodes it lifted a different
-  object, and in three it placed that object in the basket: the proposal's "semantic = false,
-  physical = true" case. In two it lifted nothing. In task 0 the object it took is the one
-  sitting where the target used to be. Tasks 6–9 were not graded here; grade all 1,500 baseline
-  episodes on cali for the full split.
+  The student never lifted the requested object. In five of ten episodes it lifted a different
+  object, and in four it placed that object in the basket: the proposal's "semantic = false,
+  physical = true" case. In five it lifted nothing. In task 0 the object it took is the one
+  sitting where the target used to be. `scripts/gpu/t2v.sh grade-student` labels every episode
+  of the 1,500-episode baseline the same way.
 
 ### 2.5 Facts from LeRobot's training code (v0.4.4)
 

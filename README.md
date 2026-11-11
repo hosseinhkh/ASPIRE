@@ -513,6 +513,7 @@ That releases GPU 0.
 | LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
 | VLA student: SmolVLA on LIBERO / LIBERO-Pro in ASPIRE's simulator (setup, parity, baseline) | [`docs/vla-student.md`](docs/vla-student.md) |
 | Trace2VLA design review: measurements, design changes, pipeline structure, order of work | [`docs/trace2vla-review.md`](docs/trace2vla-review.md) |
+| Trace2VLA preflight: teacher data → fine-tuned SmolVLA → comparison, every command | [`docs/trace2vla-preflight.md`](docs/trace2vla-preflight.md) |
 | Robosuite | [`docs/robosuite.md`](docs/robosuite.md) |
 | BEHAVIOR-1K | [`docs/behavior.md`](docs/behavior.md) |
 | Optional backends | [`docs/optional-backends.md`](docs/optional-backends.md) |

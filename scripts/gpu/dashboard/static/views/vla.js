@@ -4,11 +4,12 @@
 import { api, esc, q, num, fileUrl, when, size, pct } from "../lib/util.js";
 import { card, jsonView, rate, tabs, bindTabs } from "../lib/ui.js";
 import { lineChart, moveMarkers } from "../lib/charts.js";
+import { familyBadge, families } from "./t2v.js";
 
 const STATUS_CLASS = { running: "ok", finished: "ok", interrupted: "warn", stopped: "bad", failed: "bad" };
 const REFRESH_MS = 10000;
 let runTab = "Tasks";
-let episodeFilter = { task: "all", seed: "all", outcome: "all" };
+let episodeFilter = { task: "all", seed: "all", outcome: "all", family: "all" };
 
 const statusBadge = (s) => `<span class="badge ${STATUS_CLASS[s] || "muted"}">${esc(s || "-")}${s === "running" ? " ●" : ""}</span>`;
 const minutes = (s) => (s === null || s === undefined ? "-" : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
@@ -99,36 +100,39 @@ export async function renderRun(app, params, ctx) {
     ${tabs("vla-run", ["Tasks", "Episodes", "Log", "Settings"], runTab)}`;
 
   const taskTable = () => `
-    <table class="table"><thead><tr><th>Task</th><th>Success</th><th>95% interval</th>${seeds.map((s) => `<th>seed ${esc(s)}</th>`).join("")}<th>Mean steps (successes)</th></tr></thead><tbody>
+    <table class="table"><thead><tr><th>Task</th><th>Success</th><th>95% interval</th>${seeds.map((s) => `<th>seed ${esc(s)}</th>`).join("")}<th>Mean steps (successes)</th><th>Failures</th></tr></thead><tbody>
     ${tasks
       .map(
         (t) => `<tr class="click" data-task="${esc(t.task_id)}"><td><b>${esc(t.suite)}:${esc(t.task_id)}</b><div class="muted small">${esc(d.instructions[String(t.task_id)] || "")}</div></td>
         <td>${rate(t.successes, t.episodes)}</td><td class="small">${percent(t.ci95[0])}–${percent(t.ci95[1])}</td>
         ${seeds.map((s) => `<td class="small">${t.per_seed[s] === undefined ? "-" : percent(t.per_seed[s])}</td>`).join("")}
-        <td>${t.mean_steps_when_successful ? num(t.mean_steps_when_successful, 0) : "-"}</td></tr>`,
+        <td>${t.mean_steps_when_successful ? num(t.mean_steps_when_successful, 0) : "-"}</td><td class="small">${families(t.failure_families)}</td></tr>`,
       )
-      .join("") || `<tr><td colspan="${4 + seeds.length}" class="muted">No finished episode yet.</td></tr>`}
+      .join("") || `<tr><td colspan="${5 + seeds.length}" class="muted">No finished episode yet.</td></tr>`}
     </tbody></table>
+    ${Object.keys(r.failure_families || {}).length ? `<p class="small">All failures: ${families(r.failure_families)} <span class="muted">(semantic: another object, placed; physical: the requested object, not placed; both: another object, not placed; no_attempt: never closed on an object)</span></p>` : ""}
     ${(r.references || []).length ? `<p class="muted small">Published numbers to compare: ${r.references.map(esc).join("; ")}.</p>` : ""}`;
 
   const episodeTable = () => {
     const taskIds = [...new Set(d.episodes.map((e) => e.task_id))];
     const seedIds = [...new Set(d.episodes.map((e) => e.seed))];
+    const familyIds = [...new Set(d.episodes.map((e) => e.family).filter(Boolean))];
     const f = episodeFilter;
     const rows = d.episodes.filter(
-      (e) => (f.task === "all" || String(e.task_id) === f.task) && (f.seed === "all" || String(e.seed) === f.seed) && (f.outcome === "all" || (f.outcome === "success") === !!e.success),
+      (e) => (f.task === "all" || String(e.task_id) === f.task) && (f.seed === "all" || String(e.seed) === f.seed) && (f.outcome === "all" || (f.outcome === "success") === !!e.success) && (f.family === "all" || e.family === f.family),
     );
     const option = (value, label, current) => `<option value="${esc(value)}" ${String(current) === String(value) ? "selected" : ""}>${esc(label)}</option>`;
     return `<div class="toolbar">
         <select id="f-task">${option("all", "all tasks", f.task)}${taskIds.map((t) => option(t, `task ${t}`, f.task)).join("")}</select>
         <select id="f-seed">${option("all", "all seeds", f.seed)}${seedIds.map((s) => option(s, `seed ${s}`, f.seed)).join("")}</select>
         <select id="f-outcome">${option("all", "all outcomes", f.outcome)}${option("success", "successes", f.outcome)}${option("fail", "failures", f.outcome)}</select>
+        ${familyIds.length ? `<select id="f-family">${option("all", "all failure types", f.family)}${familyIds.map((x) => option(x, x, f.family)).join("")}</select>` : ""}
         <span class="muted small">${rows.length} of ${d.episodes.length}</span></div>
-      <table class="table compact"><thead><tr><th>Task</th><th>Seed</th><th>Scene</th><th>Outcome</th><th>Steps</th><th>Ended</th><th>Wall</th><th title="share of hand-motion values at the controller limit">Saturated</th><th>Hand path</th><th>Policy</th><th></th></tr></thead><tbody>
+      <table class="table compact"><thead><tr><th>Task</th><th>Seed</th><th>Scene</th><th>Outcome</th><th>Grading</th><th>Took</th><th>Steps</th><th>Ended</th><th>Wall</th><th title="share of hand-motion values at the controller limit">Saturated</th><th>Hand path</th><th>Policy</th><th></th></tr></thead><tbody>
       ${rows
         .map(
           (e) => `<tr class="click" data-href="#/vla/episode?path=${q(e.path)}"><td>${esc(e.task_id)}</td><td>${esc(e.seed)}</td><td>${esc(e.scene)}</td>
-          <td>${e.success ? '<span class="badge ok">success</span>' : '<span class="badge bad">fail</span>'}</td><td>${esc(e.steps)}</td><td class="small">${esc(e.ended || "")}</td>
+          <td>${e.success ? '<span class="badge ok">success</span>' : '<span class="badge bad">fail</span>'}</td><td>${familyBadge(e.family)}</td><td class="small">${esc(e.chosen || "")}</td><td>${esc(e.steps)}</td><td class="small">${esc(e.ended || "")}</td>
           <td class="small">${num(e.wall_s)} s</td><td class="small">${e.saturated === undefined || e.saturated === null ? "-" : percent(e.saturated)}</td>
           <td class="small">${e.hand_path_m === undefined || e.hand_path_m === null ? "-" : num(e.hand_path_m, 2) + " m"}</td>
           <td class="small">${e.policy_ms_per_step ? num(e.policy_ms_per_step) + " ms/step" : "-"}</td><td>${e.video ? "▶" : ""}</td></tr>`,
@@ -157,7 +161,7 @@ export async function renderRun(app, params, ctx) {
         document.querySelector('#vla-run button[data-tab="Episodes"]').click();
       };
     });
-    for (const [id, key] of [["f-task", "task"], ["f-seed", "seed"], ["f-outcome", "outcome"]]) {
+    for (const [id, key] of [["f-task", "task"], ["f-seed", "seed"], ["f-outcome", "outcome"], ["f-family", "family"]]) {
       const select = document.getElementById(id);
       if (select) select.onchange = () => {
         episodeFilter = { ...episodeFilter, [key]: select.value };
@@ -193,6 +197,7 @@ export async function renderEpisode(app, params) {
       ${card("Scene", `init state ${esc(e.init_state_index ?? "seeded")}`, `policy noise seed ${esc(e.policy_seed)}`)}
       ${card("Time", `${num(e.wall_s)} s`, `policy ${num(e.policy_s)} s · ${diag.policy_ms_per_step ? num(diag.policy_ms_per_step) + " ms/step" : ""}`)}
       ${card("Hand", diag.hand_path_m !== undefined ? `${num(diag.hand_path_m, 2)} m travelled` : "-", diag.hand_net_m !== undefined ? `${num(diag.hand_net_m, 2)} m from start` : "")}
+      ${e.labels && e.labels.supported ? card("Grading", familyBadge(e.labels.failure_family), `asked for ${esc(e.labels.target)}; took ${esc(e.labels.chosen || "nothing")}; in place: ${esc((e.labels.placed || []).join(", ") || "nothing")}`) : ""}
       ${card("Commands", diag.action_saturated_fraction !== undefined ? `${percent(diag.action_saturated_fraction)} saturated` : "-", diag.gripper_switches !== undefined ? `gripper ${esc(diag.gripper_switches)} switches, closed ${percent(diag.gripper_closed_fraction)}` : "")}
     </div>
     <div class="player">${

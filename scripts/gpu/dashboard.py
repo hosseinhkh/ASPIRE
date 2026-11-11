@@ -44,6 +44,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 from dashboard_store import MEDIA_SUFFIXES, Store, dir_size  # noqa: E402
+from dashboard_t2v import T2vStore  # noqa: E402
 from dashboard_vla import VlaStore  # noqa: E402
 
 UI_DIR = HERE / "dashboard"
@@ -205,6 +206,7 @@ class _ZipStream:
 
 def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler]:
     vla = VlaStore(store)
+    t2v = T2vStore(store)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "aspire-dashboard/1"
@@ -299,6 +301,18 @@ def make_handler(store: Store, live: LiveManager) -> type[BaseHTTPRequestHandler
                     return self._json(vla.run(store.resolve(query["path"])))
                 if path == "/api/vla/episode":
                     return self._json(vla.episode(store.resolve(query["path"])))
+                if path == "/api/t2v/experiments":
+                    return self._json(t2v.experiments())
+                if path == "/api/t2v/experiment":
+                    return self._json(t2v.experiment(store.resolve(query["path"])))
+                if path == "/api/t2v/demos":
+                    return self._json(t2v.demos(store.resolve(query["path"])))
+                if path == "/api/t2v/demo":
+                    return self._json(t2v.demo(store.resolve(query["path"])))
+                if path == "/api/t2v/scene":
+                    return self._json(
+                        t2v.scene(store.resolve(query["path"]), int(query["task"]), int(query["scene"]))
+                    )
                 if path == "/api/live":
                     return self._json({"consoles": live.list()})
                 if path.startswith("/live/"):

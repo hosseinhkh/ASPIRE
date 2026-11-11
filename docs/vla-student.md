@@ -153,6 +153,13 @@ SmolVLA run here uses 10, so the baseline and the trained student share one prot
 | `steps.npz` | per step: `action` (7), `state` (8, the policy input), `joint_pos` (7), `eef_pos` (3), `eef_quat_xyzw` (4), `gripper_qpos` (2); `final_*` hold the observation after the last action |
 | `video.mp4` | both cameras as the policy saw them, side by side, 20 fps (`--video all/failures/none`) |
 
+Each episode is also **graded offline** from simulator state (never a policy input): which
+object was lifted, which ended where the task wanted one, and a failure family (`semantic`,
+`physical`, `both`, `no_attempt`). The labels are in `episode.json` under `labels`, the
+simulator state at the start and end in `steps.npz`, and the counts per task in the results
+table. `--no-grading` turns it off. `scripts/gpu/t2v.sh grade-student RUN` adds the labels to
+a run made before grading existed, by replaying its stored actions.
+
 And for the whole run, in `outputs/vla/<run>/`:
 
 | File | Contents |

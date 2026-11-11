@@ -428,7 +428,7 @@ def test_dashboard_vla_store_reads_runs_episodes_and_stays_in_outputs_vla(tmp_pa
     assert episode["run"] == "vla/sanity" and episode["summary"]["task_id"] == 0
     assert episode["series"]["action"]["gripper"] == [1.0] * 5
     assert episode["series"]["eef_pos"]["z"] == [2.0, 5.0, 8.0, 11.0, 14.0]
-    with pytest.raises(ValueError, match="outside outputs/vla"):
+    with pytest.raises(ValueError, match="not a VLA student run"):
         vla.run(store.resolve("sessions/s1"))
     assert all(item["kind"] != "vla" for item in store.collections())  # ASPIRE's list is unchanged
 

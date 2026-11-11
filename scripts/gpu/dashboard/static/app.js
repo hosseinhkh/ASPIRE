@@ -9,6 +9,7 @@ import * as logs from "./views/logs.js";
 import * as live from "./views/live.js";
 import * as about from "./views/about.js";
 import * as vla from "./views/vla.js";
+import * as t2v from "./views/t2v.js";
 
 const app = document.getElementById("app");
 const ctx = { outputs: "", timers: [] };
@@ -23,6 +24,9 @@ const routes = [
   [/^\/live$/, () => live.renderList(app, params(), ctx)],
   [/^\/live\/(.+)$/, (m) => live.renderConsole(app, m[1], ctx)],
   [/^\/about$/, () => about.render(app)],
+  [/^\/t2v$/, () => t2v.renderList(app, params(), ctx)],
+  [/^\/t2v\/exp$/, () => t2v.renderExperiment(app, params(), ctx)],
+  [/^\/t2v\/demo$/, () => t2v.renderDemo(app, params(), ctx)],
   [/^\/vla$/, () => vla.renderList(app, params(), ctx)],
   [/^\/vla\/run$/, () => vla.renderRun(app, params(), ctx)],
   [/^\/vla\/episode$/, () => vla.renderEpisode(app, params(), ctx)],
@@ -36,7 +40,7 @@ async function route() {
   ctx.timers.splice(0).forEach(clearTimeout);
   document.querySelectorAll("video").forEach((v) => v.pause());
   const path = (location.hash.slice(1).split("?")[0] || "/").replace(/\/$/, "") || "/";
-  const others = ["/compare", "/live", "/about", "/vla"];
+  const others = ["/compare", "/live", "/about", "/vla", "/t2v"];
   document.querySelectorAll("header nav a").forEach((a) => {
     const section = a.dataset.section;
     const on = section === "/" ? !others.some((p) => path.startsWith(p)) : path.startsWith(section);
