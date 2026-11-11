@@ -76,6 +76,14 @@ def joint_adapter(init_mode: str = "saved", image_size: int = 64) -> LiberoAdapt
 
 
 def _reset(adapter: LiberoAdapter, scene: dict[str, Any]) -> None:
+    """Reset to the scene in a freshly built environment.
+
+    ASPIRE runs every teacher episode in a new environment. A reused one starts from the same
+    state to within 1e-21 but can drift once contacts begin: a recorded close-the-microwave
+    episode replayed exactly in a fresh environment and ended 0.18 rad off, unsolved, in a
+    reused one. Rebuilding makes every replay of the same actions give the same physics.
+    """
+    adapter._close_environment()
     if adapter.init_mode != scene["init_mode"]:
         adapter.init_mode = scene["init_mode"]
     adapter.reset(f"{scene['suite']}:{scene['task_id']}", seed=int(scene["seed"]))

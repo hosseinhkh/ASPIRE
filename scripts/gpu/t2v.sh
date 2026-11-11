@@ -88,7 +88,7 @@ case "$cmd" in
   stop)
     dir="$(experiment_dir "${1:-}")"
     read -r pid stage < "$dir/logs/running.pid" 2>/dev/null || { echo "no background stage recorded for $dir"; exit 1; }
-    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "cap_harness.trace2vla"; then
+    if [[ -r "/proc/$pid/cmdline" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "cap_harness.trace2vla"; then
       # The stage and everything it started (trainer, simulator workers) share one session.
       kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid"
       echo "stopping $stage (pid $pid); finished episodes are kept, rerun the same command to continue"

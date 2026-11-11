@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import json
+import os
 from pathlib import Path
 import shutil
 from typing import Any
@@ -116,8 +117,11 @@ def build_dataset(
     log: Any = print,
 ) -> dict[str, Any]:
     """Replay each demo and write it as one dataset episode. Returns the manifest."""
+    import datasets as hf_datasets
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+    hf_datasets.disable_progress_bars()  # one bar per episode otherwise
+    os.environ.setdefault("SVT_LOG", "1")  # the AV1 encoder prints its configuration per video
     if out_dir.exists():
         raise FileExistsError(f"{out_dir} already exists (choose another dataset name)")
     out_dir.parent.mkdir(parents=True, exist_ok=True)

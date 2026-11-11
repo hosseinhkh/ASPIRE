@@ -305,6 +305,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--out", type=Path, default=None, help="run directory (default outputs/vla/<time>-<suite>)"
     )
     parser.add_argument(
+        "--label", default=None, help="a short name for the policy in titles (default: --policy)"
+    )
+    parser.add_argument(
         "--no-grading",
         action="store_true",
         help="skip the offline failure labels (which object was lifted and placed)",
@@ -326,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     revision = args.revision or (DEFAULT_REVISION if source == DEFAULT_POLICY else None)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     root = args.out or REPOSITORY_ROOT / "outputs" / "vla" / f"{stamp}-{args.suite}"
-    title = f"{source} on {args.suite}"
+    title = f"{args.label or source} on {args.suite}"
     notes = references(args.suite, source)["notes"]
     if args.report:
         print(write_results(root, title, notes=notes)["table"])

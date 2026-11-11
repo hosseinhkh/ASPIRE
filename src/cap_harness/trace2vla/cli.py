@@ -93,6 +93,16 @@ def cmd_check(args: argparse.Namespace) -> int:
     except ImportError:
         report(False, "LeRobot is installed", "run scripts/gpu/vla.sh setup")
     try:
+        import peft  # noqa: F401
+
+        report(True, "peft is installed (LoRA training)")
+    except ImportError:
+        report(
+            None,
+            "peft is installed (LoRA training)",
+            "missing: run scripts/gpu/vla.sh setup (only --method lora needs it)",
+        )
+    try:
         from cap_harness.vla.policy import DEFAULT_POLICY, DEFAULT_REVISION, resolve_checkpoint
 
         report(True, "base checkpoint", resolve_checkpoint(DEFAULT_POLICY, DEFAULT_REVISION))
@@ -456,7 +466,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         "--out", str(out),
     ]  # fmt: skip
     if policy:
-        argv += ["--policy", policy]
+        argv += ["--policy", policy, "--label", label]
     if args.device:
         argv += ["--device", args.device]
     code = benchmark.main(argv)

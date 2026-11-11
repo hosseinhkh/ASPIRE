@@ -61,6 +61,10 @@ It reads only what the recorder already stores (`steps.jsonl`, `reset.json`, `ru
 * A scene is reproducible from (suite, task, init mode, seed): two fresh processes gave an
   identical simulator state, and an episode recorded on cali replayed here from a start gap of
   0.0 mm.
+* **Only in a freshly built environment.** A reused environment starts from the same state to
+  within 1e-21, but a recorded close-the-microwave episode replayed in one drifted after
+  contact and ended 0.18 rad off, unsolved; in a fresh environment it replayed exactly. ASPIRE
+  builds a new environment for every seed, so every replay in the pipeline does too.
 * Above 4× the step count stops falling (about 160): the tracker's own limits set the pace.
 * So the plan "leave the teacher untouched, convert afterwards, keep only replays that succeed"
   holds, and conversion at 3× also solves the episode-length problem. One replay failed at 1×,

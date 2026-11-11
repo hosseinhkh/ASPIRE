@@ -322,7 +322,7 @@ robosuite = [
     { name = "termcolor" },
 ]
 vla = [
-    { name = "lerobot", extra = ["smolvla"], marker = "extra == 'extra-11-cap-harness-vla'" },
+    { name = "lerobot", extra = ["peft", "smolvla"], marker = "extra == 'extra-11-cap-harness-vla'" },
     { name = "pyarrow" },
     { name = "torchcodec" },
 ]
@@ -364,7 +364,7 @@ requires-dist = [
     { name = "imageio", extras = ["ffmpeg"], marker = "extra == 'robosuite'", specifier = ">=2.34" },
     { name = "imageio", extras = ["ffmpeg"], marker = "extra == 'yam-real'", specifier = ">=2.34" },
     { name = "jsonschema", marker = "extra == 'agent'", specifier = ">=4" },
-    { name = "lerobot", extras = ["smolvla"], marker = "extra == 'vla'", editable = "third_party/lerobot" },
+    { name = "lerobot", extras = ["smolvla", "peft"], marker = "extra == 'vla'", editable = "third_party/lerobot" },
     { name = "libero", marker = "extra == 'libero'", editable = "third_party/LIBERO-PRO" },
     { name = "matplotlib", marker = "extra == 'libero'", specifier = ">=3.7" },
     { name = "matplotlib", marker = "extra == 'providers'", specifier = ">=3.10" },
@@ -1617,6 +1617,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+peft = [
+    { name = "peft" },
+    { name = "transformers" },
+]
 smolvla = [
     { name = "accelerate" },
     { name = "num2words" },
@@ -2510,6 +2514,27 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/49/44/1eb20389301b57b19cc099a1c2f662501f72f08a65f912d05822613c1532/pandas-3.0.3-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:a55066a0505dae0ba2b50a46637db34b46f9094c65c5d4800794ef6335010938", size = 12353708, upload-time = "2026-05-11T18:52:28.139Z" },
     { url = "https://files.pythonhosted.org/packages/65/b6/09b01cdbc15224e2850365192d17b7bdebb8bdbd8780ed221fcdf0d9a515/pandas-3.0.3-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6dc0b3fd2169c9157deed50b4d519553a3655c8c6a96027136d654592be973a9", size = 10894600, upload-time = "2026-05-11T18:52:45.02Z" },
     { url = "https://files.pythonhosted.org/packages/f8/45/830bb57f533a4604b355e07edcb8ea18cf88b5f94e5fca92f27052d7c597/pandas-3.0.3-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:f8894dc474d648fe7b6ff0ca9b0bd73950d19952bc1a6534540762c5d79d305c", size = 11950889, upload-time = "2026-05-11T18:52:50.905Z" },
+]
+
+[[package]]
+name = "peft"
+version = "0.21.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "huggingface-hub", version = "0.35.3", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "psutil" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "tqdm" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/80/af/2e08abf1cd3b8792a02f5116808f2398c2f77ecdff801ced2ce16007a6f9/peft-0.21.2.tar.gz", hash = "sha256:b803ccfb3f3f316004d850284306687833a2235ea278fb56abc856203456142e", size = 983614, upload-time = "2026-10-01T10:26:36.129Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/0b/59441cdbfdd342ed03c08af90a2fe16173f0cd48ab219f523b39ca059a79/peft-0.21.2-py3-none-any.whl", hash = "sha256:106ab6077ff72c54d21577f9af5970e34bac7582cb14209f7b2b511e322a4eae", size = 835427, upload-time = "2026-10-01T10:26:34.085Z" },
 ]
 
 [[package]]

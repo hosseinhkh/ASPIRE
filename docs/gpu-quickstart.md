@@ -819,6 +819,28 @@ scripts/gpu/vla.sh baseline
 
 Results are in `outputs/vla/<run>/results.md`.
 
+## 13. Trace2VLA: teacher data → fine-tuned student
+
+One command drives the pipeline that turns ASPIRE's episodes into SmolVLA training data, trains,
+and compares teacher and student on the same scenes. The step-by-step preflight, with what
+each stage records and how to read the result, is in
+[trace2vla-preflight.md](trace2vla-preflight.md).
+
+```bash
+scripts/gpu/t2v.sh init preflight --suite libero_object_swap --tasks 0,1
+```
+
+```bash
+scripts/gpu/t2v.sh check preflight
+```
+
+```bash
+scripts/gpu/t2v.sh status preflight
+```
+
+Stages: `teacher-add`, `teacher-run`, `teacher-grade`, `convert`, `dataset`, `train`, `eval`,
+`report`. The dashboard shows experiments under **Trace2VLA**.
+
 ## Troubleshooting
 
 | Symptom | Fix |

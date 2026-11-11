@@ -71,7 +71,8 @@ robosuite = [
 # student and the ASPIRE teacher drive the same simulator code.  LeRobot is the
 # third_party/lerobot submodule (branch aspire-v0.4.4 of the fork).
 vla = [
-  "lerobot[smolvla]",
+  # smolvla: the policy; peft: LoRA fine-tuning (lerobot-train --peft.*).
+  "lerobot[smolvla,peft]",
   # pyarrow 25 requires numpy 2; the simulator stack is pinned to numpy 1.26.
   "pyarrow<25",
   # torchcodec 0.10 is built against torch 2.10; 0.9 matches the torch 2.9.1 used here.

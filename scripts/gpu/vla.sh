@@ -164,7 +164,7 @@ PY
   stop)
     dir="$(run_dir "${1:-}")"
     pid="$("$VENV_PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid") or "")' "$dir/progress.json" 2>/dev/null || true)"
-    if [[ -z "$pid" ]] || ! tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "cap_harness.vla.benchmark"; then
+    if [[ -z "$pid" || ! -r "/proc/$pid/cmdline" ]] || ! tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "cap_harness.vla.benchmark"; then
       echo "no running benchmark for $dir"
       exit 1
     fi

@@ -38,6 +38,13 @@ the experiment folder; the teacher agent's files and the student's inputs never 
 git pull origin claude/dazzling-pascal-4r6ipf
 ```
 
+This update adds one package to `.venv-libero` (`peft`, for LoRA training). Install it with the
+same setup command as before; it takes about a minute and does not touch the model services:
+
+```bash
+scripts/gpu/vla.sh setup
+```
+
 ```bash
 scripts/gpu/services.sh status
 ```
