@@ -4,7 +4,9 @@ Every episode keeps the robot's own trajectory, so it can be inspected, compared
 teacher and reused as data later:
 
     episode.json   task, scene, seeds, success, steps, timing, protocol
-    steps.npz      per step t (the observation the action was chosen from, then the action):
+    steps.npz      start_state / end_state: the simulator state, when the episode was graded
+                   (privileged: for replay and grading, never a policy input);
+                   per step t (the observation the action was chosen from, then the action):
                    action (T,7), state (T,8) the policy input, joint_pos (T,7),
                    eef_pos (T,3), eef_quat_xyzw (T,4), gripper_qpos (T,2);
                    final_* hold the observation after the last action
@@ -22,6 +24,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from cap_harness.vla.grading import sim_state
 from cap_harness.vla.observation import student_images, student_state
 
 
@@ -53,6 +56,7 @@ class EpisodeRecorder:
     directory: Path
     video: str = "all"  # all | failures | none
     _arrays: dict[str, list[np.ndarray]] = field(default_factory=dict)
+    _extras: dict[str, np.ndarray] = field(default_factory=dict)
     _frames: list[np.ndarray] = field(default_factory=list)
 
     def _push(self, key: str, value: Any) -> None:
@@ -77,6 +81,10 @@ class EpisodeRecorder:
         self._push("action", np.asarray(action, dtype=np.float64))
         self._frame(raw)
 
+    def extra(self, key: str, value: Any) -> None:
+        """A whole-episode array stored beside the per-step ones (e.g. the simulator state)."""
+        self._extras[key] = np.asarray(value)
+
     def finish(self, raw: Mapping[str, Any], summary: Mapping[str, Any]) -> None:
         self._robot(raw, prefix="final_")
         self._frame(raw)
@@ -85,6 +93,7 @@ class EpisodeRecorder:
             key: (np.stack(values) if not key.startswith("final_") else values[-1])
             for key, values in self._arrays.items()
         }
+        arrays.update(self._extras)
         if "action" not in arrays:
             arrays["action"] = np.zeros((0, 7))
         np.savez_compressed(self.directory / "steps.npz", **arrays)
@@ -143,11 +152,21 @@ def run_episode(
     *,
     recorder: EpisodeRecorder | None = None,
     seed_fn: Callable[[int], None] | None = None,
+    grader: Any | None = None,
 ) -> dict[str, Any]:
-    """Run one episode; return its summary (and write it when a recorder is given)."""
+    """Run one episode; return its summary (and write it when a recorder is given).
+
+    ``grader`` (``cap_harness.vla.grading.LiberoGrader``) labels the episode from simulator
+    state for the record: which object was lifted and placed. It only observes; nothing it
+    reads goes to the policy.
+    """
     started = time.monotonic()
     adapter.reset(spec.task_ref, seed=spec.scene)
     raw = adapter.raw_observation
+    if grader is not None:
+        grader.start()
+        if recorder is not None:
+            recorder.extra("start_state", sim_state(adapter))
     policy.reset()
     if seed_fn is not None:
         seed_fn(spec.policy_seed)
@@ -164,6 +183,8 @@ def run_episode(
         if recorder is not None:
             recorder.record_step(raw, action)
         raw = adapter.step_native_action(action)
+        if grader is not None:
+            grader.step(raw, bool(action[6] > 0))
         actions.append(action)
         hand.append(np.asarray(raw["robot0_eef_pos"], dtype=np.float64).reshape(3))
         steps += 1
@@ -190,6 +211,10 @@ def run_episode(
             np.stack(actions) if actions else np.zeros((0, 7)), np.stack(hand), policy_s
         ),
     }
+    if grader is not None:
+        summary["labels"] = grader.finish(success)
+        if recorder is not None:
+            recorder.extra("end_state", sim_state(adapter))
     if recorder is not None:
         recorder.finish(raw, summary)
     return summary

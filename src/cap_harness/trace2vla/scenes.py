@@ -1,0 +1,76 @@
+"""Named scene sets: which scenes are for testing, which for training, which for development.
+
+A scene is (suite, task, init mode, seed). In ``saved`` mode seed k is the task's saved init
+state k-1: seeds 1-50 are the official test scenes of LIBERO and LIBERO-Pro. In ``seeded`` mode
+the seed drives LIBERO's own placement sampler; those layouts come from the same distribution
+as the saved ones (docs/trace2vla-review.md, section 2.3), and a seed reproduces its scene
+exactly.
+
+The seed ranges below are disjoint from ASPIRE's own partitions (development 51-65, unseen
+66-80, held-out 1-50 in seeded mode), so a teacher program is never trained or tested on a
+scene it was debugged on.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from cap_harness.vla.protocol import parse_int_list
+
+
+@dataclass(frozen=True)
+class SceneSet:
+    name: str
+    init_mode: str
+    seeds: tuple[int, ...]
+    role: str  # test | train | dev
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"init_mode": self.init_mode, "seeds": compact(self.seeds), "role": self.role}
+
+
+def compact(seeds: tuple[int, ...] | list[int]) -> str:
+    """[1, 2, 3, 7] -> "1-3,7"."""
+    parts: list[str] = []
+    values = sorted({int(s) for s in seeds})
+    start = previous = None
+    for value in [*values, None]:
+        if start is None:
+            start = previous = value
+        elif value is not None and value == previous + 1:
+            previous = value
+        else:
+            parts.append(str(start) if start == previous else f"{start}-{previous}")
+            start = previous = value
+    return ",".join(parts)
+
+
+DEFAULT_SCENE_SETS: dict[str, dict[str, str]] = {
+    # The official test scenes. Never used for training or for choosing a checkpoint.
+    "official": {"init_mode": "saved", "seeds": "1-50", "role": "test"},
+    # Layouts for teacher demonstrations (training data).
+    "train": {"init_mode": "seeded", "seeds": "1001-1050", "role": "train"},
+    # Layouts for choosing between checkpoints (the accept / roll-back gate).
+    "dev": {"init_mode": "seeded", "seeds": "2001-2010", "role": "dev"},
+}
+
+
+def scene_sets(settings: dict[str, Any]) -> dict[str, SceneSet]:
+    declared = {**DEFAULT_SCENE_SETS, **(settings.get("scene_sets") or {})}
+    return {
+        name: SceneSet(
+            name=name,
+            init_mode=str(spec["init_mode"]),
+            seeds=tuple(parse_int_list(str(spec["seeds"]))),
+            role=str(spec.get("role", "train")),
+        )
+        for name, spec in declared.items()
+    }
+
+
+def scene_set(settings: dict[str, Any], name: str) -> SceneSet:
+    sets = scene_sets(settings)
+    if name not in sets:
+        raise KeyError(f"unknown scene set {name!r}; known: {', '.join(sorted(sets))}")
+    return sets[name]

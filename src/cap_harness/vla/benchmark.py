@@ -20,7 +20,7 @@ physics are deterministic.  The run directory is resumable: finished episodes ar
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 import importlib.metadata
@@ -118,9 +118,12 @@ def summarize(episodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         lambda: defaultdict(lambda: [0, 0])
     )
     steps: dict[tuple[str, int], list[int]] = defaultdict(list)
+    families: dict[tuple[str, int], Counter[str]] = defaultdict(Counter)
     for episode in episodes:
         key = (str(episode["suite"]), int(episode["task_id"]))
         seed = int(episode["policy_seed_index"])
+        if not episode["success"] and episode.get("labels"):
+            families[key][str(episode["labels"].get("failure_family", "unknown"))] += 1
         counts[key][seed][0] += int(bool(episode["success"]))
         counts[key][seed][1] += 1
         if episode["success"]:
@@ -143,6 +146,7 @@ def summarize(episodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                 "mean_steps_when_successful": statistics.mean(steps[(suite, task_id)])
                 if steps[(suite, task_id)]
                 else None,
+                "failure_families": dict(families[(suite, task_id)]),
             }
         )
     per_seed_means = {}
@@ -165,7 +169,21 @@ def summarize(episodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "successes": successes,
         "episodes": trials,
         "ci95": list(wilson(successes, trials)),
+        "failure_families": dict(sum((Counter(f) for f in families.values()), Counter())),
     }
+
+
+FAMILY_LEGEND = (
+    "Failures (offline grading from simulator state): semantic = another object, placed "
+    "correctly; physical = the requested object, not placed; both = another object, not "
+    "placed; no_attempt = the gripper never closed on an object."
+)
+
+
+def family_text(families: Mapping[str, int]) -> str:
+    return ", ".join(
+        f"{name} {count}" for name, count in sorted(families.items(), key=lambda kv: -kv[1])
+    )
 
 
 def format_table(
@@ -176,21 +194,25 @@ def format_table(
     if planned is not None and summary["episodes"] < planned:
         lines += [f"_In progress: {summary['episodes']} of {planned} episodes._", ""]
     header = "| task | success | 95% interval | " + " | ".join(f"seed {s}" for s in seeds)
-    lines += [header + " | mean steps (successes) |", "|" + "---|" * (4 + len(seeds))]
+    lines += [header + " | mean steps (successes) | failures |", "|" + "---|" * (5 + len(seeds))]
     for task in summary["tasks"]:
         per_seed = " | ".join(f"{100 * task['per_seed'].get(s, 0):.0f}%" for s in seeds)
         steps = task["mean_steps_when_successful"]
         lines.append(
             f"| {task['suite']}:{task['task_id']} | {task['successes']}/{task['episodes']} "
             f"({100 * task['success_rate']:.1f}%) | {100 * task['ci95'][0]:.0f}-{100 * task['ci95'][1]:.0f}% | "
-            f"{per_seed} | {'-' if steps is None else f'{steps:.0f}'} |"
+            f"{per_seed} | {'-' if steps is None else f'{steps:.0f}'} | "
+            f"{family_text(task.get('failure_families') or {})} |"
         )
     per_seed = " | ".join(f"{100 * summary['per_seed_mean'][s]:.1f}%" for s in seeds)
     lines.append(
         f"| **mean** | {summary['successes']}/{summary['episodes']} "
         f"(**{100 * summary['mean']:.1f}%** ± {100 * summary['std_across_seeds']:.1f} across seeds) | "
-        f"{100 * summary['ci95'][0]:.0f}-{100 * summary['ci95'][1]:.0f}% | {per_seed} | |"
+        f"{100 * summary['ci95'][0]:.0f}-{100 * summary['ci95'][1]:.0f}% | {per_seed} | | "
+        f"{family_text(summary.get('failure_families') or {})} |"
     )
+    if summary.get("failure_families"):
+        lines += ["", FAMILY_LEGEND]
     notes = list(notes)
     if notes:
         lines += ["", "Published numbers to compare: " + "; ".join(notes) + "."]
@@ -283,6 +305,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--out", type=Path, default=None, help="run directory (default outputs/vla/<time>-<suite>)"
     )
     parser.add_argument(
+        "--no-grading",
+        action="store_true",
+        help="skip the offline failure labels (which object was lifted and placed)",
+    )
+    parser.add_argument(
         "--report", action="store_true", help="only rebuild results from an existing --out"
     )
     return parser.parse_args(argv)
@@ -312,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     root.mkdir(parents=True, exist_ok=True)
 
     from cap_harness.libero.adapter import LiberoAdapter
+    from cap_harness.vla.grading import LiberoGrader
     from cap_harness.vla.policy import LeRobotLiberoPolicy, seed_everything
     from cap_harness.vla.rollout import EpisodeRecorder, EpisodeSpec, run_episode
 
@@ -382,6 +410,9 @@ def main(argv: list[str] | None = None) -> int:
         init_mode=args.init_mode,
         post_settle_steps=SETTLE_STEPS,
     )
+    # Offline labels from simulator state (which object was lifted and placed): grading
+    # only, the policy never sees it.
+    grader = None if args.no_grading else LiberoGrader(adapter)
     plan = [
         (task_id, seed_index, scene)
         for task_id in tasks
@@ -431,7 +462,9 @@ def main(argv: list[str] | None = None) -> int:
             monitor.start({"task_id": task_id, "policy_seed_index": seed_index, "scene": scene})
             directory = episode_dir(root, args.suite, task_id, seed_index, scene)
             recorder = EpisodeRecorder(directory, video=args.video)
-            summary = run_episode(adapter, policy, spec, recorder=recorder, seed_fn=seed_everything)
+            summary = run_episode(
+                adapter, policy, spec, recorder=recorder, seed_fn=seed_everything, grader=grader
+            )
             monitor.add(summary)
     except KeyboardInterrupt:
         status = "interrupted"

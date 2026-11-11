@@ -1,0 +1,162 @@
+"""The experiment folder and its ledger."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from datetime import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import socket
+from typing import Any
+
+from cap_harness.vla.libero_compat import REPOSITORY_ROOT
+
+OUTPUTS = REPOSITORY_ROOT / "outputs" / "trace2vla"
+SCHEMA_VERSION = 1
+
+
+def now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def write_json(path: Path, value: Any) -> None:
+    atomic_write(path, json.dumps(value, indent=2, sort_keys=True, default=str) + "\n")
+
+
+def read_json(path: Path, default: Any = None) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class Experiment:
+    """One experiment folder. Every stage reads and writes through this object."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self.settings: dict[str, Any] = read_json(self.root / "experiment.json", {}) or {}
+
+    # ------------------------------------------------------------------ open / create --
+    @staticmethod
+    def resolve(name: str | Path) -> Path:
+        path = Path(name)
+        if path.is_absolute() or path.exists():
+            return path.resolve()
+        return OUTPUTS / str(name)
+
+    @classmethod
+    def open(cls, name: str | Path) -> Experiment:
+        root = cls.resolve(name)
+        if not (root / "experiment.json").is_file():
+            raise FileNotFoundError(
+                f"no experiment at {root} (create one: t2v.sh init NAME --suite SUITE --tasks 0,1)"
+            )
+        return cls(root)
+
+    @classmethod
+    def create(cls, name: str | Path, settings: Mapping[str, Any]) -> Experiment:
+        root = cls.resolve(name)
+        if (root / "experiment.json").is_file():
+            raise FileExistsError(f"experiment {root} already exists")
+        root.mkdir(parents=True, exist_ok=True)
+        write_json(
+            root / "experiment.json",
+            {"schema_version": SCHEMA_VERSION, "name": root.name, "created": now_iso(), **settings},
+        )
+        experiment = cls(root)
+        experiment.log("experiment_created", settings=dict(settings))
+        return experiment
+
+    def save_settings(self) -> None:
+        write_json(self.root / "experiment.json", self.settings)
+
+    # ------------------------------------------------------------------------- ledger --
+    def log(self, event: str, **fields: Any) -> dict[str, Any]:
+        """Append one event to the ledger: what ran, on what, and what it produced."""
+        record = {
+            "time": now_iso(),
+            "event": event,
+            "host": socket.gethostname(),
+            "pid": os.getpid(),
+            **fields,
+        }
+        with (self.root / "ledger.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+        return record
+
+    def events(self, kinds: Iterable[str] | None = None) -> list[dict[str, Any]]:
+        wanted = set(kinds) if kinds else None
+        records = []
+        path = self.root / "ledger.jsonl"
+        if not path.is_file():
+            return records
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if wanted is None or record.get("event") in wanted:
+                records.append(record)
+        return records
+
+    # -------------------------------------------------------------------------- paths --
+    @property
+    def suite(self) -> str:
+        return str(self.settings["suite"])
+
+    @property
+    def benchmark(self) -> str:
+        return str(self.settings.get("benchmark", "libero-pro"))
+
+    @property
+    def tasks(self) -> list[int]:
+        return [int(t) for t in self.settings.get("tasks", [])]
+
+    def rel(self, path: Path) -> str:
+        try:
+            return path.resolve().relative_to(self.root.resolve()).as_posix()
+        except ValueError:
+            return str(path)
+
+    def program(self, task_id: int) -> Path:
+        return self.root / "teacher" / "programs" / f"task_{task_id:02d}.py"
+
+    def teacher_dir(self, scene_set: str, task_id: int) -> Path:
+        return self.root / "teacher" / scene_set / f"task_{task_id:02d}"
+
+    def grade_dir(self, scene_set: str, task_id: int) -> Path:
+        return self.root / "grades" / scene_set / f"task_{task_id:02d}"
+
+    def demo_dir(self, name: str) -> Path:
+        return self.root / "demos" / name
+
+    def dataset_dir(self, name: str) -> Path:
+        return self.root / "datasets" / name
+
+    def training_dir(self, name: str) -> Path:
+        return self.root / "training" / name
+
+    def eval_dir(self, name: str) -> Path:
+        return self.root / "evals" / name
