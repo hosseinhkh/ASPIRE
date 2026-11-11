@@ -14,6 +14,26 @@ simulator, before any ASPIRE data is used to train it.
 Everything runs on GPU 1 by default (`ASPIRE_VLA_GPU`, or `scripts/gpu/vla.sh --gpu N ...`),
 so ASPIRE keeps GPU 0. Results go to `outputs/vla/`.
 
+## Results so far
+
+Measured on cali (RTX PRO 6000), `lerobot/smolvla_libero`, 10 actions per prediction, the
+official saved scenes, 256×256 rendering:
+
+| Suite | Episodes | Success | 95% interval | Published |
+|---|---|---|---|---|
+| `libero_object` (standard, sanity) | 10 tasks × 50 scenes × 1 seed = 500 | **92.4%** | 90–94% | SmolVLA paper 96% |
+| `libero_object_swap` (LIBERO-Pro, positions swapped; **step 1 baseline**) | 10 tasks × 50 scenes × 3 seeds = 1,500 | **0.0%** | 0–0.3% | π0.5 17%; OpenVLA and π0 0% (LIBERO-PRO paper) |
+
+* **Standard LIBERO-Object:** the checkpoint is within about 4 points of the paper. The paper's
+  model was trained longer: 100k steps against 25k for this checkpoint. Per task: 80–100%.
+* **Swapped positions:** no success in any task, seed or scene. That matches what LIBERO-PRO
+  reports for OpenVLA and π0, and the paper's finding that models above 90% on LIBERO drop to
+  0 when objects move. In a CPU spot check, asked for the alphabet soup, the policy put the
+  butter in the basket. The parity check shows the swap scenes run identically in LeRobot's
+  own env.
+* This 0% is the "before" number for the student. Training on ASPIRE's demonstrations is
+  measured on these same 1,500 episodes.
+
 ## How the student and the teacher share one simulator
 
 * **One repository, one environment.** LeRobot is the `third_party/lerobot` submodule (branch
