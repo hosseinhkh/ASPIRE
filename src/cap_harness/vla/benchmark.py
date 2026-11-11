@@ -40,6 +40,7 @@ from cap_harness.vla.monitor import RunMonitor, atomic_write, read_progress
 from cap_harness.vla.protocol import (
     CONTROLLER,
     IMAGE_SIZE,
+    N_ACTION_STEPS,
     SETTLE_STEPS,
     max_steps_for,
     parse_int_list,
@@ -255,8 +256,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--n-action-steps",
         type=int,
-        default=None,
-        help="actions executed per chunk (default: checkpoint's)",
+        default=N_ACTION_STEPS,
+        help=f"actions executed per predicted chunk (default {N_ACTION_STEPS}, see protocol.py; "
+        "0 = the checkpoint's own value)",
     )
     parser.add_argument(
         "--max-steps",
@@ -288,6 +290,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.n_action_steps is not None and args.n_action_steps <= 0:
+        args.n_action_steps = None  # the checkpoint's own value
     ensure_runtime_env()
     from cap_harness.vla.policy import DEFAULT_POLICY, DEFAULT_REVISION
 

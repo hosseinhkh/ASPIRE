@@ -92,7 +92,8 @@ task and scene:
 | Reset | saved state, then 10 still steps with the gripper open (not counted), as lerobot-eval |
 | Episode limit | LeRobot's per-suite limit; LIBERO-Pro suites inherit their base suite's (object 280, goal 300, spatial 280, libero_10 520) |
 | Success | the task's own predicate after every step; the episode ends at the first success |
-| Checkpoint | `lerobot/smolvla_libero` at revision `a24f1f38…` (the one LeRobot's docs pin); 50-action chunks as stored in the checkpoint (`--n-action-steps` to change) |
+| Checkpoint | `lerobot/smolvla_libero` at revision `a24f1f38…` (the one LeRobot's docs pin) |
+| Actions per prediction | **10** of each predicted 50-action chunk, then the policy looks again (`--n-action-steps`; 0 = the checkpoint's 50). Chosen by measurement, below |
 | Rendering | 256×256 (`--image-size`; lerobot-eval's default is 360×360) |
 
 Reported per task: successes / episodes, a 95% Wilson interval and the success rate per seed.
@@ -104,6 +105,23 @@ deviation of the per-seed suite means. With 150 episodes per task the 95% interv
 will come from seeded layouts (`--init-mode seeded`), checked for near-duplicates of the test
 scenes. ASPIRE's own development seeds stay in seeded mode, because in saved mode seeds 51–65
 would be the same scenes as 1–15.
+
+### Actions per prediction: measured, not assumed
+
+SmolVLA predicts 50 actions at a time. How many of them run before it looks again changed the
+LIBERO-Object result more than anything else (`lerobot/smolvla_libero`, 10 tasks × 10 scenes,
+1 seed, same scenes for all three):
+
+| Actions run per prediction | Success | 95% interval | Time per episode |
+|---|---|---|---|
+| 50 (the value stored in the checkpoint) | 78% | 69–85% | ~5 s |
+| **10 (protocol default)** | **93%** | **86–97%** | ~7 s |
+| 1 (as the paper describes for simulation) | 83% | 74–89% | ~27 s |
+
+The SmolVLA paper reports 96%, inside the interval for 10. Fifty actions (2.5 s) run blind and
+cannot correct a grasp. Re-planning every step draws fresh flow-matching noise each time, and the
+hand switches between plans. Community reruns also pointed at this setting (lerobot#2354). Every
+SmolVLA run here uses 10, so the baseline and the trained student share one protocol.
 
 ## What every episode records
 
@@ -191,15 +209,15 @@ scripts/gpu/vla.sh status
 ```
 
 ```bash
-scripts/gpu/vla.sh status baseline-smolvla-libero_object_swap
+scripts/gpu/vla.sh status baseline-smolvla-libero_object_swap-n10
 ```
 
 ```bash
-scripts/gpu/vla.sh stop baseline-smolvla-libero_object_swap
+scripts/gpu/vla.sh stop baseline-smolvla-libero_object_swap-n10
 ```
 
 ```bash
-scripts/gpu/vla.sh report baseline-smolvla-libero_object_swap
+scripts/gpu/vla.sh report baseline-smolvla-libero_object_swap-n10
 ```
 
 * `setup` installs the `vla` extra into `.venv-libero`, downloads the checkpoint and runs
@@ -208,18 +226,17 @@ scripts/gpu/vla.sh report baseline-smolvla-libero_object_swap
 * `parity --policy` runs the environment check on `libero_object` and `libero_object_swap`,
   and the SmolVLA episode comparison on CPU. On CPU both paths are bit-exact. GPU kernels are
   not run-to-run deterministic, and the comparison checks the pipeline, not GPU numerics.
-* `sanity` runs 10 LIBERO-Object tasks × 50 scenes × 1 seed (`--quick`: 10 scenes). Expect
-  close to the paper's 96%. Community reruns have reported 91%, and differences in
-  `n_action_steps` were suspected (lerobot#2354).
+* `sanity` runs 10 LIBERO-Object tasks × 50 scenes × 1 seed (`--quick`: 10 scenes) into
+  `sanity-libero_object-n10`. Expect close to the paper's 96%.
 * `baseline` runs 10 `libero_object_swap` tasks × 50 scenes × 3 seeds = 1,500 episodes
-  (`--quick`: 10 scenes, 1 seed).
+  (`--quick`: 10 scenes, 1 seed) into `baseline-smolvla-libero_object_swap-n10`.
 * `--quick` and the full run share a run folder, so the full run resumes from the quick one and
   only runs the missing episodes.
 
 Other suites and options go through `benchmark`:
 
 ```bash
-scripts/gpu/vla.sh benchmark --suite libero_goal_swap --scenes 1-50 --seeds 0,1,2 --out outputs/vla/baseline-smolvla-libero_goal_swap
+scripts/gpu/vla.sh benchmark --suite libero_goal_swap --scenes 1-50 --seeds 0,1,2 --out baseline-smolvla-libero_goal_swap-n10
 ```
 
 LeRobot's own evaluator, on the same LIBERO-Pro install:

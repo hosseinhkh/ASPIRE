@@ -124,7 +124,8 @@ PY
     set -- "${ARGS[@]+"${ARGS[@]}"}"
     scenes="1-50"
     [[ "${1:-}" == "--quick" ]] && { scenes="1-10"; shift; }
-    launch "$VLA_OUT/sanity-libero_object" --suite libero_object --scenes "$scenes" --seeds 0 "$@"
+    # -n10: 10 actions per predicted chunk, the protocol default (cap_harness.vla.protocol).
+    launch "$VLA_OUT/sanity-libero_object-n10" --suite libero_object --scenes "$scenes" --seeds 0 "$@"
     ;;
   baseline)
     need_vla
@@ -132,7 +133,7 @@ PY
     set -- "${ARGS[@]+"${ARGS[@]}"}"
     scenes="1-50" seeds="0,1,2"
     [[ "${1:-}" == "--quick" ]] && { scenes="1-10"; seeds="0"; shift; }
-    launch "$VLA_OUT/baseline-smolvla-libero_object_swap" --suite libero_object_swap \
+    launch "$VLA_OUT/baseline-smolvla-libero_object_swap-n10" --suite libero_object_swap \
       --scenes "$scenes" --seeds "$seeds" "$@"
     ;;
   benchmark)
@@ -148,7 +149,11 @@ PY
       ((DETACH)) && { echo "error: --detach needs --out RUN" >&2; exit 2; }
       run_py -m cap_harness.vla.benchmark "${rest[@]+"${rest[@]}"}"
     else
-      [[ "$out" == /* ]] || out="$VLA_OUT/$out"
+      case "$out" in
+        /*) ;;
+        outputs/*) out="$REPO_ROOT/$out" ;;
+        *) out="$VLA_OUT/$out" ;;
+      esac
       launch "$out" "${rest[@]+"${rest[@]}"}"
     fi
     ;;

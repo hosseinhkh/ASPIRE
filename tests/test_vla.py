@@ -445,3 +445,12 @@ def test_parity_summary_is_readable_without_parsing_stdout() -> None:
     assert "policy: PASS (LeRobot 138 steps success; ASPIRE adapter 138 steps success" in text
     report["environment"].update(passed=False, first_mismatch_step=7, worst={"mujoco_state": 1e-3})
     assert "environment: FAIL" in summary(report) and "first mismatch at step 7" in summary(report)
+
+
+def test_ten_actions_per_prediction_is_the_protocol_default() -> None:
+    from cap_harness.vla.benchmark import PROTOCOL_KEYS, parse_args
+
+    assert protocol.N_ACTION_STEPS == 10
+    assert parse_args(["--suite", "libero_object"]).n_action_steps == 10
+    assert parse_args(["--suite", "libero_object", "--n-action-steps", "0"]).n_action_steps == 0
+    assert "n_action_steps" in PROTOCOL_KEYS  # a run folder never mixes settings

@@ -27,6 +27,12 @@ SUITE_MAX_STEPS: dict[str, int] = {
 DEFAULT_MAX_STEPS = 500
 SETTLE_STEPS = 10
 IMAGE_SIZE = 256
+#: Actions executed from each predicted chunk before the policy looks again.  Measured with
+#: lerobot/smolvla_libero on LIBERO-Object (10 tasks x 10 scenes, one seed, on cali):
+#: 50 (the checkpoint's stored value) 78%, 10 93% (95% interval 86-97%), 1 83%; the SmolVLA
+#: paper reports 96%.  Fifty steps (2.5 s) run blind cannot correct a grasp; re-planning every
+#: step draws fresh flow-matching noise each step and the hand switches between plans.
+N_ACTION_STEPS = 10
 CONTROLLER = "OSC_POSE"
 
 #: SmolVLA (0.45B) success on standard LIBERO, % (SmolVLA paper, arXiv 2506.01844, Table 2).
@@ -61,6 +67,7 @@ __all__ = [
     "CONTROLLER",
     "DEFAULT_MAX_STEPS",
     "IMAGE_SIZE",
+    "N_ACTION_STEPS",
     "OSC_SETTLE_ACTION",
     "PI05_LIBERO_PRO",
     "SETTLE_STEPS",
