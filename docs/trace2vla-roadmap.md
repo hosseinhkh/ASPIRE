@@ -59,6 +59,27 @@ the cause had to be inferred); a faster video preset for development runs; keep 
 in which the program retried and recovered, and mark them (Scaling Up & Distilling Down found
 they add about 35 points).
 
+## 3b. π0.5 as a second student: readiness check (12 November)
+
+Checked before writing any code. Nothing here changes the SmolVLA setup.
+
+| Question | Answer |
+|---|---|
+| Checkpoint | `lerobot/pi05_libero_finetuned_v044`: LeRobot's own, made for LeRobot v0.4.4 (our version), fine-tuned on LIBERO (`HuggingFaceVLA/libero`, 6,000 steps, batch 32, lr 2.5e-5). 7.5 GB, bfloat16, not gated. LeRobot reports 99% on standard LIBERO-Object with it. A quantile-normalised variant also exists |
+| Same data format as our demos? | **Yes.** Cameras `observation.images.image` / `image2` (LIBERO's own names, no renaming), 8-number state, 7-number action. The 98 converted demos can be reused; only the normalisation statistics differ (the checkpoint's mean and standard deviation instead of SmolVLA's) |
+| Actions per prediction | 10, as LeRobot and openpi use for it; the same as our protocol |
+| Can it share `.venv-libero`? | **No.** LeRobot v0.4.4's π0.5 needs `transformers` from the branch `fix/lerobot_openpi` (version 4.53.3, `tokenizers` < 0.22). SmolVLA's environment has `transformers` 4.57.6 and `tokenizers` 0.22.2, and LeRobot's SmolVLA extra requires `transformers` ≥ 4.57.1. Installing π0.5 there would downgrade both |
+| A separate environment | **Works.** A dry run and a CPU install in a throwaway environment: LeRobot 0.4.4 with the `pi` extra, the transformers branch, torch 2.9.1, numpy 1.26.4, mujoco 3.3.0, robosuite 1.4.0 and peft 0.21.2 resolve together when the repository's own overrides are used with the transformers line replaced. LeRobot's check for that branch passes, the π0.5 and SmolVLA modules import, the checkpoint's config loads, and LeRobot has default LoRA targets for π0.5. Pin `pandas` to the SmolVLA environment's 3.0.3: the newest pandas fails to import with numpy 1.26.4 |
+| Must not touch | `pyproject.toml` and `uv.lock`: relocking could move SmolVLA's environment. The π0.5 environment is installed by its own script with its own pins |
+| Gated download | The PaliGemma tokenizer (`google/paligemma-3b-pt-224`) is gated: the Hugging Face account whose token is on the server must accept its licence. The weights are under the Gemma licence |
+| GPU | Same torch build (2.9.1, CUDA 12.8) as SmolVLA, which already runs on the RTX PRO 6000 (Blackwell). The transformers branch is pure Python. The checkpoint asks for `torch.compile`; turn it off for evaluation if it is slow to start or fails |
+| Memory (estimates, to be measured) | Evaluation about 10 GB. LoRA training with gradient checkpointing roughly 20–35 GB. Full fine-tuning roughly 50–70 GB: an otherwise empty 96 GB card |
+| Code changes | Additive: a setup command for `.venv-pi05`; the dataset writer and trainer take the student checkpoint as a parameter (statistics source, camera renaming only when the checkpoint needs it, learning rate); reference numbers for π0.5 in the reports. SmolVLA stays the default and its tests are unchanged |
+
+Order: after the SmolVLA preflight. First π0.5 before training on the same 100 official-scene
+episodes and the standard layout (it should land near the LIBERO-PRO paper's 17% on the swap
+suite and near 99% on the standard one), then LoRA fine-tuning on the same demos.
+
 ## 4. Experiments for the paper
 
 The proposal's matrix, extended with what the survey and the measurements added.
