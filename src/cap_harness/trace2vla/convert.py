@@ -126,7 +126,11 @@ def convert_episode(
             if check.success:
                 chosen, dwell = indices, option
                 break
-    final = replay.open_loop(recorder, episode.scene, tracked.actions[chosen], record=True)
+    # Replay exactly what steps.npz stores (float32): the recorded states then match any later
+    # replay of the stored actions bit for bit. Replaying the float64 actions instead gave states
+    # that a replay of their float32 copy misses by up to 5e-5 after contact.
+    stored = tracked.actions[chosen].astype(np.float32)
+    final = replay.open_loop(recorder, episode.scene, stored, record=True)
     summary.update(
         idle_frames=int(idle_frames(tracked.actions, settings.noop_threshold).sum()),
         idle_tried=tried,

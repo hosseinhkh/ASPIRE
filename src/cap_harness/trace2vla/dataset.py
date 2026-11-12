@@ -86,6 +86,26 @@ def checkpoint_stats(checkpoint: Path) -> dict[str, dict[str, list[float]]]:
     return stats
 
 
+#: Largest difference between the states of the dataset's replay and the demo's stored states,
+#: in metres and radians. The frames written always come from the dataset's own replay of the
+#: stored actions, so they match those actions exactly; this only checks that the replay is the
+#: same demo. Float32 rounding of the actions moves a replay by up to about 1e-4 after contact
+#: (5e-5 measured on demos converted before the converter replayed the float32 actions); a wrong
+#: scene, controller or code version moves it by centimetres or fails the task.
+STATE_DRIFT_LIMIT = 1e-3
+
+
+def replay_problem(success: bool, frames: int, expected: int, drift: float) -> str | None:
+    """Why the dataset's replay of a demo cannot be used, or None when it can."""
+    if not success:
+        return "the replay did not solve the task"
+    if frames != expected:
+        return f"the replay solved the task after {frames} of {expected} steps"
+    if not drift <= STATE_DRIFT_LIMIT:  # also catches NaN
+        return f"state drift {drift:.2e} > {STATE_DRIFT_LIMIT:g}"
+    return None
+
+
 def freeze_stats(dataset_root: Path, checkpoint: Path) -> dict[str, Any]:
     """Write the checkpoint's state and action statistics into the dataset.
 
@@ -185,19 +205,19 @@ def build_dataset(
                 if states
                 else float("inf")
             )
-            if not rollout.success or count != len(stored["action"]) or drift > 1e-5:
+            problem = replay_problem(rollout.success, count, len(stored["action"]), drift)
+            if problem:
                 dataset.clear_episode_buffer()
                 rejected.append(
                     {
                         "demo": str(demo),
+                        "reason": problem,
                         "success": rollout.success,
                         "frames": count,
                         "state_drift": drift,
                     }
                 )
-                log(
-                    f"  rejected {demo.parent.name}/{demo.name}: success {rollout.success}, state drift {drift:.2e}"
-                )
+                log(f"  rejected {demo.parent.name}/{demo.name}: {problem}")
                 continue
             dataset.save_episode()
             episodes.append(

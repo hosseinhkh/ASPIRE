@@ -23,6 +23,7 @@ Last updated: 12 November 2026 (evening).
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
 | P5 | Fine-tuning on the GPU has never been run | Next step of the preflight |
+| P6 | The dataset step rejected successful demos for a state drift of 1–5×10⁻⁵ | **Fixed 12 November** (cause: float32 rounding of the stored actions). A dataset built before the fix is valid, only smaller |
 
 ## Teacher (the ASPIRE agent and its programs)
 
@@ -311,6 +312,30 @@ The ASPIRE paper reports about 98% for the suite, on its own seeded layouts.
   them made the stored sequence fail on replay, so all were kept ("kept all idle frames").
 * Tracking lag, the distance between the re-executed hand and the teacher's recorded hand path:
   about 11 mm throughout.
+
+### P6. Successful demos rejected for a tiny state drift (12 November, fixed)
+
+**Seen.** Building `d50` on `preflight2`, the dataset step rejected demos of task 1 with
+`rejected task_01/seed_1002: success True, state drift 3.40e-05` (5 of the first 17; task 0:
+none). The replay solved the task; the states differed from the stored ones by hundredths of
+a millimetre. The rule was: reject when the drift is above 1e-5.
+
+**Cause.** The converter's final replay played the actions in float64 and recorded the states
+of that replay, but `steps.npz` stores the actions as float32. The dataset step replays the
+stored float32 actions. The simulator itself is deterministic (measured on two demos: the same float32
+actions replayed twice in fresh environments differ by 0.0), so the rounding, about 1e-8, is the only
+difference between the two replays; contact amplifies it to 1e-5–5e-5 in task 1's demos.
+
+**Effect on data.** None on correctness: the dataset's frames always come from its own replay
+of the stored actions, so the frames and actions written match exactly, and a rejected demo is
+just left out. A dataset built before the fix is valid, only smaller.
+
+**Fix.** The converter now replays exactly the float32 actions it stores, so its recorded
+states match any later replay bit for bit. The dataset step accepts a successful replay of the
+full length whose states are within 1e-3 (1 mm, 1 mrad) of the stored ones, far above
+rounding and far below what a wrong scene, controller or code version gives, and records the
+reason for each rejection. Demos converted before the fix pass too; nothing has to be converted
+again. Tests: `tests/test_trace2vla_replay_precision.py`.
 
 ### P4. Facts that shaped the design
 
