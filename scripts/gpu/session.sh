@@ -349,6 +349,8 @@ if result.exists():
     r = json.loads(result.read_text())
     kind = r.get("subtype") or ("error" if r.get("is_error") else "finished")
     parts.append(f"{kind}, {r.get('num_turns')} turns, ${r.get('total_cost_usd') or 0:.2f}")
+    if r.get("is_error"):
+        parts.append("last message failed: " + " ".join(str(r.get("result") or "").split())[:160])
 for batch in sorted(ws.glob("dev_v*/batch.json")):
     b = json.loads(batch.read_text())
     parts.append(f"{batch.parent.name} {b.get('passes')}/{b.get('seeds')}")
@@ -363,7 +365,13 @@ if diff.exists():
 print("; ".join(parts) or "no result written")
 PY
 )"
-  if ((status)); then stage_end FAIL "exit $status; $detail"
+  # The agent's work is complete when it evaluated held-out seeds and wrote its report. An
+  # exit code after that (for example the provider refusing the closing message over a daily
+  # token quota) is worth a warning, not a failed stage.
+  if ((status)) && [[ -f "$ws/REPORT.md" && "$detail" == *"held-out task_success"* \
+    && "$detail" != *"held-out task_success 0/"* ]]; then
+    stage_end WARN "work complete, but claude exited $status; $detail"
+  elif ((status)); then stage_end FAIL "exit $status; $detail"
   elif [[ "$detail" == *"held-out task_success 0/"* || "$detail" != *held-out* ]]; then stage_end WARN "$detail"
   else stage_end PASS "$detail"
   fi

@@ -150,6 +150,40 @@ so the object it returned is a guess`, and the 11-11 one `two objects match almo
 (0.82 and 0.78)`. The skill library is unchanged, so campaigns that compare libraries are not
 affected. `demo.sh campaign` already runs the exploration step.
 
+## 6. What the first session with the exploration step showed
+
+Session `20261112-033519` (commit 7facf3d), tasks 0 and 1 of `libero_object_swap`: both agents
+ended with 3/3 on the development seeds and 3/3 held-out, in three versions each. The failed
+versions were read run by run; none is a simulator or harness fault.
+
+| Run | What happened | Kind |
+|---|---|---|
+| task 0 v01 | probed prompts, then took the tomato sauce can (0.83, a confident mask on the wrong can); found by step 4b ("the can is in the basket and the task still fails") | agent's reading of the image |
+| task 0 v01 seed 51, 53 | cuRobo plans took over 120 s and timed out | machine load, below |
+| task 0 v02 | right can; the lowering move stalled on the basket's near wall and the program raised | program (basket centre from the median of the points) |
+| task 1 v01 | Contact-GraspNet found no grasp on a 2 cm box; the fallback grasp was 1 cm too high | program |
+| task 1 v02 | box released on the basket's near rim | program (same median) |
+
+Four things on our side were wrong and are fixed:
+
+* **Batches cut off at 10 minutes.** The prompt told the agent to give the batch a 600000 ms
+  timeout, and Claude Code's Bash tool enforces it. During task 0 another user's job held GPU 0
+  at 91-95 % (it ended at 04:27; the GPU timeline shows it) and one seed took up to 508 s
+  (cuRobo 240 s, video encoding 36-173 s against under 1 s on an idle machine), so v01 lost seed
+  53 and v02 lost seeds 52 and 53. The prompt now asks for a one-hour background timeout and
+  `demo.sh` raises `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS`.
+* **A finished agent reported as FAIL.** Task 1's agent had evaluated held-out and written its
+  report when Bedrock refused its closing message (HTTP 429, "Too many tokens per day").
+  `session.sh` now reports such a stage as WARN with that message.
+* **"4 turns".** A headless run that waits on a background batch ends and resumes; the summary
+  showed only the last part's turns. `stream_view.py` adds the parts up (98 turns). Cost was
+  already cumulative and correct.
+* **The basket centre**, for the third session in a row: `skills/grasp.md` takes a target's
+  centre from the median of its points, which for a container seen from one camera sits about
+  5 cm toward the camera (section 2). The prompt now says to use
+  `localize_object(...).geometry.pose.position` for a container, and `run-batch` warns when a
+  move stalls short of its target ("something is in the way").
+
 ## Comparing with the paper
 
 The fixes are on by default. `CAP_HARNESS_COMPAT=published` restores the published release's

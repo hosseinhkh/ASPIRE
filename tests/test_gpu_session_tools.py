@@ -668,3 +668,32 @@ def test_campaign_results_reports_held_out_success_per_task(tmp_path: Path) -> N
     assert "30.0% (2 tasks)" in out  # mean over tasks
     assert "cost $12.50" in out and "2 part(s)" in out
     assert "55.6%" in out  # the paper's empty-library Opus 4.6 mean for this suite
+
+
+def test_stream_view_adds_up_the_parts_of_a_resumed_agent_run(tmp_path: Path) -> None:
+    """A headless run that waits on a background batch ends and resumes: one result per part."""
+    events = [
+        {"type": "result", "subtype": "success", "num_turns": 56, "total_cost_usd": 2.65,
+         "duration_ms": 60000},
+        {"type": "result", "subtype": "success", "num_turns": 4, "total_cost_usd": 7.1,
+         "duration_ms": 30000},
+    ]  # fmt: skip
+    summary = tmp_path / "result.json"
+    done = subprocess.run(
+        [sys.executable, str(GPU_SCRIPTS / "stream_view.py"), "--raw", str(tmp_path / "raw.jsonl"),
+         "--summary", str(summary)],
+        input="".join(json.dumps(event) + "\n" for event in events),
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0 and "turns 60" in done.stdout and "$7.10" in done.stdout
+    result = json.loads(summary.read_text())
+    assert (result["num_turns"], result["duration_ms"], result["result_events"]) == (60, 90000, 2)
+    assert result["total_cost_usd"] == 7.1  # cumulative already: not added up
+
+    failed = {"type": "result", "subtype": "success", "is_error": True, "num_turns": 93,
+              "total_cost_usd": 4.0, "result": "API Error: Request rejected (429)"}  # fmt: skip
+    done = subprocess.run(
+        [sys.executable, str(GPU_SCRIPTS / "stream_view.py"), "--raw", str(tmp_path / "raw2.jsonl")],
+        input=json.dumps(failed) + "\n", capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert done.returncode == 1 and "last message failed: API Error" in done.stdout

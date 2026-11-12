@@ -216,6 +216,11 @@ set_claude_flags() {  # set_claude_flags MINUTES_NEEDED; sets CLAUDE_FLAGS for b
   # The skill library is the only memory an experiment should have: no Claude Code auto
   # memory, no CLAUDE.md notes carried over from other sessions.
   export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_DISABLE_CLAUDE_MDS=1
+  # A batch of seeds can run for tens of minutes on a busy machine. Claude Code's Bash tool
+  # stops a command at 10 minutes unless these allow more, and a batch that is stopped loses
+  # its unfinished seeds.
+  export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-1800000}"
+  export BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
   # Sub-agents ask for "opus": give them the same model and window.
   export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
   # bypassPermissions: the demo runs unattended and launches simulator processes itself.

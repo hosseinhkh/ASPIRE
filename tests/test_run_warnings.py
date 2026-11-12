@@ -79,3 +79,19 @@ def test_the_batch_summary_groups_warnings_by_seed() -> None:
     summary = summarize(results)
     assert summary["warnings"] == [{"text": guessed, "seeds": [51, 52]}]
     assert summary["results"][2]["warnings"] == ()
+
+
+def test_a_move_blocked_by_contact_is_reported(tmp_path) -> None:
+    """A held can touching the basket wall: the arm stalls short of the release pose."""
+    blocked = {
+        "ok": False,
+        "error": {
+            "code": "timeout",
+            "message": "final trajectory waypoint did not converge",
+            "details": {"stalled": True, "joint_error_rad": 0.0188},
+        },
+    }
+    _call(tmp_path, 37, "move-to-pose", blocked)
+    (note,) = run_warnings(tmp_path)
+    assert "stopped short of its target" in note and "0.019 rad" in note
+    assert "something is in the way" in note

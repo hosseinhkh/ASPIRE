@@ -86,6 +86,16 @@ def run_warnings(run_dir: Path | str) -> list[str]:
         if isinstance(error, dict) and error.get("code") == "provider_unavailable":
             services_down[tool] = services_down.get(tool, 0) + 1
             continue
+        details = error.get("details") if isinstance(error, dict) else None
+        if tool == "move-to-pose" and isinstance(details, dict) and details.get("stalled"):
+            short = details.get("joint_error_rad")
+            add(
+                "move_to_pose stopped short of its target with the arm no longer moving"
+                + (f" ({short:.3f} rad away)" if isinstance(short, (int, float)) else "")
+                + ": something is in the way, usually the gripper or the held object touching "
+                "the scene. Check the target position against the keyframe after the move."
+            )
+            continue
         diagnostics = output.get("diagnostics")
         if not isinstance(diagnostics, dict):
             continue

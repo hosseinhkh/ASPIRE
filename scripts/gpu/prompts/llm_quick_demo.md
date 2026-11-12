@@ -53,14 +53,22 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    Keep run-batch's defaults for the cameras (800x512) and the episode length: they are the
    ones the published results use.
 
-   Each seed takes 1-5 minutes. Run the batch with the Bash tool in the background (or with a
-   600000 ms timeout) and wait for it. Never run two batches at once: the GPU is shared.
+   A seed normally takes under a minute, but on a busy machine one seed can take 5-10
+   minutes. Run the batch with the Bash tool in the background with `timeout: 3600000`, do
+   not wrap it in a shorter shell `timeout`, and wait for it: a batch that is cut off loses
+   its unfinished seeds and writes no `batch.json` (the finished seeds are in
+   `batch-results.jsonl`). Never run two batches at once: the GPU is shared.
 
    In the program, `localize_object(...).diagnostics` has `segmentation_score`,
    `low_confidence` and `ambiguous`. `ok` is true even when the mask is a guess, so do not act
    on a `low_confidence` result: try the next prompt, and raise an error if none is confident.
    Handle `ambiguous` with the rule you chose in step 2. After `close_gripper()`, check
    `diagnostics["closed_empty"]`.
+
+   For the place position of a container (basket, bowl, box) use
+   `localize_object(...).geometry.pose.position`, not the median of its point cloud: one
+   camera sees mostly the near wall, so the median sits about 5 cm toward the camera and the
+   object lands on the rim.
 4. Diagnose failures in this order, and fix the failure mode, not the seed:
    a. `{{WS}}/dev_vNN/batch.json`: the `warnings` list first (run-batch also prints it). It
       names causes that the program's own error does not: a guessed or ambiguous object, a

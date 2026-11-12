@@ -55,6 +55,7 @@ def main() -> int:
     raw_path = Path(args.raw)
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     final: dict | None = None
+    parts = turns = duration_ms = 0
     with raw_path.open("a", encoding="utf-8") as raw:
         for line in sys.stdin:
             raw.write(line)
@@ -88,10 +89,18 @@ def main() -> int:
                             )
                         print(stamp, paint(RED, "tool error: " + _short(content or "", 200)))
             elif kind == "result":
+                # A headless run that waits on a background command ends its turn and is
+                # resumed when the command finishes: each part ends with its own result
+                # event. Cost is cumulative; turns and time are per part.
+                parts += 1
+                turns += int(event.get("num_turns") or 0)
+                duration_ms += int(event.get("duration_ms") or 0)
                 final = event
     if final is None:
         print(paint(RED, "no final result event (interrupted, timed out, or failed to start)"))
         return 1
+    if parts > 1:
+        final = {**final, "num_turns": turns, "duration_ms": duration_ms, "result_events": parts}
     ok = final.get("subtype") == "success" and not final.get("is_error")
     cost = final.get("total_cost_usd")
     minutes = (final.get("duration_ms") or 0) / 60000
@@ -102,6 +111,9 @@ def main() -> int:
         f"| {minutes:.1f} min",
         f"| est. cost ${cost:.2f}" if isinstance(cost, int | float) else "",
     )
+    if final.get("is_error"):
+        # For example Bedrock's daily token quota (HTTP 429): the work before it is on disk.
+        print(paint(RED, "last message failed: " + _short(str(final.get("result") or ""), 300)))
     if args.summary:
         Path(args.summary).write_text(json.dumps(final, indent=2) + "\n", encoding="utf-8")
     return 0 if ok else 1
