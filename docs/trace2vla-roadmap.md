@@ -59,9 +59,23 @@ the cause had to be inferred); a faster video preset for development runs; keep 
 in which the program retried and recovered, and mark them (Scaling Up & Distilling Down found
 they add about 35 points).
 
-## 3b. π0.5 as a second student: readiness check (12 November)
+## 3b. π0.5 as a second student (readiness check and implementation, 12 November)
 
-Checked before writing any code. Nothing here changes the SmolVLA setup.
+**Status: implemented, not yet run on the GPU.** Every command that loads a policy takes
+`--student smolvla|pi05` (default SmolVLA, whose behaviour, run names, protocol keys and outputs
+are unchanged). π0.5 runs in its own `.venv-pi05`, built by `scripts/gpu/vla.sh setup-pi05`,
+and a command moves itself there. Datasets carry their student's statistics
+(`t2v.sh dataset --from-dataset d50 --student pi05` copies a SmolVLA dataset), records name
+their student, the report and the dashboard show it, and `vla.sh label-students` writes it into
+records from before. Tests: `tests/test_students.py`, `tests/test_students_pipeline.py`,
+`tests/test_label_students.py`. Built and tested on CPU: the environment (same shared package
+versions as `.venv-libero`), the routing between environments, the dataset copy, the training
+command, the reports and the dashboard. Not yet done: a π0.5 policy load and evaluation on the
+GPU, and measured memory. Commands:
+[trace2vla-preflight.md](trace2vla-preflight.md#π05-the-same-experiment-with-the-second-student);
+design: [vla-student.md](vla-student.md#two-students-smolvla-and-π05).
+
+The readiness check, done before writing any code (nothing here changes the SmolVLA setup):
 
 | Question | Answer |
 |---|---|
@@ -74,7 +88,7 @@ Checked before writing any code. Nothing here changes the SmolVLA setup.
 | Gated download | The PaliGemma tokenizer (`google/paligemma-3b-pt-224`) is gated: the Hugging Face account whose token is on the server must accept its licence. The weights are under the Gemma licence |
 | GPU | Same torch build (2.9.1, CUDA 12.8) as SmolVLA, which already runs on the RTX PRO 6000 (Blackwell). The transformers branch is pure Python. The checkpoint asks for `torch.compile`; turn it off for evaluation if it is slow to start or fails |
 | Memory (estimates, to be measured) | Evaluation about 10 GB. LoRA training with gradient checkpointing roughly 20–35 GB. Full fine-tuning roughly 50–70 GB: an otherwise empty 96 GB card |
-| Code changes | Additive: a setup command for `.venv-pi05`; the dataset writer and trainer take the student checkpoint as a parameter (statistics source, camera renaming only when the checkpoint needs it, learning rate); reference numbers for π0.5 in the reports. SmolVLA stays the default and its tests are unchanged |
+| Code changes | Additive: a setup command for `.venv-pi05`; the dataset writer and trainer take the student checkpoint as a parameter (statistics source, camera renaming only when the checkpoint needs it, learning rate); reference numbers for π0.5 in the reports. SmolVLA stays the default and its tests are unchanged. **Done as planned**, with one addition: the student registry `src/cap_harness/vla/students.py` holds all of these per-student settings in one place |
 
 Order: after the SmolVLA preflight. First π0.5 before training on the same 100 official-scene
 episodes and the standard layout (it should land near the LIBERO-PRO paper's 17% on the swap

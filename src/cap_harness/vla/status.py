@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import sys
 
+from cap_harness.vla import students
 from cap_harness.vla.libero_compat import REPOSITORY_ROOT
 from cap_harness.vla.monitor import read_progress
 
@@ -25,12 +26,21 @@ def _duration(seconds: float | None) -> str:
     return f"{minutes:.0f} min" if minutes < 120 else f"{minutes / 60:.1f} h"
 
 
+def student_of(root: Path) -> str:
+    """The student a run used (older runs name none and are SmolVLA's)."""
+    try:
+        record = json.loads((root / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = {}
+    return students.label(students.infer(record if isinstance(record, dict) else {})[0])
+
+
 def run_line(root: Path) -> str:
     progress = read_progress(root) or {}
     done, planned = progress.get("done"), progress.get("planned")
     rate = progress.get("success_rate")
     return (
-        f"{root.name:<44} {progress.get('status', 'no progress file'):<12} "
+        f"{root.name:<44} {student_of(root):<8} {progress.get('status', 'no progress file'):<12} "
         f"{(f'{done}/{planned}' if planned else '-'):>11} "
         f"{(f'{100 * rate:.0f}%' if rate is not None else '-'):>7} "
         f"ETA {_duration(progress.get('eta_s') if progress.get('status') == 'running' else None):>8}  "
@@ -44,7 +54,9 @@ def list_runs(base: Path = VLA_OUTPUTS) -> int:
     if not runs:
         print(f"no runs under {base}")
         return 0
-    print(f"{'run':<44} {'status':<12} {'done':>11} {'success':>7} {'':>12}  updated")
+    print(
+        f"{'run':<44} {'student':<8} {'status':<12} {'done':>11} {'success':>7} {'':>12}  updated"
+    )
     for root in runs:
         print(run_line(root))
     for parity in sorted(base.glob("parity-*.json")):

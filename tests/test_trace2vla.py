@@ -566,7 +566,7 @@ def test_report_compares_teacher_and_student_per_task(tmp_path) -> None:
     result = report.write(experiment)
     text = result["markdown"]
     assert (
-        "| task | teacher (official scenes) | student: before-official | student: after-official |"
+        "| task | teacher (official scenes) | SmolVLA: before-official | SmolVLA: after-official |"
         in text
     )
     assert "| libero_object_swap:0 | 2/3 (66.7%) | 0/50 (0.0%) | 40/50 (80.0%) |" in text
@@ -575,7 +575,7 @@ def test_report_compares_teacher_and_student_per_task(tmp_path) -> None:
         "| train-3x | 0 | 1 | 1 (re-execution_failed) | 195 / 195 / 195 | 525 | 9.0 | 0 |" in text
     )
     assert (
-        "| ft-full | full | 3000/3000 | 32 | 5e-05 | d50 (1 episodes) | finished | 0.05 | 15 min |"
+        "| ft-full | SmolVLA | full | 3000/3000 | 32 | 5e-05 | d50 (1 episodes) | finished | 0.05 | 15 min |"
         in text
     )
     assert (experiment.root / "reports" / "summary.md").read_text() == text

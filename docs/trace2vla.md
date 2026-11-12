@@ -34,6 +34,7 @@ task without losing earlier skills?
 |---|---|---|
 | Teacher | NVIDIA ASPIRE with Claude Opus 4.6 | one program per task, developed by the agent, then frozen |
 | Student | SmolVLA (450M parameters) through LeRobot v0.4.4 | checkpoint `lerobot/smolvla_libero` |
+| Second student | π0.5 (about 3.6B) through LeRobot v0.4.4, for comparison | checkpoint `lerobot/pi05_libero_finetuned_v044`; `--student pi05` ([vla-student.md](vla-student.md#two-students-smolvla-and-π05)) |
 | Benchmark | LIBERO-Pro, first suite `libero_object_swap` | the target object changes places with another object |
 
 **Hypotheses** (from the proposal):
@@ -107,25 +108,28 @@ inputs.
 
 | Path | What |
 |---|---|
-| `src/cap_harness/vla/` | The student: SmolVLA through ASPIRE's simulator, benchmark runner, offline grader, parity check |
+| `src/cap_harness/vla/` | The student: SmolVLA or π0.5 through ASPIRE's simulator, benchmark runner, offline grader, parity check |
+| `src/cap_harness/vla/students.py` | The two students: checkpoint, environment, camera names, training defaults, reference numbers; which student an old record belongs to |
+| `scripts/bootstrap_pi05.sh` | Builds `.venv-pi05` for π0.5 (`vla.sh setup-pi05`) without touching SmolVLA's environment |
 | `src/cap_harness/trace2vla/` | The pipeline: experiment store and ledger, scene sets, teacher stage, converter, dataset writer, trainer wrapper, report, command line |
 | `src/cap_harness/libero/adapter.py` | The simulator adapter, with both control modes |
 | `src/cap_harness/run_warnings.py` | Plain-language warnings read from a run's recorded calls |
-| `scripts/gpu/vla.sh` | Student commands: setup, parity, sanity, baseline, status |
+| `scripts/gpu/vla.sh` | Student commands: setup, setup-pi05, parity, sanity, baseline, status, label-students |
 | `scripts/gpu/t2v.sh` | Pipeline commands: init, check, teacher-add, teacher-run, teacher-grade, convert, dataset, train, eval, report, status |
 | `scripts/gpu/session.sh`, `demo.sh` | Teacher development: the coding agent writes and debugs a task program |
 | `scripts/gpu/dashboard.py` | Dashboard with the "VLA student" and "Trace2VLA" tabs |
 | `scripts/experiments/trace2vla/` | The prototypes behind the design review |
 | `third_party/lerobot` | LeRobot v0.4.4 (fork `hosseinhkh/lerobot`, branch `aspire-v0.4.4`) |
 | `third_party/LIBERO-PRO` | The benchmark |
-| `tests/test_vla.py`, `tests/test_trace2vla.py`, `tests/test_run_warnings.py` | Tests |
+| `tests/test_vla.py`, `tests/test_trace2vla.py`, `tests/test_run_warnings.py`, `tests/test_students*.py`, `tests/test_label_students.py` | Tests |
 | `outputs/vla/<run>/` | Student benchmark runs (not in git) |
 | `outputs/trace2vla/<experiment>/` | One experiment: `teacher/`, `grades/`, `demos/`, `datasets/`, `training/`, `evals/`, `reports/`, `ledger.jsonl` (not in git) |
 | `outputs/sessions/<time>-tasks/` | Recorded agent sessions (not in git) |
 
 Everything runs in one repository and one environment (`.venv-libero`: Python 3.11,
 torch 2.9.1, MuJoCo 3.3.0, robosuite 1.4.0), so the teacher and the student share the same
-simulator build.
+simulator build. The one exception is π0.5, which needs another `transformers`: it runs in
+`.venv-pi05`, which has the same versions of everything else.
 
 ## 5. Results so far
 

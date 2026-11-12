@@ -13,7 +13,17 @@ from typing import Any
 from cap_harness.trace2vla import teacher
 from cap_harness.trace2vla.convert import demo_summary
 from cap_harness.trace2vla.store import Experiment, atomic_write, now_iso, read_json, write_json
+from cap_harness.vla import students
 from cap_harness.vla.benchmark import family_text
+
+
+def student_of(*records: dict[str, Any]) -> str:
+    """The student the first record that says one names; SmolVLA for records from before."""
+    for record in records:
+        key, how = students.infer(record)
+        if how != students.LEGACY:
+            return key
+    return students.DEFAULT_STUDENT
 
 
 def percent(value: float | None) -> str:
@@ -37,13 +47,17 @@ def evaluations(experiment: Experiment) -> list[dict[str, Any]]:
     ):
         root = folder.parent
         meta = read_json(root / "eval.json") or {}
-        settings = (read_json(folder) or {}).get("settings") or {}
+        run = read_json(folder) or {}
+        settings = run.get("settings") or {}
         results = read_json(root / "results.json") or {}
         progress = read_json(root / "progress.json") or {}
+        student = student_of(meta, run)
         runs.append(
             {
                 "name": root.name,
                 "path": experiment.rel(root),
+                "student": student,
+                "student_label": students.label(student),
                 "suite": settings.get("suite"),
                 "checkpoint": meta.get("checkpoint_label", settings.get("policy")),
                 "scene_set": meta.get("scene_set"),
@@ -68,7 +82,16 @@ def trainings(experiment: Experiment) -> list[dict[str, Any]]:
     ):
         record = read_json(path) or {}
         progress = read_json(path.parent / "progress.json") or {}
-        runs.append({**record, "progress": progress, "path": experiment.rel(path.parent)})
+        student = student_of(record)
+        runs.append(
+            {
+                **record,
+                "student": student,
+                "student_label": students.label(student),
+                "progress": progress,
+                "path": experiment.rel(path.parent),
+            }
+        )
     return runs
 
 
@@ -78,9 +101,13 @@ def datasets(experiment: Experiment) -> list[dict[str, Any]]:
         (experiment.root / "datasets").glob("*/manifest.json"), key=lambda p: p.stat().st_mtime
     ):
         manifest = read_json(path) or {}
+        student = student_of(manifest)
         found.append(
             {k: manifest.get(k) for k in ("name", "frames", "per_task", "created")}
             | {
+                "student": student,
+                "student_label": students.label(student),
+                "derived_from": (manifest.get("derived_from") or {}).get("name"),
                 "episodes": len(manifest.get("episodes", [])),
                 "rejected": len(manifest.get("rejected", [])),
                 "path": experiment.rel(path.parent),
@@ -128,7 +155,9 @@ def to_markdown(report: dict[str, Any]) -> str:
     other = [e for e in report["evaluations"] if e["suite"] != suite]
 
     lines += ["## Same scenes: teacher vs student", ""]
-    header = ["task", "teacher (official scenes)"] + [f"student: {e['name']}" for e in main]
+    header = ["task", "teacher (official scenes)"] + [
+        f"{e['student_label']}: {e['name']}" for e in main
+    ]
     lines += ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     teacher_tasks = {t["task_id"]: t for t in (official or {}).get("tasks", [])}
     for task_id in report["tasks"]:
@@ -152,7 +181,7 @@ def to_markdown(report: dict[str, Any]) -> str:
     lines += ["| " + " | ".join(row) + " |", ""]
     for e in main:
         lines.append(
-            f"- `{e['name']}`: checkpoint {e['checkpoint']}; failures: {family_text(e['failure_families']) or 'none graded'}"
+            f"- `{e['name']}` ({e['student_label']}): checkpoint {e['checkpoint']}; failures: {family_text(e['failure_families']) or 'none graded'}"
         )
     lines.append("")
 
@@ -160,13 +189,13 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines += [
             "## Retention: other suites",
             "",
-            "| evaluation | suite | checkpoint | success | 95% interval |",
-            "|---|---|---|---|---|",
+            "| evaluation | student | suite | checkpoint | success | 95% interval |",
+            "|---|---|---|---|---|---|",
         ]
         for e in other:
             interval = f"{percent(e['ci95'][0])}-{percent(e['ci95'][1])}" if e.get("ci95") else "-"
             lines.append(
-                f"| {e['name']} | {e['suite']} | {e['checkpoint']} | {e['successes']}/{e['episodes']} ({percent(e['mean'])}) | {interval} |"
+                f"| {e['name']} | {e['student_label']} | {e['suite']} | {e['checkpoint']} | {e['successes']}/{e['episodes']} ({percent(e['mean'])}) | {interval} |"
             )
         lines.append("")
 
@@ -208,11 +237,11 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines += [
             "## Datasets",
             "",
-            "| dataset | episodes | frames | per task | rejected at build |",
-            "|---|---|---|---|---|",
+            "| dataset | student | episodes | frames | per task | rejected at build |",
+            "|---|---|---|---|---|---|",
         ]
         lines += [
-            f"| {d['name']} | {d['episodes']} | {d['frames']} | {d['per_task']} | {d['rejected']} |"
+            f"| {d['name']}{' (from ' + d['derived_from'] + ')' if d.get('derived_from') else ''} | {d['student_label']} | {d['episodes']} | {d['frames']} | {d['per_task']} | {d['rejected']} |"
             for d in report["datasets"]
         ]
         lines.append("")
@@ -220,15 +249,15 @@ def to_markdown(report: dict[str, Any]) -> str:
         lines += [
             "## Training",
             "",
-            "| run | method | steps | batch | lr | dataset | status | final loss | time |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| run | student | method | steps | batch | lr | dataset | status | final loss | time |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for run in report["training"]:
             s = run.get("settings", {})
             wall = run.get("wall_s")
             minutes = "-" if wall is None else f"{wall / 60:.0f} min"
             lines.append(
-                f"| {run.get('name')} | {s.get('method')} | {run['progress'].get('step', '-')}/{s.get('steps')} | {s.get('batch_size')} | {s.get('lr')} | "
+                f"| {run.get('name')} | {run['student_label']} | {s.get('method')} | {run['progress'].get('step', '-')}/{s.get('steps')} | {s.get('batch_size')} | {s.get('lr')} | "
                 f"{str(run.get('dataset', '')).rsplit('/', 1)[-1]} ({run.get('dataset_episodes')} episodes) | {run.get('status', run['progress'].get('status'))} | "
                 f"{run.get('final_loss', '-')} | {minutes} |"
             )

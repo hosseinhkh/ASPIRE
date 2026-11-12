@@ -1,4 +1,4 @@
-# VLA student: SmolVLA on LIBERO and LIBERO-Pro
+# VLA student: SmolVLA and π0.5 on LIBERO and LIBERO-Pro
 
 Part of Trace2VLA; the project overview is [trace2vla.md](trace2vla.md).
 
@@ -15,6 +15,109 @@ simulator, before any ASPIRE data is used to train it.
 
 Everything runs on GPU 1 by default (`ASPIRE_VLA_GPU`, or `scripts/gpu/vla.sh --gpu N ...`),
 so ASPIRE keeps GPU 0. Results go to `outputs/vla/`.
+
+## Two students: SmolVLA and π0.5
+
+SmolVLA is the main student and the default everywhere. π0.5 is a second student for the same
+experiments: a larger model with published LIBERO and LIBERO-Pro numbers, so it also checks our
+setup independently. Every command that loads a policy takes `--student smolvla|pi05`; leaving
+it out means SmolVLA, exactly as before π0.5 support.
+
+| | SmolVLA | π0.5 |
+|---|---|---|
+| Checkpoint | `lerobot/smolvla_libero` (0.45B) | `lerobot/pi05_libero_finetuned_v044` (about 3.6B, 7.5 GB, bfloat16): LeRobot's own, made for LeRobot v0.4.4 |
+| Pinned revision | `a24f1f3…` | `7152f13…` |
+| Environment | `.venv-libero` | `.venv-pi05` (its own: see below) |
+| Cameras | LIBERO's two cameras renamed to `camera1` / `camera2` | LIBERO's names, no renaming |
+| Inputs and actions | two 256×256 images, 8-number state, instruction → 7-number hand movement | the same |
+| Actions per prediction | 10 | 10 |
+| Normalisation statistics of a training dataset | SmolVLA checkpoint's | π0.5 checkpoint's (mean and standard deviation) |
+| Training methods (learning rate) | `full` (5e-5), `lora` (1e-4), `lora-vlm` (1e-4) | `full` (2.5e-5, the checkpoint's own), `lora` (1e-4). `lora-vlm` is refused: its module names are not checked for π0.5 yet |
+| Evaluation settings | the checkpoint's | `torch.compile` off (the checkpoint asks for it: minutes of compiling per process) |
+| Standard LIBERO reference (spatial / object / goal / 10) | 90 / 96 / 92 / 71 (SmolVLA paper) | 97 / 99 / 98 / 96 (LeRobot docs) |
+| LIBERO-Pro reference | none published | the LIBERO-PRO paper's π0.5 (openpi's own checkpoint, not this one): object 98% original, 17% positions swapped |
+
+### Why π0.5 has its own environment
+
+LeRobot v0.4.4's π0.5 needs `transformers` from the branch `fix/lerobot_openpi` (4.53.3, with
+`tokenizers` < 0.22). SmolVLA's environment has `transformers` 4.57.6, and LeRobot's SmolVLA
+requires ≥ 4.57.1. One environment cannot hold both, so π0.5 gets `.venv-pi05`:
+
+```bash
+scripts/gpu/vla.sh setup-pi05
+```
+
+`setup-pi05` (`scripts/bootstrap_pi05.sh`, then the checkpoint download):
+
+* pins every package to the version `.venv-libero` has, except `transformers`, `tokenizers` and
+  `scipy` (LeRobot's π extra asks for < 1.15), and reuses the repository's own uv overrides
+  (numpy 1.26.4, mujoco 3.3.0, …) and the same editable checkouts (this repository,
+  LIBERO-PRO, robosuite, LeRobot);
+* never writes `pyproject.toml`, `uv.lock` or `.venv-libero`: SmolVLA's environment is only read;
+* checks afterwards that numpy, MuJoCo, robosuite, LIBERO, LeRobot, torch, pandas, peft and the
+  rest have the same versions in both environments, that `transformers` is LeRobot's branch, and
+  that the CUDA runtime matches; it then writes `.venv-pi05/pi05-environment.json`;
+* downloads the checkpoint at its pinned revision (about 7.5 GB).
+
+The PaliGemma tokenizer (`google/paligemma-3b-pt-224`) is gated: the Hugging Face account whose
+token is on the server must have accepted its licence. `--force` rebuilds the environment.
+
+You never call `.venv-pi05` yourself. A command started for π0.5 from the usual scripts moves
+itself into `.venv-pi05` before it imports LeRobot (it prints `pi0.5: continuing in
+.venv-pi05`). It keeps its process id, so `status` and `stop` work as for SmolVLA. If
+`.venv-pi05` is missing, the command stops at once and names `setup-pi05`.
+
+### Commands for π0.5
+
+```bash
+scripts/gpu/vla.sh sanity --student pi05 --quick
+```
+
+```bash
+scripts/gpu/vla.sh sanity --student pi05
+```
+
+```bash
+scripts/gpu/vla.sh baseline --student pi05 --quick
+```
+
+```bash
+scripts/gpu/vla.sh baseline --student pi05
+```
+
+The runs are `sanity-pi05-libero_object-n10` and `baseline-pi05-libero_object_swap-n10`. SmolVLA's
+run names are unchanged (`sanity-libero_object-n10`, `baseline-smolvla-libero_object_swap-n10`),
+so its existing runs resume as before. Trace2VLA's `dataset`, `train` and `eval` take the student
+too: [trace2vla-preflight.md](trace2vla-preflight.md#π05-the-same-experiment-with-the-second-student).
+
+Memory (estimates, to be measured): evaluation about 10 GB; LoRA training roughly 20–35 GB; full
+fine-tuning roughly 50–70 GB, so an otherwise empty 96 GB card.
+
+### Which student a record belongs to
+
+Every new record names its student: `run.json` and `progress.json` of a benchmark or evaluation,
+`eval.json`, a training run's `run.json` and a dataset's `manifest.json`. A record written before
+π0.5 support has no such field and is read as SmolVLA, the only student until then; nothing has
+to be changed for that. The dashboard shows the student on every run, evaluation, training run
+and dataset; the "VLA student" page has a student filter, and the Trace2VLA page shows "before →
+after" per student. Mixing students is refused where it would give a wrong number: an evaluation
+folder holds one student's episodes, a training run uses a dataset built with its own student's
+statistics, and a checkpoint is checked against `--student`.
+
+To write the student into the old records as well (optional, for a tidy archive):
+
+```bash
+scripts/gpu/vla.sh label-students
+```
+
+```bash
+scripts/gpu/vla.sh label-students --apply
+```
+
+The first only lists what it would label. `--apply` adds the `student` field and nothing else,
+keeps each file's modification time (the dashboard orders runs by it), copies every file to
+`outputs/.student-labels/<time>/` first, skips a run whose process is still running, and never
+touches teacher runs or episodes. Running it again changes nothing.
 
 ## Results so far
 
@@ -280,7 +383,9 @@ states differently. Use it as an independent check, not for the reported numbers
 ## Known differences from published numbers
 
 * No source reports SmolVLA on LIBERO-Pro, so `baseline` is a new measurement. π0.5 is the
-  only open model with LIBERO-Pro numbers (object: 0.98 original / 0.17 positions swapped). A
-  π0.5 run would confirm the LIBERO-Pro setup independently.
+  only open model with LIBERO-Pro numbers (object: 0.98 original / 0.17 positions swapped), with
+  openpi's own checkpoint. `baseline --student pi05` runs LeRobot's π0.5 checkpoint on the same
+  scenes: a number near 17% would confirm the LIBERO-Pro setup independently. It is not the
+  same checkpoint, so a gap of several points is not by itself a problem.
 * lerobot-eval renders at 360×360 by default. This benchmark renders at 256×256, the size of
   the LIBERO training data.

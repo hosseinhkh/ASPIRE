@@ -13,7 +13,7 @@ import statistics
 from typing import Any
 
 from dashboard_store import Store, downsample, read_json, read_npz
-from dashboard_vla import EPISODE_SERIES, progress_of
+from dashboard_vla import EPISODE_SERIES, progress_of, student_of
 
 LEDGER_TAIL = 300
 LOG_TAIL = 200
@@ -72,12 +72,16 @@ class T2vStore:
         for path in folders:
             run = path.parent
             meta = read_json(run / "eval.json") or {}
-            settings = (read_json(path) or {}).get("settings") or {}
+            record = read_json(path) or {}
+            settings = record.get("settings") or {}
             results = read_json(run / "results.json") or {}
+            student = student_of(meta, record)
             runs.append(
                 {
                     "name": run.name,
                     "path": self.store.rel(run),
+                    "student": student["key"],
+                    "student_label": student["label"],
                     "suite": settings.get("suite"),
                     "checkpoint": meta.get("checkpoint_label") or settings.get("policy"),
                     "scene_set": meta.get("scene_set"),
@@ -104,10 +108,13 @@ class T2vStore:
                         metrics.append(json.loads(line))
                     except ValueError:
                         continue
+            student = student_of(record)
             runs.append(
                 {
                     "name": run.name,
                     "path": self.store.rel(run),
+                    "student": student["key"],
+                    "student_label": student["label"],
                     "record": record,
                     "progress": read_json(run / "progress.json") or {},
                     "loss": downsample([float(m["loss"]) for m in metrics]),
@@ -127,10 +134,14 @@ class T2vStore:
             (root / "datasets").glob("*/manifest.json"), key=lambda p: p.stat().st_mtime
         ):
             manifest = read_json(path) or {}
+            student = student_of(manifest)
             found.append(
                 {
                     "name": manifest.get("name", path.parent.name),
                     "path": self.store.rel(path.parent),
+                    "student": student["key"],
+                    "student_label": student["label"],
+                    "derived_from": (manifest.get("derived_from") or {}).get("name"),
                     "created": manifest.get("created"),
                     "episodes": len(manifest.get("episodes", [])),
                     "frames": manifest.get("frames"),
@@ -227,7 +238,12 @@ class T2vStore:
                     "demos": sum(d.get("accepted", 0) for d in self._demos(root)),
                     "datasets": len(self._datasets(root)),
                     "training": [
-                        {"name": t["name"], "status": t["progress"].get("status")} for t in training
+                        {
+                            "name": t["name"],
+                            "status": t["progress"].get("status"),
+                            "student_label": t["student_label"],
+                        }
+                        for t in training
                     ],
                     "evals": [
                         {
@@ -235,6 +251,7 @@ class T2vStore:
                             "mean": e["mean"],
                             "status": e["progress"].get("status"),
                             "checkpoint": e["checkpoint"],
+                            "student_label": e["student_label"],
                         }
                         for e in evals
                     ],
@@ -368,6 +385,7 @@ class T2vStore:
                     students.append(
                         {
                             "eval": run["name"],
+                            "student_label": run["student_label"],
                             "checkpoint": run["checkpoint"],
                             "suite": episode.get("suite"),
                             "path": self.store.rel(folder),

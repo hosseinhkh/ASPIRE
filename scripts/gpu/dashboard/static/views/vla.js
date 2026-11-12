@@ -1,15 +1,16 @@
-// VLA student: SmolVLA benchmark runs under outputs/vla, kept apart from ASPIRE's runs.
+// VLA student: SmolVLA and pi0.5 benchmark runs under outputs/vla, kept apart from ASPIRE's runs.
 // List of runs and parity checks -> one run (progress, tasks, episodes, log) -> one episode
 // (video synced with its action, hand-position and gripper charts).
 import { api, esc, q, num, fileUrl, when, size, pct } from "../lib/util.js";
 import { card, jsonView, rate, tabs, bindTabs } from "../lib/ui.js";
 import { lineChart, moveMarkers } from "../lib/charts.js";
-import { familyBadge, families } from "./t2v.js";
+import { familyBadge, families, studentBadge } from "./t2v.js";
 
 const STATUS_CLASS = { running: "ok", finished: "ok", interrupted: "warn", stopped: "bad", failed: "bad" };
 const REFRESH_MS = 10000;
 let runTab = "Tasks";
 let episodeFilter = { task: "all", seed: "all", outcome: "all", family: "all" };
+let studentFilter = "all";
 
 const statusBadge = (s) => `<span class="badge ${STATUS_CLASS[s] || "muted"}">${esc(s || "-")}${s === "running" ? " ●" : ""}</span>`;
 const minutes = (s) => (s === null || s === undefined ? "-" : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
@@ -29,11 +30,14 @@ function schedule(ctx, fn) {
 export async function renderList(app, params, ctx) {
   const data = await api("/api/vla/runs");
   const running = data.runs.some((r) => r.progress.status === "running");
+  const labels = [...new Set(data.runs.map((r) => r.student_label || "SmolVLA"))];
+  if (studentFilter !== "all" && !labels.includes(studentFilter)) studentFilter = "all";
+  const shown = data.runs.filter((r) => studentFilter === "all" || (r.student_label || "SmolVLA") === studentFilter);
   app.innerHTML = `
     <div class="page-head"><h1>VLA student</h1></div>
-    <p class="muted small">SmolVLA (LeRobot) running through ASPIRE's own LIBERO adapter in hand-movement (OSC_POSE) control.
+    <p class="muted small">LeRobot students (SmolVLA, pi0.5) running through ASPIRE's own LIBERO adapter in hand-movement (OSC_POSE) control.
       Runs live in <span class="mono">outputs/vla/</span>, apart from ASPIRE's runs. Start them with
-      <span class="mono">scripts/gpu/vla.sh</span>; this page refreshes itself while a run is going.</p>
+      <span class="mono">scripts/gpu/vla.sh</span> (<span class="mono">--student pi05</span> for pi0.5); this page refreshes itself while a run is going.</p>
     <h2>Parity checks</h2>
     <p class="muted small">LeRobot's LIBERO env and ASPIRE's adapter on the same scene and actions (<span class="mono">vla.sh parity --policy</span>).</p>
     ${
@@ -52,13 +56,15 @@ export async function renderList(app, params, ctx) {
         : `<p class="muted">No parity report yet: run <span class="mono">scripts/gpu/vla.sh parity --policy</span>.</p>`
     }
     <h2>Runs</h2>
-    <div class="panel flush"><table class="table"><thead><tr><th>Run</th><th>Suite</th><th>Status</th><th>Progress</th><th>Success so far</th><th>Published</th><th>Speed / ETA</th><th>Updated</th><th>Download</th></tr></thead>
+    ${labels.length > 1 ? `<div class="toolbar"><label class="small">Student <select id="vla-student"><option value="all">all</option>${labels.map((l) => `<option ${l === studentFilter ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>` : ""}
+    <div class="panel flush"><table class="table"><thead><tr><th>Run</th><th>Student</th><th>Suite</th><th>Status</th><th>Progress</th><th>Success so far</th><th>Published</th><th>Speed / ETA</th><th>Updated</th><th>Download</th></tr></thead>
     <tbody>${
-      data.runs
+      shown
         .map((r) => {
           const p = r.progress;
           return `<tr class="click" data-href="#/vla/run?path=${q(r.path)}">
             <td><b>${esc(r.name)}</b><div class="muted small">${esc(r.policy || "")}${r.n_action_steps ? ` · ${esc(r.n_action_steps)} actions per chunk` : ""}</div></td>
+            <td>${studentBadge(r.student_label)}</td>
             <td class="mono small">${esc(r.suite || "")}</td>
             <td>${statusBadge(p.status)}${(p.warnings || []).length ? ` <span class="badge warn" title="${esc(p.warnings.join("\n"))}">${p.warnings.length} warning(s)</span>` : ""}</td>
             <td>${progressBar(p.done, p.planned)}</td>
@@ -68,11 +74,13 @@ export async function renderList(app, params, ctx) {
             <td class="small nowrap">${esc(p.updated || "")}</td>
             <td data-stop class="nowrap"><span class="btn-group">${zip(r.path, false, "Logs")}${zip(r.path, true, "All")}</span></td></tr>`;
         })
-        .join("") || `<tr><td colspan="9" class="muted">No runs yet: <span class="mono">scripts/gpu/vla.sh sanity --quick</span></td></tr>`
+        .join("") || `<tr><td colspan="10" class="muted">No runs yet: <span class="mono">scripts/gpu/vla.sh sanity --quick</span></td></tr>`
     }</tbody></table></div>`;
   app.querySelectorAll("tr.click").forEach((tr) => {
     tr.onclick = (e) => !e.target.closest("[data-stop]") && (location.hash = tr.dataset.href);
   });
+  const pick = document.getElementById("vla-student");
+  if (pick) pick.onchange = () => { studentFilter = pick.value; renderList(app, params, ctx); };
   if (running) schedule(ctx, () => renderList(app, params, ctx));
 }
 
@@ -88,6 +96,7 @@ export async function renderRun(app, params, ctx) {
     <div class="page-head"><h1>${esc(p.title || d.name)} ${statusBadge(p.status)}</h1>
       <div class="toolbar"><span class="btn-group">${zip(d.path, false, "Download logs")}${zip(d.path, true, "Download all")}</span></div></div>
     <div class="cards">
+      ${card("Student", esc(d.student_label || "SmolVLA"), `<span class="mono small">${esc(settings.policy || "")}</span>${settings.revision ? `<br><span class="muted small">revision ${esc(String(settings.revision).slice(0, 10))}</span>` : ""}`)}
       ${card("Progress", progressBar(p.done, p.planned), `${esc(p.resumed || 0)} resumed, ${esc(p.ran || 0)} run by this process`)}
       ${card("Success", r.episodes ? `<b>${percent(r.mean)}</b>` : "-", r.episodes ? `${r.successes}/${r.episodes} episodes · 95% ${percent((r.ci95 || [])[0])}–${percent((r.ci95 || [])[1])}${seeds.length > 1 ? ` · ±${(100 * r.std_across_seeds).toFixed(1)} across seeds` : ""}` : "")}
       ${card("Published", p.expected ? `${num(p.expected, 0)}%` : "-", (p.notes || []).map(esc).join("<br>"))}

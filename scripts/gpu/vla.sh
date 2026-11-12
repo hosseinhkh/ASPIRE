@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# The VLA student (SmolVLA through LeRobot) on LIBERO / LIBERO-Pro, in ASPIRE's own simulator.
+# The VLA student (SmolVLA or pi0.5, through LeRobot) on LIBERO / LIBERO-Pro, in ASPIRE's own simulator.
 #
 #   scripts/gpu/vla.sh setup                      install LeRobot + SmolVLA into .venv-libero
+#   scripts/gpu/vla.sh setup-pi05 [--force]       build .venv-pi05 for the pi0.5 student
 #   scripts/gpu/vla.sh parity [--policy]          LeRobot's LIBERO env vs ASPIRE's adapter
-#   scripts/gpu/vla.sh sanity [--quick]           smolvla_libero on standard LIBERO-Object
-#   scripts/gpu/vla.sh baseline [--quick]         step 1: SmolVLA on libero_object_swap
+#   scripts/gpu/vla.sh sanity [--quick]           the student on standard LIBERO-Object
+#   scripts/gpu/vla.sh baseline [--quick]         step 1: the student on libero_object_swap
 #   scripts/gpu/vla.sh benchmark --suite S [...]  any suite; options of cap_harness.vla.benchmark
 #   scripts/gpu/vla.sh status [RUN]               every run, or one run in detail
 #   scripts/gpu/vla.sh stop RUN                   stop a running benchmark (it records why)
 #   scripts/gpu/vla.sh report RUN                 rebuild a run's results table
 #   scripts/gpu/vla.sh lerobot-eval ARGS...       LeRobot's own lerobot-eval on this LIBERO
+#   scripts/gpu/vla.sh label-students [--apply]   name the student in records from before pi0.5
 #
-# sanity, baseline and benchmark take --detach: run in the background, survive a closed
-# terminal, log to RUN/console.log. Rerunning a command resumes its run. RUN is a folder under
-# outputs/vla/ (or a path). GPU ${ASPIRE_VLA_GPU:-1} by default: set ASPIRE_VLA_GPU, or pass
-# --gpu N first. The dashboard shows the runs under "VLA student" (scripts/gpu/dashboard.py).
+# sanity, baseline and benchmark take --student smolvla|pi05 (default smolvla; pi0.5 runs in
+# its own .venv-pi05, moved there automatically) and --detach: run in the background, survive
+# a closed terminal, log to RUN/console.log. Rerunning a command resumes its run. RUN is a
+# folder under outputs/vla/ (or a path). GPU ${ASPIRE_VLA_GPU:-1} by default: set
+# ASPIRE_VLA_GPU, or pass --gpu N first. The dashboard shows the runs under "VLA student".
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -22,7 +25,8 @@ VENV_PY="$REPO_ROOT/.venv-libero/bin/python"
 VLA_OUT="$REPO_ROOT/outputs/vla"
 GPU="${ASPIRE_VLA_GPU:-1}"
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+# The comment block at the top, whatever its length.
+usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 if [[ "${1:-}" == "--gpu" ]]; then GPU="$2"; shift 2; fi
 PY_ENV=(
   CUDA_VISIBLE_DEVICES="$GPU" MUJOCO_EGL_DEVICE_ID="$GPU" MUJOCO_GL="${MUJOCO_GL:-egl}"
@@ -36,12 +40,17 @@ need_vla() {
     echo "error: LeRobot is not installed in .venv-libero; run: scripts/gpu/vla.sh setup" >&2
     exit 1
   }
+  if [[ "$STUDENT" == pi05 ]]; then
+    [[ -x "$PI05_PY" ]] || { echo "error: .venv-pi05 missing; run: scripts/gpu/vla.sh setup-pi05" >&2; exit 1; }
+  fi
 }
 
 announce_gpu() {
   echo "VLA on GPU $GPU (CUDA_VISIBLE_DEVICES for this command only; the conda env is unchanged)" >&2
   if [[ -n "${ASPIRE_GPU:-}" && "$ASPIRE_GPU" == "$GPU" ]]; then
-    echo "note: ASPIRE also uses GPU $GPU (ASPIRE_GPU). SmolVLA needs about 3 GB; pass --gpu N to move it." >&2
+    local need="about 3 GB"
+    [[ "$STUDENT" == pi05 ]] && need="about 10 GB"
+    echo "note: ASPIRE also uses GPU $GPU (ASPIRE_GPU). The student needs $need; pass --gpu N to move it." >&2
   fi
 }
 
@@ -54,13 +63,23 @@ run_dir() {  # a run name under outputs/vla, or a path
 
 DETACH=0
 ARGS=()
-take_args() {  # split --detach off the remaining arguments
+STUDENT=smolvla
+PI05_PY="$REPO_ROOT/.venv-pi05/bin/python"
+take_args() {  # split --detach and --student off the remaining arguments
   ARGS=()
-  local arg
-  for arg in "$@"; do
-    if [[ "$arg" == "--detach" ]]; then DETACH=1; else ARGS+=("$arg"); fi
+  while (($#)); do
+    case "$1" in
+      --detach) DETACH=1; shift ;;
+      --student|--student=*)
+        local value
+        if [[ "$1" == --student=* ]]; then value="${1#--student=}"; shift; else value="${2:-}"; shift 2 || shift; fi
+        [[ "$value" == smolvla || "$value" == pi05 ]] || { echo "error: --student smolvla|pi05" >&2; exit 2; }
+        STUDENT="$value"; STUDENT_GIVEN=1 ;;
+      *) ARGS+=("$1"); shift ;;
+    esac
   done
 }
+STUDENT_GIVEN=0
 
 launch() {  # launch OUT_DIR benchmark-args... : foreground, or detached with --detach
   local out="$1"
@@ -84,6 +103,16 @@ cmd="${1:-}"
 [[ -n "$cmd" ]] && shift
 case "$cmd" in parity|sanity|baseline|benchmark|lerobot-eval) announce_gpu ;; esac
 case "$cmd" in
+  setup-pi05)
+    "$REPO_ROOT/scripts/bootstrap_pi05.sh" "$@"
+    echo "Downloading the pi0.5 LIBERO checkpoint (pinned revision, about 7.5 GB)..."
+    env "${PY_ENV[@]}" "$PI05_PY" - <<'PY'
+from cap_harness.vla.policy import resolve_checkpoint
+from cap_harness.vla.students import PI05
+print(resolve_checkpoint(PI05.checkpoint, PI05.revision))
+PY
+    env "${PY_ENV[@]}" "$PI05_PY" -m pytest -q -p no:cacheprovider "$REPO_ROOT/tests/test_students.py"
+    ;;
   setup)
     "$REPO_ROOT/scripts/bootstrap_libero.sh" --vla --python "${CAP_HARNESS_PYTHON:-python3}"
     echo "Downloading the SmolVLA LIBERO checkpoint (pinned revision)..."
@@ -119,29 +148,33 @@ PY
     exit "$status"
     ;;
   sanity)
-    need_vla
     take_args "$@"
     set -- "${ARGS[@]+"${ARGS[@]}"}"
+    need_vla
     scenes="1-50"
     [[ "${1:-}" == "--quick" ]] && { scenes="1-10"; shift; }
     # -n10: 10 actions per predicted chunk, the protocol default (cap_harness.vla.protocol).
-    launch "$VLA_OUT/sanity-libero_object-n10" --suite libero_object --scenes "$scenes" --seeds 0 "$@"
+    name="sanity-libero_object-n10"
+    [[ "$STUDENT" == smolvla ]] || name="sanity-$STUDENT-libero_object-n10"
+    launch "$VLA_OUT/$name" --suite libero_object --scenes "$scenes" --seeds 0 --student "$STUDENT" "$@"
     ;;
   baseline)
-    need_vla
     take_args "$@"
     set -- "${ARGS[@]+"${ARGS[@]}"}"
+    need_vla
     scenes="1-50" seeds="0,1,2"
     [[ "${1:-}" == "--quick" ]] && { scenes="1-10"; seeds="0"; shift; }
-    launch "$VLA_OUT/baseline-smolvla-libero_object_swap-n10" --suite libero_object_swap \
-      --scenes "$scenes" --seeds "$seeds" "$@"
+    launch "$VLA_OUT/baseline-$STUDENT-libero_object_swap-n10" --suite libero_object_swap \
+      --scenes "$scenes" --seeds "$seeds" --student "$STUDENT" "$@"
     ;;
   benchmark)
-    need_vla
     take_args "$@"
     set -- "${ARGS[@]+"${ARGS[@]}"}"
+    need_vla
     out=""
     rest=()
+    # Without --student the benchmark takes the student --policy points to (else smolvla).
+    ((STUDENT_GIVEN)) && rest+=(--student "$STUDENT")
     while (($#)); do
       if [[ "$1" == "--out" ]]; then out="$2"; shift 2; else rest+=("$1"); shift; fi
     done
@@ -180,6 +213,9 @@ PY
   lerobot-eval)
     need_vla
     run_py -m cap_harness.vla.lerobot_eval "$@"
+    ;;
+  label-students)
+    "$VENV_PY" -m cap_harness.vla.label_students "$@"
     ;;
   *) usage; [[ -z "$cmd" ]] || exit 2 ;;
 esac

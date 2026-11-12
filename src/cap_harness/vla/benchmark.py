@@ -35,6 +35,7 @@ import subprocess
 import sys
 from typing import Any
 
+from cap_harness.vla import students
 from cap_harness.vla.libero_compat import REPOSITORY_ROOT, ensure_runtime_env
 from cap_harness.vla.monitor import RunMonitor, atomic_write, read_progress
 from cap_harness.vla.protocol import (
@@ -61,6 +62,22 @@ PROTOCOL_KEYS = (
     "n_action_steps",
 )
 PACKAGES = ("lerobot", "torch", "transformers", "numpy", "mujoco", "robosuite", "libero")
+
+
+def resolve_policy(
+    student: str | None, policy: str | None, revision: str | None
+) -> tuple[students.Student, str, str | None]:
+    """(student, checkpoint source, revision) for a run. Without --policy, the student's own
+    checkpoint at its pinned revision; a student's own Hub checkpoint is always pinned unless
+    --revision says otherwise. Raises ValueError when --student and --policy disagree.
+    """
+    from cap_harness.vla.policy import student_for
+
+    if policy is None:
+        chosen = students.get(student)
+        return chosen, chosen.checkpoint, revision or chosen.revision
+    chosen = student_for(policy, student)
+    return chosen, policy, revision or (chosen.revision if policy == chosen.checkpoint else None)
 
 
 def policy_seed_for(seed: int, task_id: int, scene: int) -> int:
@@ -219,6 +236,14 @@ def format_table(
     return "\n".join(lines) + "\n"
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def load_episodes(root: Path) -> list[dict[str, Any]]:
     episodes = []
     for path in sorted((root / "episodes").glob("*/task_*/seed_*/scene_*/episode.json")):
@@ -267,12 +292,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--seeds", default="0,1,2", help="policy noise seeds, default 0,1,2")
     parser.add_argument(
-        "--policy", default=None, help="Hub id or local checkpoint (default lerobot/smolvla_libero)"
+        "--student",
+        choices=sorted(students.STUDENTS),
+        default=None,
+        help="which student (default: the one --policy points to, else smolvla); "
+        "each runs in its own environment",
+    )
+    parser.add_argument(
+        "--policy",
+        default=None,
+        help="Hub id or local checkpoint (default: the student's own, e.g. lerobot/smolvla_libero)",
     )
     parser.add_argument(
         "--revision",
         default=None,
-        help="Hub revision (default: the pinned one for the default policy)",
+        help="Hub revision (default: the pinned one for a student's own checkpoint)",
     )
     parser.add_argument("--device", default=None, help="cuda or cpu (default: cuda when available)")
     parser.add_argument(
@@ -319,21 +353,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(argv)
     if args.n_action_steps is not None and args.n_action_steps <= 0:
         args.n_action_steps = None  # the checkpoint's own value
     ensure_runtime_env()
-    from cap_harness.vla.policy import DEFAULT_POLICY, DEFAULT_REVISION
-
-    source = args.policy or DEFAULT_POLICY
-    revision = args.revision or (DEFAULT_REVISION if source == DEFAULT_POLICY else None)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     root = args.out or REPOSITORY_ROOT / "outputs" / "vla" / f"{stamp}-{args.suite}"
+    if args.report and args.policy is None and args.student is None:
+        # Rebuilding an existing run's table: its own policy and student, not the defaults.
+        recorded = _read_json(root / "run.json")
+        args.policy = (recorded.get("settings") or {}).get("policy")
+        args.student = students.infer(recorded)[0] if recorded else None
+    try:
+        student, source, revision = resolve_policy(args.student, args.policy, args.revision)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     title = f"{args.label or source} on {args.suite}"
-    notes = references(args.suite, source)["notes"]
+    reference = references(args.suite, source, student.key)
+    notes = reference["notes"]
     if args.report:
         print(write_results(root, title, notes=notes)["table"])
         return 0
+    # Each student runs in its own environment (cap_harness.vla.students).
+    students.reexec(student, "cap_harness.vla.benchmark", argv)
 
     tasks = parse_int_list(args.tasks, default=range(task_count(args.suite)))
     scenes = parse_int_list(args.scenes)
@@ -360,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
         "revision": revision,
         "n_action_steps": args.n_action_steps,
         "video": args.video,
+        # Not part of the protocol: the policy already is, and older runs have no student field.
+        "student": student.key,
     }
     # Everything that changes an episode's outcome; a run directory holds one protocol only.
     protocol = {key: settings[key] for key in PROTOCOL_KEYS}
@@ -388,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         n_action_steps=args.n_action_steps,
         image_size=args.image_size,
         suite=args.suite,
+        student=student.key,
     )
     run_path.write_text(
         json.dumps(
@@ -397,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
                 "command": sys.argv,
                 "settings": settings,
                 "protocol": protocol,
+                "student": student.describe(),
                 "policy": policy.info.to_dict(),
                 "versions": versions(),
             },
@@ -427,13 +475,13 @@ def main(argv: list[str] | None = None) -> int:
         path = episode_dir(root, args.suite, task_id, seed_index, scene) / "episode.json"
         if path.is_file():
             finished[(task_id, seed_index, scene)] = json.loads(path.read_text(encoding="utf-8"))
-    reference = references(args.suite, source)
     monitor = RunMonitor(
         root,
         title=title,
         planned=len(plan),
         resumed=list(finished.values()),
         references=reference,
+        student=student.describe(),
         write_results=lambda episodes: write_results(root, title, episodes, notes, len(plan)),
     )
     monitor.log(

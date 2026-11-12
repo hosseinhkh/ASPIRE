@@ -12,10 +12,12 @@ Three methods:
     full       every weight the checkpoint itself trained (vision encoder included)
     lora       LeRobot's default LoRA: the action expert's attention and the state/action
                projections. The vision-language backbone is untouched.
-    lora-vlm   LoRA on the attention of the backbone as well
+    lora-vlm   LoRA on the attention of the backbone as well (SmolVLA only for now)
 
-The dataset must carry the base checkpoint's normalisation statistics (``dataset.freeze_stats``),
-because lerobot-train copies the dataset's statistics into the fine-tuned checkpoint.
+The student (``cap_harness.vla.students``) sets the defaults: learning rate per method, the
+camera renaming, the LoRA targets and extra trainer arguments. The dataset must carry the base
+checkpoint's normalisation statistics (``dataset.freeze_stats``) for the same student, because
+lerobot-train copies the dataset's statistics into the fine-tuned checkpoint.
 """
 
 from __future__ import annotations
@@ -32,16 +34,12 @@ import time
 from typing import Any
 
 from cap_harness.trace2vla.store import atomic_write, now_iso, read_json, sha256_file, write_json
-from cap_harness.vla.policy import CAMERA_RENAME
+from cap_harness.vla import students
 
 METHODS = ("full", "lora", "lora-vlm")
-#: Attention projections of the action expert, the language model and the vision encoder,
-#: plus the projections LeRobot's default LoRA already covers.
-LORA_VLM_TARGETS = (
-    r"(model\.vlm_with_expert\..*\.(q|v)_proj"
-    r"|model\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out))"
-)
-DEFAULT_LR = {"full": 5e-5, "lora": 1e-4, "lora-vlm": 1e-4}
+#: SmolVLA's (the default student's) LoRA targets and learning rates, kept under their old names.
+LORA_VLM_TARGETS = students.SMOLVLA.lora_vlm_targets
+DEFAULT_LR = dict(students.SMOLVLA.learning_rates)
 METRIC = re.compile(
     r"step:(\S+) smpl:(\S+) ep:(\S+) epch:(\S+) loss:(\S+) grdn:(\S+) lr:(\S+) updt_s:(\S+) data_s:(\S+)"
 )
@@ -61,13 +59,20 @@ class TrainSettings:
     num_workers: int = 4
     device: str = "cuda"
     warmup_steps: int | None = None
+    student: str = students.DEFAULT_STUDENT
 
     def resolved(self) -> dict[str, Any]:
         if self.method not in METHODS:
             raise ValueError(f"method must be one of {', '.join(METHODS)}")
+        student = students.get(self.student)
+        if self.method not in student.learning_rates:
+            raise ValueError(
+                f"{student.label} does not support --method {self.method} yet: "
+                f"use {' or '.join(student.learning_rates)}"
+            )
         return {
             **self.__dict__,
-            "lr": self.lr if self.lr is not None else DEFAULT_LR[self.method],
+            "lr": self.lr if self.lr is not None else student.learning_rates[self.method],
             "save_freq": self.save_freq or self.steps,
             "warmup_steps": self.warmup_steps
             if self.warmup_steps is not None
@@ -127,14 +132,33 @@ def build_command(
         f"--policy.optimizer_lr={settings['lr']}",
         f"--policy.scheduler_warmup_steps={settings['warmup_steps']}",
         f"--policy.scheduler_decay_steps={settings['steps']}",
-        # The checkpoint names its cameras camera1/camera2; the dataset uses LIBERO's names.
-        f"--rename_map={json.dumps(CAMERA_RENAME)}",
     ]  # fmt: skip
+    student = students.get(settings.get("student"))
+    if student.camera_rename:
+        # The checkpoint renamed its cameras (SmolVLA: camera1/camera2); the dataset uses
+        # LIBERO's names.
+        command.append(f"--rename_map={json.dumps(dict(student.camera_rename))}")
     if settings["method"] in ("lora", "lora-vlm"):
         command += ["--peft.method_type=LORA", f"--peft.r={settings['lora_rank']}"]
     if settings["method"] == "lora-vlm":
-        command.append(f"--peft.target_modules={LORA_VLM_TARGETS}")
-    return command
+        command.append(f"--peft.target_modules={student.lora_vlm_targets}")
+    return command + list(student.train_args)
+
+
+def check_student(dataset_root: Path, checkpoint: Path, student: students.Student) -> None:
+    """Refuse a dataset built for another student, or a checkpoint of another policy type."""
+    manifest = read_json(dataset_root / "manifest.json") or {}
+    built_for = students.infer(manifest)[0]
+    if built_for != student.key:
+        raise ValueError(
+            f"dataset {dataset_root.name} carries {students.label(built_for)}'s normalisation "
+            f"statistics, not {student.label}'s: build one for {student.label} "
+            f"(t2v.sh dataset NAME --from-dataset {dataset_root.name} --student {student.key} "
+            "--name NEW)"
+        )
+    found = students.for_policy_type(students.checkpoint_type(checkpoint))
+    if found is not None and found.key != student.key:
+        raise ValueError(f"{checkpoint} is a {found.label} checkpoint, not {student.label}")
 
 
 def checkpoint_of(run_dir: Path) -> Path | None:
@@ -160,6 +184,8 @@ def train(
         raise FileExistsError(f"{run_dir} already holds a training run (choose another name)")
     manifest = read_json(dataset_root / "manifest.json") or {}
     resolved = settings.resolved()
+    student = students.get(resolved["student"])
+    check_student(dataset_root, checkpoint, student)
     run_dir.mkdir(parents=True, exist_ok=True)
     command = build_command(
         python=python,
@@ -175,6 +201,7 @@ def train(
         "started": now_iso(),
         "settings": resolved,
         "command": command,
+        "student": student.describe(),
         "base_checkpoint": str(checkpoint),
         "dataset": str(dataset_root),
         "dataset_manifest_sha256": sha256_file(dataset_root / "manifest.json")

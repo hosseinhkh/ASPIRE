@@ -22,6 +22,8 @@ const minutes = (s) => (s === null || s === undefined ? "-" : s < 5400 ? `${Math
 const zip = (path, media, label) => `<a class="btn" href="/download?path=${q(path)}&media=${media ? 1 : 0}">${esc(label)}</a>`;
 const statusBadge = (s) => `<span class="badge ${{ running: "ok", finished: "ok", interrupted: "warn", stopped: "bad", failed: "bad" }[s] || "muted"}">${esc(s || "-")}${s === "running" ? " ●" : ""}</span>`;
 export const familyBadge = (f) => (f ? `<span class="badge ${(FAMILY[f] || ["muted"])[0]}" title="${esc((FAMILY[f] || ["", f])[1])}">${esc(f)}</span>` : "");
+// Runs recorded before pi0.5 support name no student: they are SmolVLA's.
+export const studentBadge = (label) => `<span class="chip" title="the student policy">${esc(label || "SmolVLA")}</span>`;
 export const families = (counts) =>
   Object.entries(counts || {})
     .sort((a, b) => b[1] - a[1])
@@ -34,7 +36,7 @@ export async function renderList(app) {
   const data = await api("/api/t2v/experiments");
   app.innerHTML = `
     <div class="page-head"><h1>Trace2VLA</h1></div>
-    <p class="muted small">ASPIRE as the teacher, SmolVLA as the student. Each experiment keeps the teacher's programs and episodes,
+    <p class="muted small">ASPIRE as the teacher, SmolVLA or pi0.5 as the student (each evaluation, dataset and training run shows which). Each experiment keeps the teacher's programs and episodes,
       the demonstrations converted to the student's control, the datasets, the training runs and the student's evaluations,
       with a ledger of what produced what. Start one with <span class="mono">scripts/gpu/t2v.sh init</span>.</p>
     <div class="panel flush"><table class="table"><thead><tr><th>Experiment</th><th>Suite</th><th>Teacher (official scenes)</th><th>Demos</th><th>Datasets</th><th>Training</th><th>Student evaluations</th><th>Last event</th></tr></thead><tbody>
@@ -46,8 +48,8 @@ export async function renderList(app) {
           <td class="mono small">${esc(e.suite || "")}</td>
           <td>${e.teacher_official ? rate(e.teacher_official.successes, e.teacher_official.episodes) : '<span class="muted">not run</span>'}</td>
           <td>${esc(e.demos)}</td><td>${esc(e.datasets)}</td>
-          <td class="small">${e.training.map((t) => `${esc(t.name)} ${statusBadge(t.status)}`).join("<br>")}</td>
-          <td class="small">${e.evals.map((v) => `${esc(v.name)}: <b>${percent(v.mean)}</b> ${v.status === "finished" ? "" : statusBadge(v.status)}`).join("<br>")}</td>
+          <td class="small">${e.training.map((t) => `${esc(t.name)} <span class="muted">${esc(t.student_label || "")}</span> ${statusBadge(t.status)}`).join("<br>")}</td>
+          <td class="small">${e.evals.map((v) => `${esc(v.name)} <span class="muted">${esc(v.student_label || "")}</span>: <b>${percent(v.mean)}</b> ${v.status === "finished" ? "" : statusBadge(v.status)}`).join("<br>")}</td>
           <td class="small">${e.last_event ? `${esc(e.last_event.event)}<div class="muted">${esc(e.last_event.time)}</div>` : ""}</td></tr>`,
         )
         .join("") || `<tr><td colspan="8" class="muted">No experiment yet: <span class="mono">scripts/gpu/t2v.sh init preflight --suite libero_object_swap --tasks 0,1</span></td></tr>`
@@ -63,8 +65,22 @@ export async function renderExperiment(app, params, ctx) {
   const official = d.teacher.official;
   const main = d.evals.filter((e) => e.suite === suite);
   const other = d.evals.filter((e) => e.suite !== suite);
-  const before = main.find((e) => (e.checkpoint || "").startsWith("base"));
-  const after = [...main].reverse().find((e) => !(e.checkpoint || "").startsWith("base"));
+  // Before and after training, per student (SmolVLA and pi0.5 are compared separately).
+  const studentLabels = [...new Set(main.map((e) => e.student_label || "SmolVLA"))];
+  const progressCards = studentLabels.length
+    ? studentLabels
+        .map((label) => {
+          const own = main.filter((e) => (e.student_label || "SmolVLA") === label);
+          const before = own.find((e) => (e.checkpoint || "").startsWith("base"));
+          const after = [...own].reverse().find((e) => !(e.checkpoint || "").startsWith("base"));
+          return card(
+            `${esc(label)}: before → after`,
+            `<b>${before ? percent(before.mean) : "-"}</b> → <b>${after ? percent(after.mean) : "-"}</b>`,
+            `${before ? `${before.successes}/${before.episodes} · ${esc(before.name)}` : "t2v.sh eval --checkpoint base"}<br>${after ? `${after.successes}/${after.episodes} · ${esc(after.name)} (${esc(after.checkpoint)})` : "after training: t2v.sh eval --checkpoint RUN"}`,
+          );
+        })
+        .join("")
+    : card("Student before → after", "-", "t2v.sh eval --checkpoint base");
   const demos = d.demos.reduce((n, s) => n + (s.accepted || 0), 0);
   const running = d.training.some((t) => t.progress.status === "running") || d.evals.some((e) => e.progress.status === "running");
   teacherSet = teacherSet && d.teacher[teacherSet] ? teacherSet : Object.keys(d.teacher)[0] || null;
@@ -76,11 +92,10 @@ export async function renderExperiment(app, params, ctx) {
       <div class="toolbar"><span class="btn-group">${zip(d.path, false, "Download logs")}${zip(d.path, true, "Download all")}</span></div></div>
     <div class="cards">
       ${card("Teacher on official scenes", official ? `<b>${percent(official.mean)}</b>` : "not run", official ? `${official.successes}/${official.episodes} episodes` : "t2v.sh teacher-run --scenes official")}
-      ${card("Student before", before ? `<b>${percent(before.mean)}</b>` : "-", before ? `${before.successes}/${before.episodes} · ${esc(before.name)}` : "t2v.sh eval --checkpoint base")}
-      ${card("Student after", after ? `<b>${percent(after.mean)}</b>` : "-", after ? `${after.successes}/${after.episodes} · ${esc(after.name)} (${esc(after.checkpoint)})` : "after training: t2v.sh eval --checkpoint RUN")}
+      ${progressCards}
       ${card("Demonstrations", `${demos}`, d.demos.map((s) => `${esc(s.name)}: ${s.accepted} kept, ${s.rejected} rejected`).join("<br>"))}
-      ${card("Datasets", `${d.datasets.length}`, d.datasets.map((s) => `${esc(s.name)}: ${s.episodes} episodes, ${s.frames} frames`).join("<br>"))}
-      ${card("Training", `${d.training.length}`, d.training.map((t) => `${esc(t.name)} ${statusBadge(t.progress.status)} ${t.progress.step ?? 0}/${t.progress.steps ?? "?"}`).join("<br>"))}
+      ${card("Datasets", `${d.datasets.length}`, d.datasets.map((s) => `${esc(s.name)} <span class="muted">${esc(s.student_label || "")}</span>: ${s.episodes} episodes, ${s.frames} frames`).join("<br>"))}
+      ${card("Training", `${d.training.length}`, d.training.map((t) => `${esc(t.name)} <span class="muted">${esc(t.student_label || "")}</span> ${statusBadge(t.progress.status)} ${t.progress.step ?? 0}/${t.progress.steps ?? "?"}`).join("<br>"))}
     </div>
     ${tabs("t2v-exp", ["Compare", "Teacher", "Demos", "Training", "Evaluations", "Datasets", "Ledger"], expTab)}`;
 
@@ -92,15 +107,15 @@ export async function renderExperiment(app, params, ctx) {
     return `
     <p class="muted small">Every column is measured on the same scenes of each task. The teacher runs in joint control with up to 1,000 steps;
       the student runs in hand-movement control with LIBERO's step limit.</p>
-    <table class="table"><thead><tr><th>Task</th><th>Teacher (official)</th>${main.map((e) => `<th><a href="#/vla/run?path=${q(e.path)}">${esc(e.name)}</a><div class="muted small">${esc(e.checkpoint || "")}</div></th>`).join("")}</tr></thead><tbody>
+    <table class="table"><thead><tr><th>Task</th><th>Teacher (official)</th>${main.map((e) => `<th><a href="#/vla/run?path=${q(e.path)}">${esc(e.name)}</a><div class="small">${studentBadge(e.student_label)}</div><div class="muted small">${esc(e.checkpoint || "")}</div></th>`).join("")}</tr></thead><tbody>
       ${tasks.map((t) => `<tr><td>${taskName(t)}</td><td>${cell(teacherTasks[t])}</td>${main.map((e) => `<td>${cell(e.tasks.find((x) => x.task_id === t))}</td>`).join("")}</tr>`).join("")}
       <tr><td><b>mean</b></td><td><b>${official ? percent(official.mean) : "-"}</b></td>${main.map((e) => `<td><b>${percent(e.mean)}</b> ${e.progress.status === "finished" ? "" : statusBadge(e.progress.status)}</td>`).join("")}</tr>
       <tr><td class="muted">student failures</td><td></td>${main.map((e) => `<td class="small">${families(e.failure_families) || '<span class="muted">-</span>'}</td>`).join("")}</tr>
     </tbody></table>
     ${
       other.length
-        ? `<h3>Retention on other suites</h3><table class="table compact"><thead><tr><th>Evaluation</th><th>Suite</th><th>Checkpoint</th><th>Success</th><th>Failures</th></tr></thead><tbody>
-        ${other.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td>${esc(e.name)}</td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.checkpoint || "")}</td><td>${rate(e.successes || 0, e.episodes || 0)}</td><td class="small">${families(e.failure_families)}</td></tr>`).join("")}</tbody></table>`
+        ? `<h3>Retention on other suites</h3><table class="table compact"><thead><tr><th>Evaluation</th><th>Student</th><th>Suite</th><th>Checkpoint</th><th>Success</th><th>Failures</th></tr></thead><tbody>
+        ${other.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td>${esc(e.name)}</td><td>${studentBadge(e.student_label)}</td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.checkpoint || "")}</td><td>${rate(e.successes || 0, e.episodes || 0)}</td><td class="small">${families(e.failure_families)}</td></tr>`).join("")}</tbody></table>`
         : ""
     }
     <h3>Same scene, side by side</h3>
@@ -146,7 +161,7 @@ export async function renderExperiment(app, params, ctx) {
       ? d.training
           .map((t) => {
             const r = t.record, s = r.settings || {}, p = t.progress;
-            return `<div class="panel"><div class="panel-head"><b>${esc(t.name)}</b> ${statusBadge(p.status)}
+            return `<div class="panel"><div class="panel-head"><b>${esc(t.name)}</b> ${studentBadge(t.student_label)} ${statusBadge(p.status)}
               <span class="muted small">${esc(s.method)} · ${esc(s.steps)} steps · batch ${esc(s.batch_size)} · lr ${esc(s.lr)} · dataset ${esc(String(r.dataset || "").split("/").pop())} (${esc(r.dataset_episodes)} episodes, ${esc(r.dataset_frames)} frames)</span></div>
               <div class="cards">${card("Step", `${p.step ?? 0}/${p.steps ?? s.steps}`, p.status === "running" ? `ETA ${minutes(p.eta_s)}` : `took ${minutes(r.wall_s ?? p.elapsed_s)}`)}
                 ${card("Loss", num(p.loss ?? r.final_loss, 3), t.loss.length ? `first logged ${num(t.loss[0], 3)}` : "")}
@@ -163,8 +178,8 @@ export async function renderExperiment(app, params, ctx) {
 
   const evals = () =>
     d.evals.length
-      ? `<table class="table"><thead><tr><th>Evaluation</th><th>Checkpoint</th><th>Suite</th><th>Scenes</th><th>Status</th><th>Success</th><th>Failures</th></tr></thead><tbody>
-        ${d.evals.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td><b>${esc(e.name)}</b></td><td class="small">${esc(e.checkpoint || "")}</td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.scene_set || "")}</td>
+      ? `<table class="table"><thead><tr><th>Evaluation</th><th>Student</th><th>Checkpoint</th><th>Suite</th><th>Scenes</th><th>Status</th><th>Success</th><th>Failures</th></tr></thead><tbody>
+        ${d.evals.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td><b>${esc(e.name)}</b></td><td>${studentBadge(e.student_label)}</td><td class="small">${esc(e.checkpoint || "")}</td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.scene_set || "")}</td>
           <td>${statusBadge(e.progress.status)} <span class="small">${e.progress.done ?? 0}/${e.progress.planned ?? "?"}</span></td><td>${rate(e.successes || 0, e.episodes || 0)}</td><td class="small">${families(e.failure_families)}</td></tr>`).join("")}</tbody></table>
         <p class="muted small">Click a row for the per-task table, every episode's video and its charts.</p>`
       : `<p class="muted">No evaluation yet: <span class="mono">scripts/gpu/t2v.sh eval ${esc(d.name)} --name before --checkpoint base</span></p>`;
@@ -174,7 +189,7 @@ export async function renderExperiment(app, params, ctx) {
       ? d.datasets
           .map((s) => {
             const f = ((s.statistics || {}).frozen || {}).action;
-            return `<div class="panel"><div class="panel-head"><b>${esc(s.name)}</b> <span class="muted small">${esc(s.episodes)} episodes · ${esc(s.frames)} frames · per task ${esc(JSON.stringify(s.per_task))} · ${esc(s.rejected)} rejected at build · ${esc(s.created || "")}</span></div>
+            return `<div class="panel"><div class="panel-head"><b>${esc(s.name)}</b> ${studentBadge(s.student_label)}${s.derived_from ? ` <span class="muted small">frames of ${esc(s.derived_from)}</span>` : ""} <span class="muted small">${esc(s.episodes)} episodes · ${esc(s.frames)} frames · per task ${esc(JSON.stringify(s.per_task))} · ${esc(s.rejected)} rejected at build · ${esc(s.created || "")}</span></div>
               <p class="small">Normalisation statistics: <span class="mono">${esc((s.statistics || {}).source || "")}</span></p>
               ${f ? `<table class="table compact"><thead><tr><th>Action</th>${["dx", "dy", "dz", "drx", "dry", "drz", "gripper"].map((n) => `<th>${n}</th>`).join("")}</tr></thead><tbody>
                 <tr><td>std used (checkpoint)</td>${f.checkpoint_std.map((v) => `<td>${num(v, 3)}</td>`).join("")}</tr>
@@ -231,7 +246,7 @@ async function sideBySide(path, task, scene) {
           : `<p class="muted">The teacher's run has no video (<a href="#/episode?path=${q(s.teacher.run)}">replay</a>).</p>`).join("")
     : `<p class="muted">The teacher has not run on official scene ${esc(scene)} of task ${esc(task)}.</p>`;
   const students = s.students
-    .map((e) => (e.video ? video(e.video, `<b>${esc(e.eval)}</b> seed ${esc(e.seed)} ${e.success ? '<span class="badge ok">solved</span>' : '<span class="badge bad">failed</span>'} ${familyBadge(e.family)} ${e.chosen ? `took ${esc(e.chosen)}` : ""} · ${esc(e.steps)} steps · <a href="#/vla/episode?path=${q(e.path)}">episode</a>`) : ""))
+    .map((e) => (e.video ? video(e.video, `<b>${esc(e.eval)}</b> ${esc(e.student_label || "")} seed ${esc(e.seed)} ${e.success ? '<span class="badge ok">solved</span>' : '<span class="badge bad">failed</span>'} ${familyBadge(e.family)} ${e.chosen ? `took ${esc(e.chosen)}` : ""} · ${esc(e.steps)} steps · <a href="#/vla/episode?path=${q(e.path)}">episode</a>`) : ""))
     .join("");
   box.innerHTML = `<div style="display:flex;gap:12px;flex-wrap:wrap">${teacher}${students || '<p class="muted">No student evaluation has this scene.</p>'}</div>`;
 }

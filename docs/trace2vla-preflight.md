@@ -1,4 +1,4 @@
-# Trace2VLA preflight: teacher data → fine-tuned SmolVLA → comparison
+# Trace2VLA preflight: teacher data → fine-tuned SmolVLA → comparison (then π0.5)
 
 A first complete pass of the pipeline on two tasks of `libero_object_swap`. It answers three
 questions before the full ten-task run:
@@ -202,6 +202,76 @@ The report (`outputs/trace2vla/preflight/reports/summary.md`) and the **Compare*
 task: teacher on the official scenes, student before, student after, the student's failure
 families, and retention on the standard suite. "Same scene, side by side" plays the teacher's
 and the student's videos for one official scene.
+
+## π0.5: the same experiment with the second student
+
+After SmolVLA's preflight, in the same experiment: the same teacher demonstrations, the same
+scenes, the same grading. Nothing of SmolVLA's is changed or rerun, and the report and the
+dashboard keep the two students apart ("SmolVLA: before → after", "π0.5: before → after").
+[vla-student.md](vla-student.md#two-students-smolvla-and-π05) explains the differences.
+
+Once, to build π0.5's own environment and download its checkpoint (about 7.5 GB):
+
+```bash
+scripts/gpu/vla.sh setup-pi05
+```
+
+**Before training**, on the same 100 official-scene episodes, and on standard LIBERO-Object for
+retention:
+
+```bash
+scripts/gpu/t2v.sh eval preflight --name pi-before-official --student pi05 --scenes official --seeds 0
+```
+
+```bash
+scripts/gpu/t2v.sh eval preflight --name pi-before-standard --student pi05 --suite libero_object --scenes official --seeds 0
+```
+
+Expect close to 99% on the standard suite (LeRobot's number for this checkpoint). The
+LIBERO-PRO paper reports 17% for π0.5 with positions swapped, measured with openpi's own
+checkpoint, so expect the same order, not the same number.
+
+**The dataset**: the frames of `d50`, copied, with π0.5's normalisation statistics instead of
+SmolVLA's. Nothing is simulated again; only π0.5's config and statistics files are downloaded.
+
+```bash
+scripts/gpu/t2v.sh dataset preflight --from-dataset d50 --student pi05 --name d50-pi05
+```
+
+**Fine-tune.** A training run takes its student from its dataset. First 20 steps in the
+terminal, to see the memory and the time per step (`nvidia-smi` in a second terminal), then the
+real run:
+
+```bash
+scripts/gpu/t2v.sh train preflight --dataset d50-pi05 --name pi-smoke --method lora --steps 20
+```
+
+```bash
+scripts/gpu/t2v.sh train --detach preflight --dataset d50-pi05 --name ft-pi05-lora --method lora --steps 3000 --batch-size 32
+```
+
+The checkpoint's own config turns on gradient checkpointing and bfloat16; `torch.compile` is
+turned off. `--method full` also works (learning rate 2.5e-5, the checkpoint's own) but needs
+most of a 96 GB card. `--method lora-vlm` is refused for π0.5 for now.
+
+**After training**, and the report:
+
+```bash
+scripts/gpu/t2v.sh eval preflight --name pi-after-official --checkpoint ft-pi05-lora --scenes official --seeds 0
+```
+
+```bash
+scripts/gpu/t2v.sh eval preflight --name pi-after-standard --checkpoint ft-pi05-lora --suite libero_object --scenes official --seeds 0
+```
+
+```bash
+scripts/gpu/t2v.sh report preflight
+```
+
+What is refused, so that no number is mixed up: an evaluation folder holding the other
+student's episodes (pick another `--name`), a training run on a dataset built with the other
+student's statistics (the error gives the `--from-dataset` command), and a checkpoint that does
+not match `--student`.
 
 ## Optional: failure types of the 1,500-episode baseline
 

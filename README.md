@@ -531,7 +531,7 @@ That releases GPU 0.
 | Trace2VLA roadmap: work ahead, experiments for the paper, risks, open decisions | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
 | Trace2VLA findings log: what was measured, what went wrong and why, fixes, open items (grasp planner, CPU load, GPU reservation) | [`docs/trace2vla-findings.md`](docs/trace2vla-findings.md) |
 | Trace2VLA related work: closest papers, what is published, what is open, expected baselines | [`docs/trace2vla-related-work.md`](docs/trace2vla-related-work.md) |
-| VLA student: SmolVLA on LIBERO / LIBERO-Pro in ASPIRE's simulator (setup, parity, baseline) | [`docs/vla-student.md`](docs/vla-student.md) |
+| VLA student: SmolVLA (and π0.5 as a second student) on LIBERO / LIBERO-Pro in ASPIRE's simulator (setup, parity, baseline) | [`docs/vla-student.md`](docs/vla-student.md) |
 | Trace2VLA design review: measurements, design changes, pipeline structure, order of work | [`docs/trace2vla-review.md`](docs/trace2vla-review.md) |
 | Trace2VLA preflight: teacher data → fine-tuned SmolVLA → comparison, every command | [`docs/trace2vla-preflight.md`](docs/trace2vla-preflight.md) |
 | Robosuite | [`docs/robosuite.md`](docs/robosuite.md) |

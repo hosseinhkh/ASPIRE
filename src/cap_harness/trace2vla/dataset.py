@@ -10,6 +10,9 @@
   checkpoint's statistics with the dataset's when fine-tuning; with the checkpoint's own
   statistics written into the dataset, every update keeps the scaling the weights expect. The
   statistics computed from the new data are kept beside them (``meta/stats.computed.json``).
+* **A dataset is for one student** (``manifest.json`` names it): the frames are the same for
+  every student, the statistics are not. ``derive_dataset`` copies a dataset and swaps in
+  another student's statistics without rendering the frames again.
 * ``manifest.json`` lists every episode with its demo, its teacher run and their hashes.
 """
 
@@ -26,6 +29,7 @@ import numpy as np
 
 from cap_harness.trace2vla import replay
 from cap_harness.trace2vla.store import now_iso, read_json, sha256_file, write_json
+from cap_harness.vla import students
 from cap_harness.vla.protocol import IMAGE_SIZE
 
 FPS = 10  # as lerobot/libero declares (frames are consecutive 20 Hz control steps)
@@ -83,11 +87,19 @@ def checkpoint_stats(checkpoint: Path) -> dict[str, dict[str, list[float]]]:
 
 
 def freeze_stats(dataset_root: Path, checkpoint: Path) -> dict[str, Any]:
-    """Write the checkpoint's state and action statistics into the dataset."""
+    """Write the checkpoint's state and action statistics into the dataset.
+
+    The statistics computed from the data are kept in ``meta/stats.computed.json`` the first
+    time and read from there afterwards, so freezing again (for another student) starts from
+    the data's own statistics, not from the previous student's.
+    """
     path = dataset_root / "meta" / "stats.json"
-    computed = json.loads(path.read_text(encoding="utf-8"))
-    if not (dataset_root / "meta" / "stats.computed.json").is_file():
-        write_json(dataset_root / "meta" / "stats.computed.json", computed)
+    original = dataset_root / "meta" / "stats.computed.json"
+    if original.is_file():
+        computed = json.loads(original.read_text(encoding="utf-8"))
+    else:
+        computed = json.loads(path.read_text(encoding="utf-8"))
+        write_json(original, computed)
     base = checkpoint_stats(checkpoint)
     frozen = dict(computed)
     for feature in FROZEN_FEATURES:
@@ -115,8 +127,10 @@ def build_dataset(
     image_size: int = IMAGE_SIZE,
     vcodec: str = "libsvtav1",
     log: Any = print,
+    student: str = students.DEFAULT_STUDENT,
 ) -> dict[str, Any]:
     """Replay each demo and write it as one dataset episode. Returns the manifest."""
+    chosen = students.get(student)
     import datasets as hf_datasets
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -211,6 +225,7 @@ def build_dataset(
     manifest = {
         "name": name,
         "created": now_iso(),
+        "student": chosen.describe(),
         "repo_id": f"trace2vla/{name}",
         "root": str(out_dir),
         "fps": FPS,
@@ -224,8 +239,52 @@ def build_dataset(
         },
         "statistics": {
             "source": str(checkpoint) if checkpoint else "computed from this dataset",
+            "student": chosen.key,
             "frozen": frozen,
         },
+    }
+    write_json(out_dir / "manifest.json", manifest)
+    return manifest
+
+
+def derive_dataset(
+    source_root: Path,
+    out_dir: Path,
+    *,
+    name: str,
+    checkpoint: Path,
+    student: str,
+) -> dict[str, Any]:
+    """Copy a dataset for another student: same frames and actions, that student's statistics.
+
+    Rendering 98 demos takes 10-20 minutes; this takes seconds. The new manifest names the
+    dataset it came from and that dataset's manifest hash.
+    """
+    chosen = students.get(student)
+    source_manifest = read_json(source_root / "manifest.json")
+    if not source_manifest:
+        raise FileNotFoundError(f"no dataset at {source_root} (t2v.sh dataset)")
+    if out_dir.exists():
+        raise FileExistsError(f"{out_dir} already exists (choose another dataset name)")
+    shutil.copytree(source_root, out_dir)
+    try:
+        frozen = freeze_stats(out_dir, checkpoint)
+    except Exception:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
+    manifest = {
+        **source_manifest,
+        "name": name,
+        "created": now_iso(),
+        "student": chosen.describe(),
+        "repo_id": f"trace2vla/{name}",
+        "root": str(out_dir),
+        "derived_from": {
+            "name": source_manifest.get("name", source_root.name),
+            "manifest_sha256": sha256_file(source_root / "manifest.json"),
+            "student": students.infer(source_manifest)[0],
+        },
+        "statistics": {"source": str(checkpoint), "student": chosen.key, "frozen": frozen},
     }
     write_json(out_dir / "manifest.json", manifest)
     return manifest

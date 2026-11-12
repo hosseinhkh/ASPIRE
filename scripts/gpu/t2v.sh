@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Trace2VLA: ASPIRE teacher episodes -> training data -> fine-tuned SmolVLA -> comparison.
+# Trace2VLA: ASPIRE teacher episodes -> training data -> fine-tuned student -> comparison.
 #
 #   scripts/gpu/t2v.sh init NAME --suite libero_object_swap --tasks 0,1
 #   scripts/gpu/t2v.sh check NAME                 sanity checks (environment, services, simulator)
@@ -7,9 +7,11 @@
 #   scripts/gpu/t2v.sh teacher-run NAME --scenes official|train|dev [--workers 2]
 #   scripts/gpu/t2v.sh teacher-grade NAME --scenes SET
 #   scripts/gpu/t2v.sh convert NAME --scenes train [--speed 3]
-#   scripts/gpu/t2v.sh dataset NAME --demos train-3x --name d50 [--per-task 50]
+#   scripts/gpu/t2v.sh dataset NAME --demos train-3x --name d50 [--per-task 50] [--student pi05]
+#   scripts/gpu/t2v.sh dataset NAME --from-dataset d50 --student pi05 --name d50-pi05
 #   scripts/gpu/t2v.sh train NAME --dataset d50 --name ft-full [--method full|lora|lora-vlm]
 #   scripts/gpu/t2v.sh eval NAME --name after --checkpoint ft-full [--scenes official] [--seeds 0]
+#   scripts/gpu/t2v.sh eval NAME --name pi-before --student pi05 [--checkpoint base]
 #   scripts/gpu/t2v.sh grade-student RUN_DIR      failure labels for an existing student run
 #   scripts/gpu/t2v.sh report NAME                teacher vs student before vs after
 #   scripts/gpu/t2v.sh status [NAME]              what exists, what is running, last events
@@ -20,6 +22,8 @@
 # convert, dataset, train, eval): it survives a closed terminal and logs to
 # outputs/trace2vla/NAME/logs/. GPU: --gpu N first, or ASPIRE_T2V_GPU (default 0). teacher-run
 # keeps the conda env's own GPU, where ASPIRE's model services are.
+# Students: SmolVLA (default) or pi0.5 (--student pi05 on dataset and eval; train takes the
+# student from its dataset). pi0.5 runs in .venv-pi05 (scripts/gpu/vla.sh setup-pi05).
 # The dashboard shows experiments under "Trace2VLA" (python scripts/gpu/dashboard.py).
 set -euo pipefail
 
@@ -28,7 +32,8 @@ VENV_PY="$REPO_ROOT/.venv-libero/bin/python"
 OUT="$REPO_ROOT/outputs/trace2vla"
 GPU="${ASPIRE_T2V_GPU:-0}"
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+# The comment block at the top, whatever its length.
+usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 if [[ "${1:-}" == "--gpu" ]]; then GPU="$2"; shift 2; fi
 cmd="${1:-}"
 [[ -n "$cmd" ]] && shift

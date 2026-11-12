@@ -8,8 +8,13 @@ teacher-run NAME --scenes SET            run the programs on a scene set (full r
 teacher-grade NAME --scenes SET          replay and grade the teacher's episodes
 convert NAME --scenes SET                successes -> demos in the student's control
 dataset NAME --demos D --name N          demos -> LeRobot dataset (checkpoint statistics)
-train NAME --dataset N --name RUN        fine-tune the student
+  [--student pi05] [--from-dataset N]    for another student; copy an existing dataset's frames
+train NAME --dataset N --name RUN        fine-tune the student the dataset is for
 eval NAME --name E --checkpoint C        benchmark a checkpoint on a scene set
+  [--student pi05]                       which student's base checkpoint ('base')
+
+Students (cap_harness.vla.students): smolvla (default) and pi05. Each runs in its own
+environment; eval and train move themselves into the right one.
 grade-student RUN_DIR                    add failure labels to an existing student run
 report NAME                              teacher vs student before vs after
 status [NAME]                            what exists, what is running, last events
@@ -27,6 +32,7 @@ import numpy as np
 
 from cap_harness.trace2vla.scenes import DEFAULT_SCENE_SETS, compact, scene_set, scene_sets
 from cap_harness.trace2vla.store import OUTPUTS, Experiment, read_json, write_json
+from cap_harness.vla import students
 from cap_harness.vla.libero_compat import ensure_runtime_env
 from cap_harness.vla.protocol import parse_int_list
 
@@ -71,6 +77,37 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 # -------------------------------------------------------------------------------- check --
+def _student_ready(student: students.Student) -> tuple[bool | None, str]:
+    """(PASS/WARN, detail) for a student's own environment and checkpoint."""
+    import subprocess
+
+    python = student.python()
+    if not python.exists():
+        return None, f"not set up: {student.setup_command}"
+    probe = subprocess.run(
+        [str(python), "-c", f"import lerobot.policies.{student.policy_type}"],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if probe.returncode != 0:
+        last = (probe.stderr.strip().splitlines() or ["?"])[-1]
+        return False, f"{student.venv} cannot import its policy ({last}); {student.setup_command}"
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        cached = try_to_load_from_cache(
+            student.checkpoint, "model.safetensors", revision=student.revision
+        )
+    except Exception:
+        cached = None
+    weights = (
+        "checkpoint downloaded" if isinstance(cached, str) else "checkpoint downloads on first use"
+    )
+    return True, f"{student.venv} ready; {student.checkpoint}: {weights}"
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Sanity checks. Exit status 1 when something a stage needs is missing."""
     ensure_runtime_env()
@@ -108,6 +145,11 @@ def cmd_check(args: argparse.Namespace) -> int:
         report(True, "base checkpoint", resolve_checkpoint(DEFAULT_POLICY, DEFAULT_REVISION))
     except Exception as exc:
         report(False, "base checkpoint", f"{type(exc).__name__}: {exc}")
+    for other in students.STUDENTS.values():
+        if other.key == students.DEFAULT_STUDENT:
+            continue
+        ok, detail = _student_ready(other)
+        report(ok, f"{other.label} student (optional)", detail)
     try:
         import torch
 
@@ -370,34 +412,74 @@ def cmd_convert(args: argparse.Namespace) -> int:
     return 0 if summary["accepted"] else 1
 
 
+def statistics_checkpoint(student: students.Student) -> Path:
+    """A local copy of the student's checkpoint with at least its config and statistics
+    (the weights are not needed to build a dataset, and pi0.5's are 7.5 GB).
+    """
+    from huggingface_hub import snapshot_download
+
+    return Path(
+        snapshot_download(
+            student.checkpoint,
+            revision=student.revision,
+            allow_patterns=["config.json", "policy_*"],
+        )
+    )
+
+
 def cmd_dataset(args: argparse.Namespace) -> int:
     ensure_runtime_env()
     from cap_harness.trace2vla import dataset
-    from cap_harness.vla.policy import DEFAULT_POLICY, DEFAULT_REVISION, resolve_checkpoint
 
     experiment = Experiment.open(args.name)
-    demos = dataset.demo_dirs(
-        experiment.demo_dir(args.demos), _tasks(experiment, args.tasks), args.per_task
-    )
-    if not demos:
+    student = students.get(args.student)
+    if args.from_dataset:
+        source = experiment.dataset_dir(args.from_dataset)
         print(
-            f"error: demo set '{args.demos}' has no accepted demos for these tasks (t2v.sh convert)",
-            file=sys.stderr,
+            f"dataset '{args.dataset}': the frames of '{args.from_dataset}' with {student.label}'s "
+            f"statistics ({student.checkpoint})"
         )
-        return 1
-    checkpoint = Path(resolve_checkpoint(DEFAULT_POLICY, DEFAULT_REVISION))
+        manifest = dataset.derive_dataset(
+            source,
+            experiment.dataset_dir(args.dataset),
+            name=args.dataset,
+            checkpoint=statistics_checkpoint(student),
+            student=student.key,
+        )
+        experiment.log(
+            "dataset_derived", name=args.dataset, source=args.from_dataset, student=student.key,
+            episodes=len(manifest["episodes"]), frames=manifest["frames"],
+        )  # fmt: skip
+    else:
+        if args.demos is None:
+            print("error: --demos is required (or --from-dataset NAME)", file=sys.stderr)
+            return 2
+        demos = dataset.demo_dirs(
+            experiment.demo_dir(args.demos), _tasks(experiment, args.tasks), args.per_task
+        )
+        if not demos:
+            print(
+                f"error: demo set '{args.demos}' has no accepted demos for these tasks (t2v.sh convert)",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"building dataset '{args.dataset}' for {student.label} from {len(demos)} demos (statistics from {student.checkpoint})"
+        )
+        manifest = dataset.build_dataset(
+            demos,
+            experiment.dataset_dir(args.dataset),
+            name=args.dataset,
+            checkpoint=statistics_checkpoint(student),
+            student=student.key,
+        )
+        experiment.log(
+            "dataset_built", name=args.dataset, demos=args.demos, student=student.key,
+            episodes=len(manifest["episodes"]), frames=manifest["frames"], per_task=manifest["per_task"],
+            rejected=len(manifest["rejected"]),
+        )  # fmt: skip
     print(
-        f"building dataset '{args.dataset}' from {len(demos)} demos (statistics from {DEFAULT_POLICY})"
-    )
-    manifest = dataset.build_dataset(
-        demos, experiment.dataset_dir(args.dataset), name=args.dataset, checkpoint=checkpoint
-    )
-    experiment.log(
-        "dataset_built", name=args.dataset, demos=args.demos, episodes=len(manifest["episodes"]),
-        frames=manifest["frames"], per_task=manifest["per_task"], rejected=len(manifest["rejected"]),
-    )  # fmt: skip
-    print(
-        f"dataset '{args.dataset}': {len(manifest['episodes'])} episodes, {manifest['frames']} frames, per task {manifest['per_task']}"
+        f"dataset '{args.dataset}' ({student.label}): {len(manifest['episodes'])} episodes, {manifest['frames']} frames, per task {manifest['per_task']}"
     )
     frozen = manifest["statistics"]["frozen"]["action"]
     print(
@@ -411,26 +493,48 @@ def cmd_dataset(args: argparse.Namespace) -> int:
 
 
 # ------------------------------------------------------------------------- train / eval --
+def _train_student(args: argparse.Namespace, experiment: Experiment) -> students.Student:
+    """--student, else the student of the run trained from, else the one the dataset is for."""
+    if args.student:
+        return students.get(args.student)
+    if args.base != "base":
+        return _checkpoint(experiment, args.base)[2]
+    manifest = read_json(experiment.dataset_dir(args.dataset) / "manifest.json") or {}
+    return students.get(students.infer(manifest)[0])
+
+
 def cmd_train(args: argparse.Namespace) -> int:
     from cap_harness.trace2vla import train
-    from cap_harness.vla.policy import DEFAULT_POLICY, DEFAULT_REVISION, resolve_checkpoint
+    from cap_harness.vla.policy import resolve_checkpoint
 
     experiment = Experiment.open(args.name)
     dataset_root = experiment.dataset_dir(args.dataset)
     if not (dataset_root / "manifest.json").is_file():
         print(f"error: no dataset '{args.dataset}' (t2v.sh dataset)", file=sys.stderr)
         return 1
+    student = _train_student(args, experiment)
+    built_for = students.infer(read_json(dataset_root / "manifest.json") or {})[0]
+    if built_for != student.key:
+        print(
+            f"error: dataset '{args.dataset}' is for {students.label(built_for)}, not {student.label}: "
+            f"t2v.sh dataset {experiment.root.name} --from-dataset {args.dataset} --student {student.key} --name NEW",
+            file=sys.stderr,
+        )
+        return 2
+    # Before anything heavy: each student trains in its own environment.
+    students.reexec(student, "cap_harness.trace2vla", args.argv)
     base = (
         _checkpoint(experiment, args.base)[1]
         if args.base != "base"
-        else Path(resolve_checkpoint(DEFAULT_POLICY, DEFAULT_REVISION))
+        else Path(resolve_checkpoint(student.checkpoint, student.revision))
     )
     settings = train.TrainSettings(
         method=args.method, steps=args.steps, batch_size=args.batch_size, lr=args.lr, lora_rank=args.lora_rank,
         seed=args.seed, save_freq=args.save_freq, log_freq=args.log_freq, num_workers=args.num_workers, device=args.device,
+        student=student.key,
     )  # fmt: skip
     print(
-        f"training '{args.run}': {args.method}, {args.steps} steps, batch {args.batch_size}, from {args.base}, on dataset '{args.dataset}'"
+        f"training '{args.run}' ({student.label}): {args.method}, {args.steps} steps, batch {args.batch_size}, from {args.base}, on dataset '{args.dataset}'"
     )
     record = train.train(
         experiment.training_dir(args.run),
@@ -439,7 +543,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         settings=settings,
     )
     experiment.log(
-        "training_finished", name=args.run, dataset=args.dataset, base=args.base, status=record["status"],
+        "training_finished", name=args.run, dataset=args.dataset, base=args.base, student=student.key, status=record["status"],
         checkpoint=record.get("checkpoint"), final_loss=record.get("final_loss"), wall_s=record.get("wall_s"), settings=record["settings"],
     )  # fmt: skip
     print(
@@ -453,23 +557,36 @@ def cmd_train(args: argparse.Namespace) -> int:
     return 0 if record["status"] == "finished" else 1
 
 
-def _checkpoint(experiment: Experiment, name: str) -> tuple[str, str | None]:
-    """(label, policy path or None for the pinned base checkpoint)."""
+def _checkpoint(
+    experiment: Experiment, name: str, student: str | None = None
+) -> tuple[str, str | None, students.Student]:
+    """(label, policy path or None for the student's pinned base checkpoint, student).
+
+    'base' is the base checkpoint of ``student`` (default SmolVLA); a training run or a
+    checkpoint folder brings its own student, and naming a different one is an error.
+    """
     from cap_harness.trace2vla.train import checkpoint_of
 
     if name == "base":
-        return "base (lerobot/smolvla_libero)", None
+        chosen = students.get(student)
+        return f"base ({chosen.checkpoint})", None, chosen
     run = experiment.training_dir(name)
     if run.is_dir():
         path = checkpoint_of(run)
         if path is None:
             raise FileNotFoundError(f"training run '{name}' has no checkpoint yet")
-        return f"training/{name}", str(path)
-    if Path(name).is_dir():
-        return name, str(Path(name).resolve())
-    raise FileNotFoundError(
-        f"'{name}' is neither 'base', a training run of this experiment, nor a checkpoint folder"
-    )
+        found = students.get(students.infer(read_json(run / "run.json") or {})[0])
+        label, policy = f"training/{name}", str(path)
+    elif Path(name).is_dir():
+        label, policy = name, str(Path(name).resolve())
+        found = students.for_source(policy) or students.get(student)
+    else:
+        raise FileNotFoundError(
+            f"'{name}' is neither 'base', a training run of this experiment, nor a checkpoint folder"
+        )
+    if student is not None and students.get(student).key != found.key:
+        raise ValueError(f"'{name}' is a {found.label} checkpoint, not {students.label(student)}")
+    return label, policy, found
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
@@ -477,14 +594,30 @@ def cmd_eval(args: argparse.Namespace) -> int:
     from cap_harness.vla import benchmark
 
     experiment = Experiment.open(args.name)
-    label, policy = _checkpoint(experiment, args.checkpoint)
+    label, policy, student = _checkpoint(experiment, args.checkpoint, args.student)
     scenes = scene_set(experiment.settings, args.scenes)
     suite = args.suite or experiment.suite
     out = experiment.eval_dir(args.eval)
+    previous = read_json(out / "eval.json") or {}
+    if previous and students.infer(previous)[0] != student.key:
+        print(
+            f"error: evaluation '{args.eval}' holds {students.label(students.infer(previous)[0])} "
+            f"episodes; choose another --name for {student.label}",
+            file=sys.stderr,
+        )
+        return 2
+    # Before anything heavy: each student runs in its own environment.
+    students.reexec(student, "cap_harness.trace2vla", args.argv)
     out.mkdir(parents=True, exist_ok=True)
     write_json(
         out / "eval.json",
-        {"checkpoint_label": label, "checkpoint": policy, "scene_set": scenes.name, "suite": suite},
+        {
+            "checkpoint_label": label,
+            "checkpoint": policy,
+            "scene_set": scenes.name,
+            "suite": suite,
+            "student": student.key,
+        },
     )
     argv = [
         "--suite", suite,
@@ -494,6 +627,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         "--init-mode", scenes.init_mode,
         "--video", args.video,
         "--out", str(out),
+        "--student", student.key,
     ]  # fmt: skip
     if policy:
         argv += ["--policy", policy, "--label", label]
@@ -502,7 +636,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     code = benchmark.main(argv)
     results = read_json(out / "results.json") or {}
     experiment.log(
-        "student_evaluated", name=args.eval, checkpoint=label, suite=suite, scene_set=scenes.name,
+        "student_evaluated", name=args.eval, checkpoint=label, student=student.key, suite=suite, scene_set=scenes.name,
         successes=results.get("successes"), episodes=results.get("episodes"), mean=results.get("mean"),
         failure_families=results.get("failure_families"), exit_status=code,
     )  # fmt: skip
@@ -564,9 +698,14 @@ def cmd_grade_student(args: argparse.Namespace) -> int:
                 break
     finally:
         adapter.close()
+    from cap_harness.vla import students
+
     title = f"{settings.get('policy')} on {settings['suite']}"
+    student = students.infer(run)[0]
     result = benchmark.write_results(
-        root, title, notes=references(settings["suite"], str(settings.get("policy")))["notes"]
+        root,
+        title,
+        notes=references(settings["suite"], str(settings.get("policy")), student)["notes"],
     )
     print(f"graded {graded} episodes; {mismatched} replays did not match their recording")
     print(result["table"])
@@ -626,20 +765,23 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"demo set {demo['name']}: {demo['accepted']} kept, {demo['rejected']} rejected")
     for dataset in report.datasets(experiment):
         print(
-            f"dataset {dataset['name']}: {dataset['episodes']} episodes, {dataset['frames']} frames, per task {dataset['per_task']}"
+            f"dataset {dataset['name']} ({dataset['student_label']}): {dataset['episodes']} episodes, {dataset['frames']} frames, per task {dataset['per_task']}"
         )
     for run in report.trainings(experiment):
         progress = run["progress"]
         eta = progress.get("eta_s")
         print(
-            f"training {run.get('name')}: {progress.get('status')} step {progress.get('step')}/{progress.get('steps')} loss {progress.get('loss')}"
+            f"training {run.get('name')} ({run['student_label']}): {progress.get('status')} step {progress.get('step')}/{progress.get('steps')} loss {progress.get('loss')}"
             + (f" ETA {eta / 60:.0f} min" if eta and progress.get("status") == "running" else "")
         )
     for path in sorted((experiment.root / "evals").glob("*/run.json")):
         progress = read_progress(path.parent) or {}
         rate = progress.get("success_rate")
+        student = report.student_of(
+            read_json(path.parent / "eval.json") or {}, read_json(path) or {}
+        )
         print(
-            f"eval {path.parent.name}: {progress.get('status')} {progress.get('done')}/{progress.get('planned')}"
+            f"eval {path.parent.name} ({students.label(student)}): {progress.get('status')} {progress.get('done')}/{progress.get('planned')}"
             + (f" success {100 * rate:.1f}%" if rate is not None else "")
             + (f" ({len(progress['warnings'])} warning(s))" if progress.get("warnings") else "")
         )
@@ -720,8 +862,18 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--tasks")
 
     c = add("dataset", cmd_dataset)
-    c.add_argument("--demos", required=True)
+    c.add_argument("--demos")
     c.add_argument("--dataset", "--name", dest="dataset", required=True)
+    c.add_argument(
+        "--student",
+        choices=sorted(students.STUDENTS),
+        default=students.DEFAULT_STUDENT,
+        help="whose normalisation statistics the dataset carries (default smolvla)",
+    )
+    c.add_argument(
+        "--from-dataset",
+        help="copy this dataset's frames instead of rendering the demos again (with --student)",
+    )
     c.add_argument("--per-task", type=int, help="at most this many demos per task")
     c.add_argument("--tasks")
 
@@ -729,6 +881,11 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--dataset", required=True)
     c.add_argument("--run", "--name", dest="run", required=True)
     c.add_argument("--base", default="base", help="'base' or a training run to continue from")
+    c.add_argument(
+        "--student",
+        choices=sorted(students.STUDENTS),
+        help="default: the student the base run, else the dataset, is for",
+    )
     c.add_argument("--method", default="full", choices=("full", "lora", "lora-vlm"))
     c.add_argument("--steps", type=int, default=3000)
     c.add_argument("--batch-size", type=int, default=32)
@@ -744,6 +901,11 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--eval", "--name", dest="eval", required=True)
     c.add_argument(
         "--checkpoint", default="base", help="'base', a training run name, or a checkpoint folder"
+    )
+    c.add_argument(
+        "--student",
+        choices=sorted(students.STUDENTS),
+        help="whose base checkpoint 'base' means (default smolvla); a training run knows its own",
     )
     c.add_argument("--scenes", default="official")
     c.add_argument("--scene-list", help="override the scene numbers, e.g. 1-10")
@@ -767,7 +929,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(argv)
+    args.argv = argv  # to continue in a student's own environment (students.reexec)
     try:
         return int(args.handler(args) or 0)
     except (FileNotFoundError, FileExistsError, KeyError, ValueError, RuntimeError) as exc:

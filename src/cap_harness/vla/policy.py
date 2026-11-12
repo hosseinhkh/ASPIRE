@@ -14,25 +14,24 @@ config, normalization statistics) comes from the same commit.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import random
 from typing import Any
 
 import numpy as np
 
+from cap_harness.vla import students
 from cap_harness.vla.libero_compat import ensure_runtime_env
 from cap_harness.vla.observation import lerobot_env_observation
 from cap_harness.vla.protocol import IMAGE_SIZE
 
 #: lerobot/smolvla_libero names its cameras camera1/camera2; LIBERO's are image/image2.
-CAMERA_RENAME: dict[str, str] = {
-    "observation.images.image": "observation.images.camera1",
-    "observation.images.image2": "observation.images.camera2",
-}
-#: The SmolVLA LIBERO checkpoint and the revision LeRobot's documentation pins.
-DEFAULT_POLICY = "lerobot/smolvla_libero"
-DEFAULT_REVISION = "a24f1f380461b665158d52acd140152c79e8b36d"
+CAMERA_RENAME: dict[str, str] = dict(students.SMOLVLA.camera_rename)
+#: The SmolVLA LIBERO checkpoint and the revision LeRobot's documentation pins (the default
+#: student; ``cap_harness.vla.students`` has the others).
+DEFAULT_POLICY = students.SMOLVLA.checkpoint
+DEFAULT_REVISION = students.SMOLVLA.revision
 
 
 @dataclass(frozen=True)
@@ -45,6 +44,9 @@ class PolicyInfo:
     n_action_steps: int | None
     chunk_size: int | None
     rename_map: dict[str, str]
+    student: str = students.DEFAULT_STUDENT
+    #: Policy config values this evaluation set (``Student.eval_config``).
+    config_overrides: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -60,13 +62,38 @@ def resolve_checkpoint(source: str, revision: str | None) -> str:
     return snapshot_download(source, revision=revision)
 
 
-def rename_map_for(input_features: Mapping[str, Any]) -> dict[str, str]:
+def rename_map_for(
+    input_features: Mapping[str, Any], camera_rename: Mapping[str, str] | None = None
+) -> dict[str, str]:
     """Map LIBERO's camera names to the checkpoint's, when the checkpoint renamed them."""
     return {
         source: target
-        for source, target in CAMERA_RENAME.items()
+        for source, target in (CAMERA_RENAME if camera_rename is None else camera_rename).items()
         if source not in input_features and target in input_features
     }
+
+
+def student_for(source: str, student: str | None) -> students.Student:
+    """The student a policy belongs to: the one named, else the one its checkpoint points to,
+    else the default. Naming a student its checkpoint contradicts is an error.
+    """
+    detected = students.for_source(source)
+    if student is None:
+        return detected or students.get(None)
+    chosen = students.get(student)
+    if detected is not None and detected.key != chosen.key:
+        raise ValueError(f"--student {chosen.key}, but {source} is a {detected.label} checkpoint")
+    return chosen
+
+
+def apply_overrides(config: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
+    """Set the policy config values a student's evaluation needs; return those applied."""
+    applied = {}
+    for key, value in overrides.items():
+        if hasattr(config, key) and getattr(config, key) != value:
+            setattr(config, key, value)
+            applied[key] = value
+    return applied
 
 
 def seed_everything(seed: int) -> None:
@@ -91,6 +118,7 @@ class LeRobotLiberoPolicy:
         n_action_steps: int | None = None,
         image_size: int = IMAGE_SIZE,
         suite: str = "libero_object",
+        student: str | None = None,
     ) -> None:
         ensure_runtime_env()
         from lerobot.configs.policies import PreTrainedConfig
@@ -99,13 +127,19 @@ class LeRobotLiberoPolicy:
         from lerobot.policies.factory import make_policy, make_pre_post_processors
         import torch
 
+        chosen = student_for(source, student)
         local_path = resolve_checkpoint(source, revision if not Path(source).is_dir() else None)
         config = PreTrainedConfig.from_pretrained(local_path)
+        if str(config.type) != chosen.policy_type and students.for_policy_type(config.type):
+            raise ValueError(
+                f"{source} is a {config.type} policy, not {chosen.label} ({chosen.policy_type})"
+            )
         config.pretrained_path = local_path
         config.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         if n_action_steps is not None:
             config.n_action_steps = int(n_action_steps)
-        rename = rename_map_for(config.input_features or {})
+        overrides = apply_overrides(config, chosen.eval_config)
+        rename = rename_map_for(config.input_features or {}, chosen.camera_rename)
         # Only the environment's feature list is read from this config (to name the action);
         # the suite chosen here does not affect the policy.
         env_config = LiberoEnvConfig(
@@ -137,6 +171,8 @@ class LeRobotLiberoPolicy:
             n_action_steps=getattr(config, "n_action_steps", None),
             chunk_size=getattr(config, "chunk_size", None),
             rename_map=rename,
+            student=chosen.key,
+            config_overrides=overrides,
         )
         self._torch = torch
 

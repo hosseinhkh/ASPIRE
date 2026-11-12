@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 
 from cap_harness.libero.adapter import OSC_SETTLE_ACTION
+from cap_harness.vla import students
 
 #: lerobot/envs/libero.py TASK_SUITE_MAX_STEPS (v0.4.4), keyed by suite family.
 SUITE_MAX_STEPS: dict[str, int] = {
@@ -36,12 +37,7 @@ N_ACTION_STEPS = 10
 CONTROLLER = "OSC_POSE"
 
 #: SmolVLA (0.45B) success on standard LIBERO, % (SmolVLA paper, arXiv 2506.01844, Table 2).
-SMOLVLA_PAPER: dict[str, float] = {
-    "libero_spatial": 90.0,
-    "libero_object": 96.0,
-    "libero_goal": 92.0,
-    "libero_10": 71.0,
-}
+SMOLVLA_PAPER: dict[str, float] = dict(students.SMOLVLA.standard_reference)
 #: pi0.5 success per LIBERO-Pro perturbation, % (LIBERO-PRO, arXiv 2510.03827, Tables 2-5).
 #: No source reports SmolVLA on LIBERO-Pro.
 PI05_LIBERO_PRO: dict[str, dict[str, float]] = {
@@ -95,8 +91,35 @@ def max_steps_for(suite: str) -> int:
     return SUITE_MAX_STEPS[family] if family else DEFAULT_MAX_STEPS
 
 
-def references(suite: str, policy: str) -> dict[str, object]:
-    """Published numbers to read a run against: the expected value and context."""
+def references(suite: str, policy: str, student: str | None = None) -> dict[str, object]:
+    """Published numbers to read a run against: the expected value and context.
+
+    ``expected`` is set only for a student's own published checkpoint on a standard suite (a
+    fine-tuned checkpoint has no published number). SmolVLA's answers are unchanged from
+    before pi0.5 support; ``student`` defaults to the one the policy name points to.
+    """
+    chosen = students.get(student) if student else students.for_source(policy)
+    if chosen is None or chosen.key == students.SMOLVLA.key:
+        return _smolvla_references(suite, policy)
+    family = suite_family(suite)
+    out: dict[str, object] = {"expected": None, "notes": []}
+    notes: list[str] = out["notes"]  # type: ignore[assignment]
+    own = policy == chosen.checkpoint or chosen.checkpoint.replace("/", "--") in policy
+    if family and suite == family and family in chosen.standard_reference:
+        value = chosen.standard_reference[family]
+        if own:
+            out["expected"] = value
+        notes.append(f"{chosen.label} ({chosen.reference_source}): {value:.0f}%")
+    if family in PI05_LIBERO_PRO:
+        perturbation = suite[len(family) :]
+        if perturbation in PI05_LIBERO_PRO[family]:
+            notes.append(f"pi0.5 (LIBERO-PRO paper): {PI05_LIBERO_PRO[family][perturbation]:.0f}%")
+        if perturbation:
+            notes.append(f"no published number for {chosen.checkpoint} on LIBERO-Pro")
+    return out
+
+
+def _smolvla_references(suite: str, policy: str) -> dict[str, object]:
     family = suite_family(suite)
     out: dict[str, object] = {"expected": None, "notes": []}
     notes: list[str] = out["notes"]  # type: ignore[assignment]

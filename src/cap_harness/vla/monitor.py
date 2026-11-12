@@ -89,8 +89,10 @@ class RunMonitor:
         resumed: list[Mapping[str, Any]],
         references: Mapping[str, Any],
         write_results: Callable[[list[Mapping[str, Any]]], Any],
+        student: Mapping[str, Any] | None = None,
     ) -> None:
         self.root = root
+        self.student = dict(student) if student else None
         self.title = title
         self.planned = planned
         self.episodes: list[Mapping[str, Any]] = list(resumed)
@@ -198,6 +200,7 @@ class RunMonitor:
         progress = {
             "status": self.status,
             "title": self.title,
+            "student": self.student,
             "pid": os.getpid(),
             "host": socket.gethostname(),
             "gpu": os.environ.get("CUDA_VISIBLE_DEVICES"),

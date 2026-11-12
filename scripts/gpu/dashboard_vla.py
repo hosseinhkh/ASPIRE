@@ -10,9 +10,29 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import socket
+import sys
 from typing import Any
 
 from dashboard_store import Store, downsample, read_json, read_npz
+
+# The student registry is standard library only; load it from the source tree.
+_SRC = str(Path(__file__).resolve().parents[2] / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+from cap_harness.vla import students  # noqa: E402
+
+
+def student_of(*records: Any) -> dict[str, str]:
+    """Key and label of the student the first record that says one names; SmolVLA for runs
+    recorded before pi0.5 support.
+    """
+    for record in records:
+        key, how = students.infer(record if isinstance(record, dict) else {})
+        if how != students.LEGACY:
+            return {"key": key, "label": students.label(key)}
+    key = students.DEFAULT_STUDENT
+    return {"key": key, "label": students.label(key)}
+
 
 #: Series drawn on an episode page: npz key -> labels of its columns.
 EPISODE_SERIES = {
@@ -83,10 +103,13 @@ class VlaStore:
                 meta = read_json(run / "run.json") or {}
                 settings = meta.get("settings") or {}
                 results = read_json(run / "results.json") or {}
+                student = student_of(meta)
                 runs.append(
                     {
                         "path": self.store.rel(run),
                         "name": run.name,
+                        "student": student["key"],
+                        "student_label": student["label"],
                         "suite": settings.get("suite"),
                         "policy": settings.get("policy"),
                         "n_action_steps": settings.get("n_action_steps"),
@@ -152,9 +175,12 @@ class VlaStore:
         lines = (
             log.read_text(encoding="utf-8", errors="replace").splitlines() if log.is_file() else []
         )
+        student = student_of(read_json(run / "eval.json") or {}, meta)
         return {
             "path": self.store.rel(run),
             "name": run.name,
+            "student": student["key"],
+            "student_label": student["label"],
             "meta": meta,
             "progress": progress_of(run),
             "results": read_json(run / "results.json") or {},
