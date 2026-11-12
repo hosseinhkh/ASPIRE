@@ -11,7 +11,7 @@ Last updated: 12 November 2026. Update the status columns when a step finishes.
 
 | Step | What | Gate | Status |
 |---|---|---|---|
-| **A** | **Preflight on two tasks** (`libero_object_swap` 0 and 1): teacher on the official scenes, teacher demos on training layouts, convert, dataset, student before, fine-tune, student after, report. Commands: [trace2vla-preflight.md](trace2vla-preflight.md) | The loop closes once on the GPU. Teacher at or near 90% on `official`; most successes convert; student after training above 0% | Running. Teacher programs are ready (3 / 3 held-out each) |
+| **A** | **Preflight on two tasks** (`libero_object_swap` 0 and 1): teacher on the official scenes, teacher demos on training layouts, convert, dataset, student before, fine-tune, student after, report. Commands: [trace2vla-preflight.md](trace2vla-preflight.md) | The loop closes once on the GPU. Teacher at or near 90% on `official`; most successes convert; student after training above 0% | Running. Teacher on `official`: 46 / 50 and 50 / 50. Next: demos on training layouts |
 | **B** | **Read the preflight** and fix what it shows (table in section 2) | A written decision on training method, steps, demo count and conversion speed for step D | |
 | **C** | **Build what the full run needs** (section 3) | Each item has a test | |
 | **D** | **Full M1 run on ten tasks**: same-layout and held-out-layout experiments, retention, three training settings, demo-count curve | The M1 tables and figures in section 4, with three training seeds | |
@@ -47,6 +47,13 @@ M4 (the agent proposes tasks, on-device updates) is out of scope for a first pap
 | **A round script** | M3 | One command that runs evaluate → collect → convert → dataset → train → evaluate → gate, reading the ledger |
 | **A second student** as a sanity check | Confirms the setup against published LIBERO-Pro numbers | `lerobot/pi05_libero` should reproduce about 0.17 (object) and 0.38 (goal) if the setup is right. Planned and not yet run |
 
+Teacher quality: every episode that executed a grasp suggested by the grasp planner
+(Contact-GraspNet) failed, 12 of 12 over two runs, while the programs' own top-down grasps
+succeeded 87 of 87. The suggested poses sit about 10 cm from their own contact point; moving
+them 10 cm along the approach direction did not fix them in a simulator test, so the cause is
+open. Until it is understood, teacher programs for box and can tasks should use their own
+top-down grasp.
+
 Smaller items: record CPU load in the session timeline (a busy machine made runs 10× slower and
 the cause had to be inferred); a faster video preset for development runs; keep teacher episodes
 in which the program retried and recovered, and mark them (Scaling Up & Distilling Down found
@@ -58,7 +65,7 @@ The proposal's matrix, extended with what the survey and the measurements added.
 
 | ID | System | Data and training | Answers | Status |
 |---|---|---|---|---|
-| **T0** | ASPIRE teacher | none | Teacher success and cost on the official scenes | 2 of 10 tasks have programs; official-scene run pending |
+| **T0** | ASPIRE teacher | none | Teacher success and cost on the official scenes | Tasks 0 and 1: 46 / 50 and 50 / 50. Eight tasks have no program yet |
 | **S0** | Frozen SmolVLA (`smolvla_libero`) | none | The student's starting point | **Done: 0 / 1,500** on `libero_object_swap`; 462 / 500 on standard |
 | **S1** | SmolVLA, success only | 25 / 50 / 100 / 200 verified teacher demos per task | Data efficiency (H1) | Preflight covers 50 demos on two tasks |
 | **S1-layout** | SmolVLA, success only | trained on sibling layouts only, tested on `official` | **Main result:** did it learn to find the named object, or a position? | Needs sibling scene sets |

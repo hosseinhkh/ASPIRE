@@ -55,7 +55,7 @@ is what the teacher's perception gets right.
 
 | | Scope | Completion gate | Status |
 |---|---|---|---|
-| **M0** Foundation | Teacher and student baselines in the same simulator; the bridge from teacher episodes to student training data; an archive of every episode with labels | One verified teacher success exported without time or action ambiguity; measured baseline table | **Nearly done.** Open: the teacher baseline on the official scenes with the current programs |
+| **M0** Foundation | Teacher and student baselines in the same simulator; the bridge from teacher episodes to student training data; an archive of every episode with labels | One verified teacher success exported without time or action ambiguity; measured baseline table | **Done for two tasks** (teacher 96 / 100, student 0 / 100 on the same scenes). Eight tasks have no teacher program yet |
 | **M1** Success only | Train the student on verified teacher successes; before and after on the same scenes; demo-count sweep; retention | First complete train → evaluate cycle; a learning curve | **Code complete, first GPU run pending** (the [preflight](trace2vla-preflight.md)) |
 | **M2** Failure aware | Use labelled failures: teacher corrections for physical failures, relabelling and contrasts for semantic ones | An ablation showing whether targeted corrections beat success-only and generic replay | Labels exist. Training with them is not started |
 | **M3** Continual | One persistent student across a sequence of tasks, with retesting of old tasks | Retention and sample-efficiency curves across skills | Not started. The pipeline is built so a loop can call it |
@@ -148,7 +148,7 @@ given.
 | ASPIRE paper, `libero_object_swap` | about 98% (its own seeded layouts, not the official scenes) |
 | Programs from session `20261112-033519` (tasks 0 and 1) | 3 / 3 development, 3 / 3 held-out, each task |
 | Official scenes, earlier programs (12 November) | task 1: 41 / 50. Task 0: 0 / 34 (the program aimed at the wrong can and its grasp was out of reach) |
-| Official scenes, current programs | **pending** (the run the preflight starts with) |
+| Official scenes, current programs (experiment `preflight2`) | **task 0: 46 / 50, task 1: 50 / 50** (96 / 100). All 100 episodes replay exactly; every success placed the requested object. Task 0's four failures all used a grasp suggested by the grasp planner and closed on nothing; the 46 that fell back to the program's own top-down grasp succeeded |
 
 **Bridge (teacher episode → student demonstration)**
 
