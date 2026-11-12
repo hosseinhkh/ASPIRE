@@ -42,16 +42,18 @@ grasp all failed, and only successes become training data.
 | Same session, task 0 v02–v03 and held-out | alphabet soup can | 8 | 25 | 0.15–0.23 | 55–112, mostly horizontal | 0 | none passed `top_down` |
 | Same session, task 1 v01 | cream cheese box, 2 cm tall | 3 | 1 | 0.15 | 40 | 0 | two calls returned no grasp at all |
 | Experiment `preflight`, official scenes, task 1 | cream cheese box | 9 | | 0.15–0.17 | 11–36 | 9 | **8 closed on nothing, 1 out of reach** |
-| Experiment `preflight2`, official scenes, task 0 (seeds 19, 28, 32, 33) | alphabet soup can | 4 | | 0.19–0.22 | 24–35 | 4 | **4 closed on nothing** |
+| Experiment `preflight2`, official scenes, task 0, all 50 episodes | alphabet soup can | 50 | 152 | 0.15–0.28, median 0.17 | 24–127, median 93: **89 from below**, 57 from the side, 6 within 37° of straight down | 4: the only 4 calls with a top-down candidate (seeds 19, 28, 32, 33) | **4 closed on nothing**; the other 46 episodes used the program's own grasp and all succeeded |
 | Experiment `preflight2`, training layouts, task 0 | alphabet soup can | 2 failures | | | | | not read; probably the same |
 
 * `select_grasp(strategy="top_down")` accepts a candidate whose approach is within 37° of
   straight down (`vertical_threshold=0.8`). Most candidates were far outside that, so the
   programs fell back to their own grasp, and that is why the teacher still works.
-* **Every candidate's position is 0.103–0.109 m from its own contact point**, 45 of 45 in the
-  session, whatever the object. That is Contact-GraspNet's gripper depth (0.1034 m from the
+* **Every candidate's position is 0.103–0.109 m from its own contact point**: 41 of 41 in the
+  session and 152 of 152 in `preflight2`, whatever the object. That is Contact-GraspNet's gripper depth (0.1034 m from the
   gripper base to the fingertips) plus half the finger opening.
 * Executed candidates stopped about 10 cm above the object and closed on air.
+* In `preflight2` the planner decided task 0's outcome exactly: the 4 episodes in which it
+  offered a top-down candidate are the 4 failures, and the 46 in which it did not all succeeded.
 
 **Cause 1, likely: the planner is run in the robot's base frame.** `generate_grasps`
 (`src/cap_harness/api.py`) projects the object and the whole scene into the robot base frame
