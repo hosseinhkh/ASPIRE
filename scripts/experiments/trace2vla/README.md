@@ -10,4 +10,6 @@ Run them with `.venv-libero/bin/python` and `LIBERO_CONFIG_PATH=.libero MUJOCO_G
 | `scenes.py SUITE TASK saved\|seeded SEEDS` | Object positions per scene, and whether a scene is reproducible |
 | `failure_split.py TASKS` | Which object the untrained student lifts and places (offline grading with simulator state) |
 
-`osc_replay.py` is the starting point for the converter; it has no dataset writer and no tests.
+`osc_replay.py` was the starting point for the converter. The product code is now
+`src/cap_harness/trace2vla/` (`replay.py`, `convert.py`, `dataset.py`), with tests in
+`tests/test_trace2vla.py`. Project overview: [docs/trace2vla.md](../../../docs/trace2vla.md).

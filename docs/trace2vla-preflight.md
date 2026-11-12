@@ -7,6 +7,8 @@ questions before the full ten-task run:
 2. Do its episodes convert to student demonstrations (yield, length, idle frames)?
 3. Does fine-tuning SmolVLA on those demonstrations move its success from 0%?
 
+What the project is for and where it stands: [trace2vla.md](trace2vla.md). What follows the
+preflight: [trace2vla-roadmap.md](trace2vla-roadmap.md).
 Background and the measurements behind the design: [trace2vla-review.md](trace2vla-review.md).
 The student side (SmolVLA baseline, protocol): [vla-student.md](vla-student.md).
 

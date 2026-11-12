@@ -1,5 +1,7 @@
 # VLA student: SmolVLA on LIBERO and LIBERO-Pro
 
+Part of Trace2VLA; the project overview is [trace2vla.md](trace2vla.md).
+
 This is the first part of the teacher → student plan: measure a small vision-language-action
 model (SmolVLA, 450M parameters) on the same scenes ASPIRE is measured on, in the same
 simulator, before any ASPIRE data is used to train it.

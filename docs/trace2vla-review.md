@@ -1,5 +1,10 @@
 # Trace2VLA design review (11 November 2026)
 
+> A dated record. For the goal, the current status and the glossary see
+> [trace2vla.md](trace2vla.md); for the work ahead see [trace2vla-roadmap.md](trace2vla-roadmap.md).
+> The status table in section 1 is as of 11 November: the converter, dataset writer, trainer
+> wrapper, ledger and dashboard pages listed as missing have since been built.
+
 A review of the proposal (*Trace2VLA: Distilling Agent-Executed Manipulation Trajectories into
 Compact Vision-Language-Action Models*), the code and the results so far, made before the
 teacher-data phase starts. It records what was measured, what each measurement changes in the

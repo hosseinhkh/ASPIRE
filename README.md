@@ -10,6 +10,21 @@ ASPIRE is a new type of continual learning: "training" is skill refinement inste
 
 “Distributed training” is a panel of agents each practicing a different skill instead of sharded minibatches.
 
+## This fork: Trace2VLA
+
+This fork adds **Trace2VLA**, a research project built on ASPIRE: use ASPIRE as a *teacher* and
+train a compact vision-language-action model (SmolVLA, 450M parameters) as a *student* on the
+teacher's verified executed trajectories, then measure how much of the teacher-student gap
+closes. On `libero_object_swap` the student starts at 0 of 1,500 episodes.
+
+| | |
+|---|---|
+| What it is, how it works, where it stands | [`docs/trace2vla.md`](docs/trace2vla.md) |
+| What is left to do, and the experiments for the paper | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
+| Run the first end-to-end pass | [`docs/trace2vla-preflight.md`](docs/trace2vla-preflight.md) |
+
+Everything else below is ASPIRE itself, with the GPU-server tooling this fork added.
+
 ## News
 
 - **[2026-10] ASPIRE v1.0 is out!** ASPIRE can now solve a Rubik's Cube, and it achieves 99% success on 80 LIBERO-Pro Goal / Object / Spatial / Long tasks and selected Robosuite, BEHAVIOR-1K tasks.
@@ -511,6 +526,9 @@ That releases GPU 0.
 | Run artifacts and traces | [`docs/run-artifacts.md`](docs/run-artifacts.md) |
 | Harness fixes (motion timing, point clouds, boxes, diagnostics) and why | [`docs/harness-fixes.md`](docs/harness-fixes.md) |
 | LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
+| **Trace2VLA overview**: goal, design, status, results so far, glossary | [`docs/trace2vla.md`](docs/trace2vla.md) |
+| Trace2VLA roadmap: work ahead, experiments for the paper, risks, open decisions | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
+| Trace2VLA related work: closest papers, what is published, what is open, expected baselines | [`docs/trace2vla-related-work.md`](docs/trace2vla-related-work.md) |
 | VLA student: SmolVLA on LIBERO / LIBERO-Pro in ASPIRE's simulator (setup, parity, baseline) | [`docs/vla-student.md`](docs/vla-student.md) |
 | Trace2VLA design review: measurements, design changes, pipeline structure, order of work | [`docs/trace2vla-review.md`](docs/trace2vla-review.md) |
 | Trace2VLA preflight: teacher data → fine-tuned SmolVLA → comparison, every command | [`docs/trace2vla-preflight.md`](docs/trace2vla-preflight.md) |
