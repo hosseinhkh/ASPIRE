@@ -5,7 +5,8 @@
 #   scripts/gpu/session.sh run [--name NAME] [--tasks quick|standard|full|FILE] [--seeds "1 2"]
 #                              [--llm BENCHMARK:SUITE:TASK_ID]... [--llm-tasks FILE]
 #                              [--llm-budget USD] [--llm-total-budget USD]
-#                              [--llm-max-turns N] [--llm-dev-seeds "51 52"] [--llm-write-skills]
+#                              [--llm-max-turns N] [--llm-max-versions N] [--llm-write-skills]
+#                              [--llm-dev-seeds "51 52"]
 #                              [--llm-heldout-seeds "1 2 3"] [--no-preflight] [--no-curobo]
 #                              [--keep-services] [--graspnet-cpu] [--reserve GIB]
 #                              [--wandb offline|online|off] [--gpu N]
@@ -331,6 +332,7 @@ run_agent() {  # run_agent BENCHMARK:SUITE:TASK
   stage_begin "agent $spec"
   local args=(--benchmark "$benchmark" --suite "$suite" --task-id "${task:-0}" --out "$ws"
     --budget-usd "${LLM_BUDGET_NOW:-$LLM_BUDGET}" --max-turns "$LLM_MAX_TURNS")
+  [[ -n "$LLM_MAX_VERSIONS" ]] && args+=(--max-versions "$LLM_MAX_VERSIONS")
   [[ -n "$LLM_DEV_SEEDS" ]] && args+=(--dev-seeds "$LLM_DEV_SEEDS")
   [[ -n "$LLM_HELDOUT_SEEDS" ]] && args+=(--heldout-seeds "$LLM_HELDOUT_SEEDS")
   ((LLM_WRITE_SKILLS)) && args+=(--write-skills)
@@ -425,7 +427,7 @@ cmd_run() {
   local name="tasks" tasks="standard" seeds="1" preflight=1 curobo=1 wandb_mode=offline
   local graspnet_cpu=0
   local -a llm=()
-  KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
+  KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_MAX_VERSIONS="" LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
   LLM_WRITE_SKILLS=0
   local llm_total="" llm_spent=0
   while (($#)); do
@@ -441,6 +443,7 @@ cmd_run() {
       --llm-total-budget) llm_total="$2"; shift 2 ;;
       --llm-budget) LLM_BUDGET="$2"; shift 2 ;;
       --llm-max-turns) LLM_MAX_TURNS="$2"; shift 2 ;;
+      --llm-max-versions) LLM_MAX_VERSIONS="$2"; shift 2 ;;
       --llm-write-skills) LLM_WRITE_SKILLS=1; shift ;;
       --llm-dev-seeds) LLM_DEV_SEEDS="$2"; shift 2 ;;
       --llm-heldout-seeds) LLM_HELDOUT_SEEDS="$2"; shift 2 ;;

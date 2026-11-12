@@ -555,7 +555,9 @@ In order, a session:
    automatically. Services that were already running are used as they are and never stopped;
 5. runs each task once per seed (`--seeds "1 2 3"`). A task whose service is down is skipped;
 6. runs each `--llm BENCHMARK:SUITE:TASK_ID` agent (the same agent as `demo.sh llm`, with
-   `--llm-budget`, `--llm-max-turns`, `--llm-dev-seeds` and `--llm-heldout-seeds`);
+   `--llm-budget`, `--llm-max-turns`, `--llm-max-versions`, `--llm-dev-seeds` and
+   `--llm-heldout-seeds`). Each agent first looks at the scene and tests its SAM3 prompts,
+   then writes programs ([harness-fixes.md](harness-fixes.md), section 5);
 7. stops the services it started, then holds `--reserve GIB` on the GPU for you. A
    reservation you hold on another GPU is left where it is;
 8. scrubs credential values from every file, builds the report, and logs to W&B.

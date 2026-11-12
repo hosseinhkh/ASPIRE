@@ -67,6 +67,10 @@ tasks and a total cap of $50:
 scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_object_swap:0 --llm libero-pro:libero_object_swap:1 --llm-budget 25 --llm-total-budget 50 --reserve 30
 ```
 
+Each agent ends with a line such as `dev_v02 3/3; held-out task_success 3/3`. A program
+with no held-out success is not a teacher: look at the `warning` lines under it (they say, for
+example, that SAM3 did not recognise a prompt) before going on.
+
 It prints the session folder (`outputs/sessions/<date>-<time>-tasks`). Each agent leaves its
 best program in `agents/llm-libero-pro-libero_object_swap-<id>/program_best.py`. Check on the
 session's dashboard page that both agents finished with held-out successes before going on.
@@ -233,3 +237,9 @@ layouts it has not seen; that is the held-out-layout experiment that follows the
 `teacher-run`, `teacher-grade`, `convert` and `eval` skip what is already done, so rerunning a
 command after an interruption continues it. `dataset` and `train` refuse to overwrite: give a
 new `--name`.
+
+Two kinds of teacher episode are kept on disk but not counted, and `teacher-run` records their
+scenes again: episodes in which a model service did not answer (for example SAM3 out of GPU
+memory), and episodes of a program you have since replaced with `teacher-add --force`. The
+teacher table lists them as "not counted". `teacher-add` prints what the agent measured for a
+program and warns when it solved none of its held-out scenes.

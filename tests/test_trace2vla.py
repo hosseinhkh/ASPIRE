@@ -166,10 +166,15 @@ def test_teacher_results_count_outcomes_and_families(tmp_path) -> None:
     experiment = _experiment(tmp_path, tasks=(0,))
     root = experiment.teacher_dir("official", 0)
     _run_folder(root, seed=1, success=True)
-    _run_folder(root, seed=2, success=False)
+    failed = _run_folder(root, seed=2, success=False)
     write_json(
         experiment.grade_dir("official", 0) / "seed_2.json",
-        {"success": False, "reproduced": True, "labels": {"failure_family": "physical"}},
+        {
+            "run": experiment.rel(failed),
+            "success": False,
+            "reproduced": True,
+            "labels": {"failure_family": "physical"},
+        },
     )
     summary = teacher.results(experiment, "official", write=True)
     task = summary["tasks"][0]
@@ -179,6 +184,74 @@ def test_teacher_results_count_outcomes_and_families(tmp_path) -> None:
     }
     assert task["seeds"]["2"]["family"] == "physical" and task["seeds"]["1"]["success"] is True
     assert read_json(experiment.root / "teacher" / "official" / "results.json")["successes"] == 1
+
+
+def test_episodes_of_a_dead_service_or_a_replaced_program_are_not_counted(tmp_path) -> None:
+    """They stay on disk, teacher-run records those seeds again, and results leave them out."""
+    experiment = _experiment(tmp_path, tasks=(0,))
+    program = tmp_path / "first.py"
+    program.write_text("result = 1\n")
+    registered = teacher.register_program(experiment, 0, program)
+    root = experiment.teacher_dir("official", 0)
+
+    def provenance(run: Path, sha: str) -> None:
+        write_json(
+            run / "source" / "provenance.json",
+            {"input_path": str(experiment.program(0).resolve()), "sha256": sha},
+        )
+
+    good = _run_folder(root, seed=1, success=True)
+    provenance(good, registered["sha256"])
+    oom = _run_folder(root, seed=2, success=False)
+    provenance(oom, registered["sha256"])
+    write_json(
+        oom / "source" / "program-result.json",
+        {"calls": [{"tool": "localize_object", "failure_code": "provider_unavailable"}]},
+    )
+    assert teacher.service_failed(oom) and not teacher.service_failed(good)
+    assert sorted(teacher.episodes_of(experiment, "official", 0)) == [1]
+    assert teacher.set_aside(experiment, "official", 0) == {"service_failed": [2]}
+    task = teacher.results(experiment, "official")["tasks"][0]
+    assert (task["successes"], task["episodes"]) == (1, 1)
+    assert task["set_aside"] == {"service_failed": [2]}
+
+    # A grade made from another run of the seed is not this episode's grade.
+    write_json(
+        experiment.grade_dir("official", 0) / "seed_1.json",
+        {"run": "teacher/official/task_00/0001/run-older", "labels": {"failure_family": "x"}},
+    )
+    assert teacher.grade_of(experiment, "official", 0, 1, good) is None
+
+    # Replacing the program sets its episodes aside, so the new program is run on every seed.
+    replacement = tmp_path / "second.py"
+    replacement.write_text("result = 2\n")
+    teacher.register_program(experiment, 0, replacement, force=True)
+    assert teacher.episodes_of(experiment, "official", 0) == {}
+    assert teacher.set_aside(experiment, "official", 0) == {
+        "service_failed": [2],
+        "old_program": [1],
+    }
+
+
+def test_a_session_program_carries_its_held_out_record(tmp_path) -> None:
+    workspace = tmp_path / "agents" / "llm-libero-pro-libero_object_swap-0"
+    (workspace / "dev_v04").mkdir(parents=True)
+    (workspace / "heldout").mkdir()
+    program = workspace / "program_best.py"
+    program.write_text("result = 1\n")
+    write_json(workspace / "dev_v04" / "batch.json", {"passes": 0, "seeds": 3})
+    write_json(
+        workspace / "heldout" / "batch.json",
+        {"passes": 0, "seeds": 3, "warnings": [{"text": "guessed object", "seeds": [1, 2, 3]}]},
+    )
+    record = teacher.agent_record(program)
+    assert record == {
+        "dev": "0/3",
+        "heldout": "0/3",
+        "heldout_passes": 0,
+        "warnings": ["guessed object"],
+    }
+    assert teacher.agent_record(tmp_path / "plain.py") is None
 
 
 # ------------------------------------------------------------------------------ grading --

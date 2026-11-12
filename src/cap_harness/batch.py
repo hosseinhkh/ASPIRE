@@ -70,6 +70,9 @@ class SeedResult:
     worker_seed_index: int
     max_rss_mb: float
     error: str | None
+    #: What the recorded calls say went wrong (cap_harness.run_warnings): a guessed or
+    #: ambiguous object, an empty grasp, a model service that did not answer.
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -177,6 +180,7 @@ def _run_seed(job: dict[str, Any]) -> dict[str, Any]:
     task_success: bool | None = None
     termination_reason: str | None = None
     error: str | None = None
+    warnings: tuple[str, ...] = ()
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log, _captured_output(log):
@@ -214,6 +218,13 @@ def _run_seed(job: dict[str, Any]) -> dict[str, Any]:
             termination_reason = outcome.termination_reason
             # Worker protocol emits the run directory to its captured output.
             print(f"run: {run_dir}", flush=True)
+            try:
+                from cap_harness.run_warnings import run_warnings
+
+                warnings = tuple(run_warnings(run_dir))
+            # Warnings are advice read from the recording; never fail a seed over them.
+            except Exception:
+                traceback.print_exc()
         except (KeyboardInterrupt, SystemExit):
             # Not this seed's failure. Filing it as one made Ctrl-C on a
             # fifteen-seed sweep take fifteen Ctrl-Cs, each writing a bogus
@@ -236,6 +247,7 @@ def _run_seed(job: dict[str, Any]) -> dict[str, Any]:
         worker_seed_index=seed_index,
         max_rss_mb=_max_rss_mb(),
         error=error,
+        warnings=warnings,
     ).to_dict()
 
 
@@ -431,6 +443,15 @@ def run_seeds(
     return collected
 
 
+def _grouped_warnings(results: Sequence[SeedResult]) -> list[dict[str, Any]]:
+    """Each distinct warning once, with the seeds it was seen on."""
+    seeds_by_text: dict[str, list[int]] = {}
+    for result in results:
+        for text in result.warnings:
+            seeds_by_text.setdefault(text, []).append(result.seed)
+    return [{"text": text, "seeds": seeds} for text, seeds in seeds_by_text.items()]
+
+
 def summarize(results: Sequence[SeedResult]) -> dict[str, Any]:
     """Aggregate a sweep. ``passes`` counts benchmark success, not clean exits."""
     finished = [result for result in results if result.ok]
@@ -444,6 +465,9 @@ def summarize(results: Sequence[SeedResult]) -> dict[str, Any]:
         # sweep where five of fifteen crashed and ten passed is 10/15, not 1.0.
         "pass_rate": round(passes / len(results), 6) if results else 0.0,
         "program_errors": [result.seed for result in finished if result.program_ok is False],
+        # Read these before the per-seed results: they name causes that sit outside the
+        # program's own error (a guessed object, an empty grasp, a service that was down).
+        "warnings": _grouped_warnings(results),
         # Summed per-seed time, not the sweep's elapsed time: with several
         # workers the sweep finishes in a fraction of this.
         "seed_wall_s": round(sum(result.wall_s for result in results), 3),

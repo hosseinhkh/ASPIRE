@@ -467,6 +467,9 @@ def _run_batch_command(args: argparse.Namespace) -> int:
         f"({summary['seed_wall_s']:.1f}s of seed time on {args.workers} worker(s))"
     )
     print(f"summary: {summary_path}")
+    for warning in summary["warnings"]:
+        seeds_seen = " ".join(f"{seed:02d}" for seed in warning["seeds"])
+        print(f"warning (seeds {seeds_seen}): {warning['text']}")
     return 0 if summary["runs"] == summary["seeds"] else 1
 
 

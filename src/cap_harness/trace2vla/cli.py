@@ -191,6 +191,18 @@ def cmd_teacher_add(args: argparse.Namespace) -> int:
     for task, path in sorted(wanted.items()):
         record = teacher.register_program(experiment, task, path, force=args.force)
         print(f"task {task}: {path} (sha256 {record['sha256'][:12]})")
+        measured = teacher.agent_record(path)
+        if measured:
+            print(
+                f"    its agent measured: development {measured['dev']}, held-out {measured['heldout']}"
+            )
+            if not measured["heldout_passes"]:
+                print(
+                    "    WARNING: this program solved none of its held-out scenes. Its episodes "
+                    "will be failures, not demonstrations: fix the program before teacher-run."
+                )
+            for text in measured["warnings"]:
+                print(f"    warning: {text}")
     missing = [t for t in experiment.tasks if t not in teacher.programs(experiment)]
     if missing:
         print(f"still without a program: tasks {missing}")
@@ -294,6 +306,17 @@ def _teacher_table(summary: dict[str, Any]) -> str:
             + (f", failures ended as {t['terminations']}" if t["terminations"] else "")
             + (f", families {t['failure_families']}" if t["failure_families"] else "")
         )
+        aside = t.get("set_aside") or {}
+        if aside.get("service_failed"):
+            lines.append(
+                f"    not counted: {len(aside['service_failed'])} episodes in which a model service "
+                "did not answer (teacher-run records them again)"
+            )
+        if aside.get("old_program"):
+            lines.append(
+                f"    not counted: {len(aside['old_program'])} episodes of a replaced program "
+                "(teacher-run records them again)"
+            )
     return "\n".join(lines)
 
 
@@ -740,7 +763,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.handler(args) or 0)
-    except (FileNotFoundError, FileExistsError, KeyError, ValueError) as exc:
+    except (FileNotFoundError, FileExistsError, KeyError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

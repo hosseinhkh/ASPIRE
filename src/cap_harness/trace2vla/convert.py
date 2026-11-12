@@ -205,12 +205,16 @@ def convert_scene_set(
     fast = replay.osc_adapter(64)
     recorder = replay.osc_adapter(settings.image_size)
     new = 0
+    stale: list[tuple[int, int]] = []  # demos made from a teacher episode that was replaced
     try:
         for task_id in tasks:
             for seed, run in sorted(episodes_of(experiment, scene_set, task_id).items()):
                 out = root / f"task_{task_id:02d}" / f"seed_{seed}"
                 rejected = out.with_name(out.name + ".rejected.json")
-                if (out / "episode.json").is_file() or rejected.is_file():
+                made = read_json(out / "episode.json") or read_json(rejected)
+                if made:
+                    if made.get("source_run") and Path(made["source_run"]).name != run.name:
+                        stale.append((task_id, seed))
                     continue
                 episode = load_teacher_episode(run)
                 if not episode.success:
@@ -233,6 +237,12 @@ def convert_scene_set(
     finally:
         fast.close()
         recorder.close()
+    if stale:
+        log(
+            f"WARNING: {len(stale)} demos of '{name}' were made from teacher episodes that have "
+            "since been replaced (a new program, or a rerun). They were left as they are; "
+            "convert into a new demo set (--demos NEW_NAME) to use the current episodes."
+        )
     summary = demo_summary(experiment, name)
     experiment.log(
         "demos_converted", name=name, scene_set=scene_set, tasks=tasks, new=new,

@@ -295,9 +295,9 @@ cmd_llm() {
     cp "$skills_dir"/*.md "$ws/skills/"
     cp "$skills_dir"/*.md "$ws/.skills-before/"
     skills_dir="$ws/skills"
-    lessons_line="the lessons you added to the skill library in step 7."
+    lessons_line="the lessons you added to the skill library in step 8."
     skills_step="
-7. Write what you learned into the skill library at \`$ws/skills/\`. It is a private copy for
+8. Write what you learned into the skill library at \`$ws/skills/\`. It is a private copy for
    this run: the shared library in \`.claude/skills/\` is not touched, and you must not edit it.
    Add each lesson to the file it belongs in (grasp.md, localize.md, transport.md or
    manipulation.md), following that file's header: a new subsection with the trigger (when it
@@ -309,8 +309,8 @@ cmd_llm() {
   fi
   render scripts/gpu/prompts/llm_quick_demo.md "$ws/prompt.md" \
     "BENCHMARK=$benchmark" "SUITE=$suite" "TASK_ID=$task_id" "WS=$ws" "TASK_NOTE=$task_note" \
-    "CAP_HARNESS=$venv/bin/cap-harness" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
-    "INIT_MODE=$init_mode" "MAX_VERSIONS=$max_versions" \
+    "CAP_HARNESS=$venv/bin/cap-harness" "PYTHON=$venv/bin/python" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
+    "INIT_MODE=$init_mode" "MAX_VERSIONS=$max_versions" "FIRST_DEV_SEED=${dev%% *}" \
     "CUROBO_NOTE=$curobo_note" "SKILLS_DIR=$skills_dir" "LESSONS_LINE=$lessons_line" \
     "SKILLS_STEP=$skills_step"
   local extra=(--max-turns "$max_turns")
@@ -352,6 +352,8 @@ path = sys.argv[1]
 data = json.load(open(path))
 print(f"  {path.split('/')[-2]:<10} task_success {data.get('passes', '?')}/{data.get('seeds', '?')}"
       + (f"  (no run for seeds {data['missing']})" if data.get("missing") else ""))
+for warning in data.get("warnings") or []:
+    print(f"             warning (seeds {' '.join(str(s) for s in warning['seeds'])}): {warning['text']}")
 PY
   done
   [[ -s "$ws/claude.stderr" ]] && { echo "claude stderr (tail):"; tail -n 5 "$ws/claude.stderr"; }

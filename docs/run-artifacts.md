@@ -153,6 +153,11 @@ services, so the useful setting depends on the box — measure before trusting a
 
 `--results-jsonl` gets one record per seed as it finishes, so an interrupted sweep keeps what it
 completed; `--summary` gets the aggregate. `run-batch` supports only LIBERO-Pro and Robosuite.
+
+The summary's `warnings` list (also printed after the sweep) says what the recorded calls show
+beyond each seed's own result, with the seeds it applies to: `localize_object` used a mask SAM3
+scored below 0.3 (a guess), two objects matched within 0.1 of each other, `close_gripper` closed
+on nothing, or a model service did not answer. Read it before changing a program.
 BEHAVIOR must run each episode in a fresh process because closing Isaac ends the runtime.
 
 Before using `--workers` for a campaign, confirm on the target machine that batching changes

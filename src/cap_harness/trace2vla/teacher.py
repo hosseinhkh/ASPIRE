@@ -59,6 +59,24 @@ def discover_programs(source: Path, suite: str) -> dict[int, Path]:
     return found
 
 
+def agent_record(program: Path) -> dict[str, Any] | None:
+    """What a session coding agent measured for its `program_best.py`: passes on its last
+    development version and on the held-out seeds. None for programs from other sources.
+    """
+    workspace = Path(program).parent
+    held = read_json(workspace / "heldout" / "batch.json")
+    versions = sorted(workspace.glob("dev_v*/batch.json"))
+    if not held and not versions:
+        return None
+    last = read_json(versions[-1]) if versions else None
+    return {
+        "dev": f"{last.get('passes')}/{last.get('seeds')}" if last else None,
+        "heldout": f"{held.get('passes')}/{held.get('seeds')}" if held else None,
+        "heldout_passes": held.get("passes") if held else None,
+        "warnings": [w["text"] for w in (held or {}).get("warnings") or []],
+    }
+
+
 def register_program(
     experiment: Experiment, task_id: int, source: Path, *, force: bool = False
 ) -> dict[str, Any]:
@@ -94,17 +112,77 @@ def programs(experiment: Experiment) -> dict[int, dict[str, Any]]:
 
 
 # ------------------------------------------------------------------------------ running --
-def episodes_of(experiment: Experiment, scene_set: str, task_id: int) -> dict[int, Path]:
-    """Finalized run folder per seed (the newest when a seed was run more than once)."""
-    by_seed: dict[int, Path] = {}
+def service_failed(run: Path) -> bool:
+    """True when the episode failed because a model service did not answer (for example SAM3
+    out of GPU memory). Such an episode says nothing about the program.
+    """
+    if (read_json(run / "outcome.json") or {}).get("task_success"):
+        return False
+    calls = (read_json(run / "source" / "program-result.json") or {}).get("calls") or []
+    return any(
+        isinstance(call, dict) and call.get("failure_code") == "provider_unavailable"
+        for call in calls
+    )
+
+
+def stale_program(experiment: Experiment, task_id: int, run: Path) -> bool:
+    """True when teacher-run recorded this episode with a program that has since been replaced
+    (teacher-add --force). Imported episodes are never stale: they came with their own program.
+    """
+    registered = programs(experiment).get(task_id)
+    provenance = read_json(run / "source" / "provenance.json") or {}
+    if not registered or not provenance.get("sha256"):
+        return False
+    source = str(provenance.get("input_path") or "")
+    ran_here = bool(source) and Path(source) == experiment.program(task_id).resolve()
+    return ran_here and provenance["sha256"] != registered["sha256"]
+
+
+def all_runs(experiment: Experiment, scene_set: str, task_id: int) -> dict[int, list[Path]]:
+    """Every finalized run folder per seed, oldest first."""
+    by_seed: dict[int, list[Path]] = {}
     root = experiment.teacher_dir(scene_set, task_id)
     if not root.is_dir():
         return by_seed
     for run in find_runs(root):
         meta = read_json(run / "run.json") or {}
         if meta.get("status") == "finalized" and (run / "outcome.json").is_file():
-            by_seed[int(meta["seed"])] = run
+            by_seed.setdefault(int(meta["seed"]), []).append(run)
     return by_seed
+
+
+def episodes_of(experiment: Experiment, scene_set: str, task_id: int) -> dict[int, Path]:
+    """The teacher episode of each seed: its newest finalized run made with the task's current
+    program in which the model services answered. Runs that do not qualify stay on disk and are
+    not counted, so `teacher-run` records those seeds again.
+    """
+    by_seed: dict[int, Path] = {}
+    for seed, runs in all_runs(experiment, scene_set, task_id).items():
+        valid = [
+            run
+            for run in runs
+            if not service_failed(run) and not stale_program(experiment, task_id, run)
+        ]
+        if valid:
+            by_seed[seed] = valid[-1]
+    return by_seed
+
+
+def set_aside(experiment: Experiment, scene_set: str, task_id: int) -> dict[str, list[int]]:
+    """Seeds whose only runs are not counted, by reason."""
+    counted = episodes_of(experiment, scene_set, task_id)
+    reasons: dict[str, list[int]] = {"service_failed": [], "old_program": []}
+    for seed, runs in sorted(all_runs(experiment, scene_set, task_id).items()):
+        if seed in counted:
+            continue
+        reasons["service_failed" if service_failed(runs[-1]) else "old_program"].append(seed)
+    return {reason: seeds for reason, seeds in reasons.items() if seeds}
+
+
+def grade_of(experiment: Experiment, scene_set: str, task_id: int, seed: int, run: Path) -> Any:
+    """The stored grade of this seed if it was made from this run, else None."""
+    grade = read_json(experiment.grade_dir(scene_set, task_id) / f"seed_{seed}.json")
+    return grade if grade and grade.get("run") == experiment.rel(run) else None
 
 
 def service_ports_down(ports: Iterable[int] = (8114, 8115, 8116)) -> list[int]:
@@ -193,10 +271,16 @@ def run_scene_set(
             ).returncode
         after = episodes_of(experiment, scenes.name, task_id)
         ran = sorted(set(after) - set(done))
+        service_seeds = [
+            seed
+            for seed in set_aside(experiment, scenes.name, task_id).get("service_failed", [])
+            if seed in missing
+        ]
         result = {
             "ran": len(ran),
             "skipped": len(done),
-            "not_finished": sorted(set(missing) - set(after)),
+            "service_failed": service_seeds,
+            "not_finished": sorted(set(missing) - set(after) - set(service_seeds)),
             "exit_status": code,
             "wall_s": round(time.monotonic() - started, 1),
             "program_sha256": registered[task_id]["sha256"],
@@ -218,6 +302,18 @@ def run_scene_set(
                 else ""
             )
         )
+        if service_seeds:
+            log(
+                f"task {task_id}: {len(service_seeds)} episodes failed because a model service did "
+                f"not answer (seeds {compact(service_seeds)}). They are not counted; run the same "
+                "command again once `scripts/gpu/services.sh status` and the GPU's free memory "
+                "are fine."
+            )
+            if not ran:
+                raise RuntimeError(
+                    f"every episode of task {task_id} failed on a model service; stopped before "
+                    f"the remaining tasks. See {out}/logs and scripts/gpu/services.sh logs sam3"
+                )
     results(experiment, scenes.name, write=True)
     return summary
 
@@ -232,8 +328,7 @@ def results(experiment: Experiment, scene_set: str, *, write: bool = False) -> d
             continue
         outcomes = {seed: read_json(run / "outcome.json") or {} for seed, run in runs.items()}
         grades = {
-            seed: read_json(experiment.grade_dir(scene_set, task_id) / f"seed_{seed}.json")
-            for seed in runs
+            seed: grade_of(experiment, scene_set, task_id, seed, run) for seed, run in runs.items()
         }
         successes = [seed for seed, o in outcomes.items() if o.get("task_success")]
         steps = [int(outcomes[seed].get("steps_executed") or 0) for seed in successes]
@@ -265,6 +360,8 @@ def results(experiment: Experiment, scene_set: str, *, write: bool = False) -> d
                     )
                 ),
                 "graded": sum(1 for g in grades.values() if g),
+                # Seeds whose runs are kept on disk but not counted (teacher-run redoes them).
+                "set_aside": set_aside(experiment, scene_set, task_id),
                 "not_reproduced": sorted(
                     seed for seed, g in grades.items() if g and not g.get("reproduced")
                 ),
@@ -307,10 +404,9 @@ def grade_scene_set(
             out = experiment.grade_dir(scene_set, task_id)
             for seed, run in sorted(episodes_of(experiment, scene_set, task_id).items()):
                 target = out / f"seed_{seed}.json"
-                if target.is_file():
-                    counts[
-                        (read_json(target) or {}).get("labels", {}).get("failure_family", "unknown")
-                    ] += 1
+                existing = grade_of(experiment, scene_set, task_id, seed, run)
+                if existing:
+                    counts[existing.get("labels", {}).get("failure_family", "unknown")] += 1
                     continue
                 episode = load_teacher_episode(run)
                 rollout = replay.joint_replay(adapter, episode)

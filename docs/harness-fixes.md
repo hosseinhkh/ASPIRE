@@ -103,6 +103,53 @@ point clouds and boxes, so all of the above is visible without reading JSON.
   the causes above cost this session one version; the earlier session that reached 3/3 found a
   way around them by its last version. With the fixes, a version is no longer lost to 1 and 2.
 
+## 5. The quick agent skipped the pipeline's "look at the scene" step
+
+Two later sessions on the same task (2026-11-11 and 2026-11-12) scored 0/3 on every version and
+0/3 held-out, with the motion and point-cloud fixes above in place. The recordings show one
+cause in both:
+
+| Session | Prompt the program used | What SAM3 returned | Result |
+|---|---|---|---|
+| 11-11 | "soup can" | tomato sauce 0.82, alphabet soup 0.78 (`ambiguous`) | went for the tomato sauce |
+| 11-12 | "alphabet soup" | milk 0.11, every other object below 0.09 (`low_confidence`) | v01 put the **milk** in the basket |
+
+The diagnostics from section 3 were set in every run, and nothing acted on them:
+
+* `localize_object` returns `ok=True` for a guess, and the library's `locate()` helper checks
+  only `ok`. The agent copied the helper.
+* The agent's first read after a batch is `batch.json`, which said `task_success: false` and
+  nothing else. It blamed the grasp, then the release height, then reachability, one version
+  each. It opened a camera image for the first time after its fourth and last version, and
+  wrote "SAM3 is likely picking the wrong object" in its report.
+* The full pipeline (`.claude/skills/iterative-debugging/subagent-prompt.md`, Stage 0) starts
+  every task with `skills/task-exploration.md`: snapshot the scene, look at it, probe SAM3
+  prompts, check the masks. The quick agent's prompt (`session.sh --llm`, `demo.sh llm`) went
+  straight to `program_v01.py`, and the skills index it was told to read does not list
+  `task-exploration.md`. Whether a session succeeded depended on whether the agent happened
+  to look at the scene early; the session that reached 3/3 did, these two did not.
+  `examples/libero/object_swap_seed1.py`, which passes in every session, uses the prompt
+  "blue soup can": a description of what the object looks like.
+
+**Fix:**
+
+* `scripts/gpu/prompts/llm_quick_demo.md`: the quick agent now does the exploration step
+  first (scene snapshot on the first development seed, look at the keyframes, probe prompts,
+  check scores and masks; probes are not program versions), must not act on a
+  `low_confidence` result, and diagnoses in a fixed order: warnings, then "is the mask on the
+  right object", then everything else.
+* `cap-harness run-batch` (`src/cap_harness/run_warnings.py`): `batch.json` has a `warnings`
+  list, also printed, read from each run's recorded calls: a guessed object, two objects that
+  match almost equally, a grasp that closed on nothing, a model service that did not answer.
+  It reads recordings only; run folders and `outcome.json` are unchanged.
+* `session.sh run --llm-max-versions N` (default 4, as before).
+
+Replayed on the recorded runs, the 11-12 session's first batch would have printed
+`localize_object("alphabet soup"): best mask scores 0.11. SAM3 does not recognise this prompt,
+so the object it returned is a guess`, and the 11-11 one `two objects match almost equally
+(0.82 and 0.78)`. The skill library is unchanged, so campaigns that compare libraries are not
+affected. `demo.sh campaign` already runs the exploration step.
+
 ## Comparing with the paper
 
 The fixes are on by default. `CAP_HARNESS_COMPAT=published` restores the published release's
