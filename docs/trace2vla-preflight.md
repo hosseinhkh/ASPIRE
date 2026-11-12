@@ -303,7 +303,7 @@ layouts it has not seen; that is the held-out-layout experiment that follows the
 | Everything at a glance | `scripts/gpu/t2v.sh status preflight` |
 | Follow the stage running in the background | `scripts/gpu/t2v.sh logs preflight` |
 | Each finished teacher episode, live | `teacher-run` prints one line per episode (`task 0 seed 1001: success, 36 s  [3/50]`), in the terminal or, with `--detach`, in the log that `logs` follows |
-| Stop it (finished episodes are kept; rerun the same command to continue) | `scripts/gpu/t2v.sh stop preflight` |
+| Stop it (finished episodes are kept; rerun the same command to continue). Stops every background stage of the experiment; `stop preflight eval` stops only the evaluation, `stop preflight train` only the training | `scripts/gpu/t2v.sh stop preflight` |
 | All experiments | `scripts/gpu/t2v.sh status` |
 | Choose the GPU for simulate / train / evaluate stages | `scripts/gpu/t2v.sh --gpu 1 <stage> ...` |
 

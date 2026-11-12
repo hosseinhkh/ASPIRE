@@ -16,7 +16,7 @@
 #   scripts/gpu/t2v.sh report NAME                teacher vs student before vs after
 #   scripts/gpu/t2v.sh status [NAME]              what exists, what is running, last events
 #   scripts/gpu/t2v.sh logs NAME                  the newest log of the experiment, followed
-#   scripts/gpu/t2v.sh stop NAME                  stop this experiment's background stage
+#   scripts/gpu/t2v.sh stop NAME [STAGE]          stop its background stages (or only STAGE: train, eval, ...)
 #
 # Put --detach right after the stage name to run it in the background (teacher-run, teacher-grade,
 # convert, dataset, train, eval): it survives a closed terminal and logs to
@@ -64,7 +64,8 @@ run_stage() {  # run_stage STAGE ARGS...
     mkdir -p "$dir/logs"
     log="$dir/logs/$(date +%Y%m%d-%H%M%S)-$stage.log"
     setsid nohup env "${env[@]}" "$VENV_PY" -m cap_harness.trace2vla "$stage" "$@" > "$log" 2>&1 < /dev/null &
-    echo "$! $stage" > "$dir/logs/running.pid"
+    # One line per background stage: several may run at once (an eval next to a training run).
+    echo "$! $stage" >> "$dir/logs/running.pid"
     echo "started $stage in the background (pid $!)"
     echo "  follow:  tail -f $log"
     echo "  status:  scripts/gpu/t2v.sh status $(basename "$dir")"
@@ -92,14 +93,29 @@ case "$cmd" in
     ;;
   stop)
     dir="$(experiment_dir "${1:-}")"
-    read -r pid stage < "$dir/logs/running.pid" 2>/dev/null || { echo "no background stage recorded for $dir"; exit 1; }
-    if [[ -r "/proc/$pid/cmdline" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "cap_harness.trace2vla"; then
+    only="${2:-}"
+    pids="$dir/logs/running.pid"
+    [[ -s "$pids" ]] || { echo "no background stage recorded for $dir"; exit 1; }
+    keep=() stopped=0
+    while read -r pid stage; do
+      [[ -n "${pid:-}" ]] || continue
+      if ! { [[ -r "/proc/$pid/cmdline" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "cap_harness.trace2vla"; }; then
+        continue  # finished long ago, or the pid now belongs to something else
+      fi
+      if [[ -n "$only" && "$stage" != "$only" ]]; then
+        keep+=("$pid $stage")
+        continue
+      fi
       # The stage and everything it started (trainer, simulator workers) share one session.
       kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid"
-      echo "stopping $stage (pid $pid); finished episodes are kept, rerun the same command to continue"
-    else
-      echo "$stage (pid $pid) is not running any more"
+      echo "stopping $stage (pid $pid); finished work is kept, rerun the same command to continue"
+      stopped=$((stopped + 1))
+    done < "$pids"
+    printf '%s\n' "${keep[@]+"${keep[@]}"}" | sed '/^$/d' > "$pids"
+    if ((stopped == 0)); then
+      echo "no ${only:-background} stage of $(basename "$dir") is running"
     fi
+    for line in "${keep[@]+"${keep[@]}"}"; do echo "still running: ${line#* } (pid ${line%% *})"; done
     ;;
   *) usage; [[ -z "$cmd" ]] || exit 2 ;;
 esac
