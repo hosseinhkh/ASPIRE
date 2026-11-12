@@ -126,6 +126,25 @@ def service_failed(run: Path) -> bool:
     )
 
 
+#: How a run ends when it was stopped from outside (Ctrl-C reaches every process of a
+#: foreground command) or when the simulator or recorder itself failed. Neither says anything
+#: about the program.
+STOPPED_FROM_OUTSIDE = ("user_interrupt", "harness_error")
+
+
+def interrupted(run: Path) -> bool:
+    """True when the episode was cut short from outside, or its recording is incomplete. A run
+    interrupted during its reset is still finalized, but has no reset state and cannot be
+    replayed, graded or converted.
+    """
+    outcome = read_json(run / "outcome.json") or {}
+    if outcome.get("termination_reason") in STOPPED_FROM_OUTSIDE:
+        return True
+    return not (
+        (run / "episode" / "reset.json").is_file() and (run / "episode" / "steps.jsonl").is_file()
+    )
+
+
 def stale_program(experiment: Experiment, task_id: int, run: Path) -> bool:
     """True when teacher-run recorded this episode with a program that has since been replaced
     (teacher-add --force). Imported episodes are never stale: they came with their own program.
@@ -154,15 +173,18 @@ def all_runs(experiment: Experiment, scene_set: str, task_id: int) -> dict[int, 
 
 def episodes_of(experiment: Experiment, scene_set: str, task_id: int) -> dict[int, Path]:
     """The teacher episode of each seed: its newest finalized run made with the task's current
-    program in which the model services answered. Runs that do not qualify stay on disk and are
-    not counted, so `teacher-run` records those seeds again.
+    program, that ran to its end with a complete recording, and in which the model services
+    answered. Runs that do not qualify stay on disk and are not counted, so `teacher-run`
+    records those seeds again.
     """
     by_seed: dict[int, Path] = {}
     for seed, runs in all_runs(experiment, scene_set, task_id).items():
         valid = [
             run
             for run in runs
-            if not service_failed(run) and not stale_program(experiment, task_id, run)
+            if not interrupted(run)
+            and not service_failed(run)
+            and not stale_program(experiment, task_id, run)
         ]
         if valid:
             by_seed[seed] = valid[-1]
@@ -172,11 +194,17 @@ def episodes_of(experiment: Experiment, scene_set: str, task_id: int) -> dict[in
 def set_aside(experiment: Experiment, scene_set: str, task_id: int) -> dict[str, list[int]]:
     """Seeds whose only runs are not counted, by reason."""
     counted = episodes_of(experiment, scene_set, task_id)
-    reasons: dict[str, list[int]] = {"service_failed": [], "old_program": []}
+    reasons: dict[str, list[int]] = {"interrupted": [], "service_failed": [], "old_program": []}
     for seed, runs in sorted(all_runs(experiment, scene_set, task_id).items()):
         if seed in counted:
             continue
-        reasons["service_failed" if service_failed(runs[-1]) else "old_program"].append(seed)
+        last = runs[-1]
+        if interrupted(last):
+            reasons["interrupted"].append(seed)
+        elif service_failed(last):
+            reasons["service_failed"].append(seed)
+        else:
+            reasons["old_program"].append(seed)
     return {reason: seeds for reason, seeds in reasons.items() if seeds}
 
 
@@ -441,6 +469,7 @@ def grade_scene_set(
     adapter = replay.joint_adapter()
     counts: Counter[str] = Counter()
     graded = 0
+    unreadable: list[str] = []
     try:
         for task_id in tasks:
             out = experiment.grade_dir(scene_set, task_id)
@@ -450,7 +479,15 @@ def grade_scene_set(
                 if existing:
                     counts[existing.get("labels", {}).get("failure_family", "unknown")] += 1
                     continue
-                episode = load_teacher_episode(run)
+                try:
+                    episode = load_teacher_episode(run)
+                # One unreadable recording must not stop the grading of the others.
+                except (OSError, ValueError, KeyError) as exc:
+                    unreadable.append(f"task {task_id} seed {seed}")
+                    log(
+                        f"task {task_id} seed {seed}: SKIPPED, the recording cannot be read ({exc})"
+                    )
+                    continue
                 rollout = replay.joint_replay(adapter, episode)
                 out.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(
@@ -489,6 +526,7 @@ def grade_scene_set(
         tasks=list(tasks),
         graded=graded,
         families=dict(counts),
+        unreadable=unreadable,
     )
     results(experiment, scene_set, write=True)
-    return {"graded": graded, "families": dict(counts)}
+    return {"graded": graded, "families": dict(counts), "unreadable": unreadable}

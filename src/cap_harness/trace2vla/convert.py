@@ -216,7 +216,14 @@ def convert_scene_set(
                     if made.get("source_run") and Path(made["source_run"]).name != run.name:
                         stale.append((task_id, seed))
                     continue
-                episode = load_teacher_episode(run)
+                try:
+                    episode = load_teacher_episode(run)
+                # One unreadable recording must not stop the conversion of the others.
+                except (OSError, ValueError, KeyError) as exc:
+                    log(
+                        f"task {task_id} seed {seed}: SKIPPED, the recording cannot be read ({exc})"
+                    )
+                    continue
                 if not episode.success:
                     continue
                 summary = convert_episode(

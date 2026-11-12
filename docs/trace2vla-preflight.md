@@ -241,8 +241,9 @@ layouts it has not seen; that is the held-out-layout experiment that follows the
 command after an interruption continues it. `dataset` and `train` refuse to overwrite: give a
 new `--name`.
 
-Two kinds of teacher episode are kept on disk but not counted, and `teacher-run` records their
-scenes again: episodes in which a model service did not answer (for example SAM3 out of GPU
-memory), and episodes of a program you have since replaced with `teacher-add --force`. The
+Three kinds of teacher episode are kept on disk but not counted, and `teacher-run` records their
+scenes again: episodes stopped before they ended (Ctrl-C, or a simulator failure), episodes in
+which a model service did not answer (for example SAM3 out of GPU memory), and episodes of a
+program you have since replaced with `teacher-add --force`. The
 teacher table lists them as "not counted". `teacher-add` prints what the agent measured for a
 program and warns when it solved none of its held-out scenes.

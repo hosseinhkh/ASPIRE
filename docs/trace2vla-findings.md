@@ -19,6 +19,7 @@ Last updated: 12 November 2026.
 | T4 | A confident SAM3 mask on the wrong object cannot be detected from scores | Open by nature. The agent must check the image |
 | T5 | The basket centre from the median of points is 5 cm off; task 0's program still uses it | Program still fragile (4 of 50 lowering moves stalled, all 4 still succeeded) |
 | I1 | The GPU memory reservation is not handed over on demand | Open. Workaround documented |
+| I6 | An episode stopped by Ctrl-C was counted, and `teacher-grade` stopped on it | Fixed 12 November; rerun `teacher-run`, nothing else to redo |
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
 | P3 | Task 0 teacher episodes are long (506–636 steps); converted length may be near the student's 280-step limit | To be read off the first conversion |
@@ -101,6 +102,24 @@ Last updated: 12 November 2026.
   three versions.
 
 ## Machine and services
+
+### I6. An episode stopped by Ctrl-C was counted as finished (12 November, fixed)
+
+* **What happened.** The first `teacher-run --scenes train` was stopped with Ctrl-C while
+  seed 1011 of task 0 was still resetting its scene. Ctrl-C reaches every process of a foreground
+  command, so the episode's own process caught it, wrote its outcome as `user_interrupt` and
+  marked the run finished, but it had no reset state yet (`episode/reset.json`). The pipeline
+  counted it: the rerun skipped seed 1011, the table showed task 0 at 47 / 50 with one
+  `user_interrupt` "failure", and `teacher-grade` stopped at that episode with
+  `No such file or directory: .../1011/run-20261112T170526.../episode/reset.json`.
+* `t2v.sh stop` (used for the `--detach` run) does not cause this: it ends the processes
+  without finalizing their run, so the half-run episode is ignored and recorded again.
+* **Fixed.** An episode that ended as `user_interrupt` or `harness_error`, or whose recording
+  lacks `reset.json` or `steps.jsonl`, is not counted; `teacher-run` records that seed again and
+  the teacher table lists it as "not counted: ... stopped before they ended". `teacher-grade` and
+  `convert` skip a recording they cannot read, say which, and carry on with the rest.
+* **Nothing has to be redone.** Rerunning `teacher-run` records only the missing seed;
+  `teacher-grade` keeps the grades already written.
 
 ### I1. The GPU memory reservation is not handed over on demand (12 November)
 
@@ -208,6 +227,18 @@ Measured per teacher episode:
 * A scene is reproducible from (suite, task, init mode, seed) **only in a freshly built
   environment**; a reused environment drifted by 0.18 rad on a contact-rich task. Every replay
   builds a new one.
+
+### P2b. Teacher on the training layouts (12 November)
+
+| Task | Solved | Steps | Not solved |
+|---|---|---|---|
+| 0, alphabet soup | 47 / 49 counted (+1 interrupted, I6) | 499–576, mean 536 | 2 program errors |
+| 1, cream cheese | 50 / 50 | 413–427, mean 420 | none |
+
+* This run was about 3× faster than the run on the official scenes: 38 episodes in 586 s and
+  50 in 605 s with two workers, against 50 in 2,663 s and 1,848 s. The machine was less loaded;
+  `check_graspnet.sh` that evening measured the grasp planner at 0.3 s on the idle GPU against
+  2.6 s on the CPU.
 
 ### P2. Teacher on the official scenes (12 November)
 

@@ -233,6 +233,34 @@ def test_episodes_of_a_dead_service_or_a_replaced_program_are_not_counted(tmp_pa
     }
 
 
+def test_an_episode_stopped_by_ctrl_c_is_not_counted_and_is_recorded_again(tmp_path) -> None:
+    """Ctrl-C during a reset still finalizes the run (user_interrupt), with no reset state."""
+    experiment = _experiment(tmp_path, tasks=(0,))
+    root = experiment.teacher_dir("train", 0)
+    _run_folder(root, seed=1010, success=True)
+    stopped = _run_folder(root, seed=1011, success=False)
+    write_json(
+        stopped / "outcome.json",
+        {"task_success": False, "termination_reason": "user_interrupt", "steps_executed": 0},
+    )
+    (stopped / "episode" / "reset.json").unlink()
+    assert teacher.interrupted(stopped)
+    assert sorted(teacher.episodes_of(experiment, "train", 0)) == [1010]
+    assert teacher.set_aside(experiment, "train", 0) == {"interrupted": [1011]}
+    task = teacher.results(experiment, "train")["tasks"][0]
+    assert (task["successes"], task["episodes"], task["terminations"]) == (1, 1, {})
+
+    # A finalized run whose recording is incomplete is set aside the same way.
+    broken = _run_folder(root, seed=1012, success=True)
+    (broken / "episode" / "steps.jsonl").unlink()
+    assert teacher.interrupted(broken)
+    assert sorted(teacher.episodes_of(experiment, "train", 0)) == [1010]
+
+    # Run again, the seed gets a complete episode and that one counts.
+    _run_folder(root / "again", seed=1011, success=True)
+    assert sorted(teacher.episodes_of(experiment, "train", 0)) == [1010, 1011]
+
+
 def test_teacher_run_reports_each_episode_as_it_ends(tmp_path) -> None:
     """The batch's output goes to its log file, and every finished seed is reported live."""
     experiment = _experiment(tmp_path, tasks=(0,))

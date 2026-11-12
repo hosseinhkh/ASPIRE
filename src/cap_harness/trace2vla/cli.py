@@ -307,6 +307,11 @@ def _teacher_table(summary: dict[str, Any]) -> str:
             + (f", families {t['failure_families']}" if t["failure_families"] else "")
         )
         aside = t.get("set_aside") or {}
+        if aside.get("interrupted"):
+            lines.append(
+                f"    not counted: {len(aside['interrupted'])} episodes that were stopped before "
+                "they ended (Ctrl-C, or a simulator failure); teacher-run records them again"
+            )
         if aside.get("service_failed"):
             lines.append(
                 f"    not counted: {len(aside['service_failed'])} episodes in which a model service "
@@ -327,8 +332,10 @@ def cmd_teacher_grade(args: argparse.Namespace) -> int:
     experiment = Experiment.open(args.name)
     summary = teacher.grade_scene_set(experiment, args.scenes, _tasks(experiment, args.tasks))
     print(f"graded {summary['graded']} new episodes; families: {summary['families']}")
+    if summary["unreadable"]:
+        print(f"could not read, not graded: {', '.join(summary['unreadable'])}")
     print(_teacher_table(teacher.results(experiment, args.scenes)))
-    return 0
+    return 1 if summary["unreadable"] else 0
 
 
 # ------------------------------------------------------------------ convert and dataset --
