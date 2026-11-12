@@ -141,6 +141,7 @@ given.
 | Parity with LeRobot's own LIBERO environment | exact: images, robot state, simulator state and policy actions | |
 | Actions executed per prediction | 10 of 50, chosen by measurement: 78% / 93% / 83% for 50 / 10 / 1 | |
 | Before training, `preflight2`, tasks 0 and 1, official scenes | 0 / 100; 92 placed another object in the basket, 8 lifted another object | |
+| The same two tasks on the standard layouts | 89 / 100 (42 / 50, 47 / 50); every failure had the right object | |
 | How it fails (10 tasks, one episode each) | never lifted the requested object; 5 lifted another object, 4 of those placed it; 5 lifted nothing | [review §2.4](trace2vla-review.md) |
 
 **Teacher (T0)**
@@ -157,8 +158,8 @@ given.
 
 | Measurement | Result |
 |---|---|
-| Replays in the student's control that still solve the task | prototype 27 / 28; `preflight2` at 3×: 62 / 62 so far (48 of task 0, 14 of task 1) |
-| Steps after conversion at 3× | task 0: 188–216 (teacher 499–577); task 1: 164–173 (teacher 413–427). Student limit 280 |
+| Replays in the student's control that still solve the task | prototype 27 / 28; `preflight2` at 3×: **98 / 98** (48 of task 0, 50 of task 1) |
+| Steps after conversion at 3× | task 0: 188–216 (teacher mean 537); task 1: 162–174 (teacher mean 420). Student limit 280 |
 | Scene reproducibility | exact from (suite, task, mode, seed), in a freshly built environment only |
 | End-to-end pipeline | verified on CPU with 6 recorded teacher episodes: grade, convert, dataset, train (three methods), evaluate, report |
 

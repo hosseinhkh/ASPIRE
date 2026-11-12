@@ -303,10 +303,10 @@ The ASPIRE paper reports about 98% for the suite, on its own seeded layouts.
 
 * The student has 280 steps. The prototype converted 466–534-step episodes to 190–208 steps at
   3×, a ratio of about 0.4.
-* **Measured on `preflight2`, training layouts, 3× (12 November, conversion still running when
-  read):** task 0, 48 kept of 48 teacher successes, 188–216 steps (mean 201) from 499–577;
-  task 1, 14 kept so far, 164–173 steps (mean 168) from 413–427. None rejected, none over the
-  280-step limit, so 3× leaves a margin of more than 60 steps and `--speed 4` is not needed.
+* **Measured on `preflight2`, training layouts, 3× (12 November):** **98 kept of 98 teacher
+  successes, 0 rejected**. Task 0: 48 demos, 188–216 steps from a teacher mean of 537. Task 1:
+  50 demos, 162–174 steps from a teacher mean of 420. None over the 280-step limit, so 3×
+  leaves a margin of more than 60 steps and `--speed 4` is not needed.
 * Idle frames dropped per demo: about 6 (task 0) and 4 (task 1). In one demo per task, dropping
   them made the stored sequence fail on replay, so all were kept ("kept all idle frames").
 * Tracking lag, the distance between the re-executed hand and the teacher's recorded hand path:
@@ -339,10 +339,11 @@ From [trace2vla-review.md](trace2vla-review.md):
 * **Before training, `preflight2` official scenes (12 November):** 0 / 100 (tasks 0 and 1,
   seed 0). Graded failures: 92 `semantic` (another object placed in the basket) and 8 `both`
   (another object, not placed). Task 0 placed the butter.
-* **The same two tasks on the standard layouts** (`before-standard`, running when read): about
-  70–80% over the first 11 episodes. The instruction and the objects are identical; only the
-  layout differs. This pair of runs is the clearest statement of the problem the project
-  attacks.
+* **The same two tasks on the standard layouts** (`before-standard`, 12 November): **89 / 100**
+  (task 0: 42 / 50, task 1: 47 / 50); all 11 failures `physical` (the right object, not
+  placed). The instruction and the objects are identical to the swap suite; only the layout
+  differs. This pair of runs, 89% against 0% with 92 of 100 placing the wrong object, is the
+  clearest statement of the problem the project attacks.
 * **How it fails:** it never lifts the requested object. In 5 of 10 tasks it lifts whatever sits
   where the target used to be, and places it in 4 of those; in 5 it lifts nothing.
 * **Actions per prediction:** 10 of the 50 predicted, by measurement (78% / 93% / 83% for
