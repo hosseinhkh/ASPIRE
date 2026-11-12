@@ -11,7 +11,7 @@ Last updated: 12 November 2026. Update the status columns when a step finishes.
 
 | Step | What | Gate | Status |
 |---|---|---|---|
-| **A** | **Preflight on two tasks** (`libero_object_swap` 0 and 1): teacher on the official scenes, teacher demos on training layouts, convert, dataset, student before, fine-tune, student after, report. Commands: [trace2vla-preflight.md](trace2vla-preflight.md) | The loop closes once on the GPU. Teacher at or near 90% on `official`; most successes convert; student after training above 0% | Running. Teacher on `official`: 46 / 50 and 50 / 50. Next: demos on training layouts |
+| **A** | **Preflight on two tasks** (`libero_object_swap` 0 and 1): teacher on the official scenes, teacher demos on training layouts, convert, dataset, student before, fine-tune, student after, report. Commands: [trace2vla-preflight.md](trace2vla-preflight.md) | The loop closes once on the GPU. Teacher at or near 90% on `official`; most successes convert; student after training above 0% | Running. Teacher on `official` 96 / 100, on training layouts 98 / 100; conversion at 3× keeps every success so far, all under 280 steps. Next: dataset, fine-tune, student after |
 | **B** | **Read the preflight** and fix what it shows (table in section 2) | A written decision on training method, steps, demo count and conversion speed for step D | |
 | **C** | **Build what the full run needs** (section 3) | Each item has a test | |
 | **D** | **Full M1 run on ten tasks**: same-layout and held-out-layout experiments, retention, three training settings, demo-count curve | The M1 tables and figures in section 4, with three training seeds | |

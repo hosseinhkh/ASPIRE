@@ -9,7 +9,7 @@ The goal and status are in the [overview](trace2vla.md); the work ahead is in th
 [harness-fixes.md](harness-fixes.md), and for the design measurements in
 [trace2vla-review.md](trace2vla-review.md).
 
-Last updated: 12 November 2026.
+Last updated: 12 November 2026 (evening).
 
 ## Open items at a glance
 
@@ -22,7 +22,6 @@ Last updated: 12 November 2026.
 | I6 | An episode stopped by Ctrl-C was counted, and `teacher-grade` stopped on it | Fixed 12 November; rerun `teacher-run`, nothing else to redo |
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
-| P3 | Task 0 teacher episodes are long (506–636 steps); converted length may be near the student's 280-step limit | To be read off the first conversion |
 | P5 | Fine-tuning on the GPU has never been run | Next step of the preflight |
 
 ## Teacher (the ASPIRE agent and its programs)
@@ -232,7 +231,7 @@ Measured per teacher episode:
 
 | Task | Solved | Steps | Not solved |
 |---|---|---|---|
-| 0, alphabet soup | 47 / 49 counted (+1 interrupted, I6) | 499–576, mean 536 | 2 program errors |
+| 0, alphabet soup | 48 / 50 (seed 1011 recorded again after I6, and solved) | 499–577, mean 537 | 2 program errors, cause not yet read |
 | 1, cream cheese | 50 / 50 | 413–427, mean 420 | none |
 
 * This run was about 3× faster than the run on the official scenes: 38 episodes in 586 s and
@@ -253,9 +252,14 @@ The ASPIRE paper reports about 98% for the suite, on its own seeded layouts.
 
 * The student has 280 steps. The prototype converted 466–534-step episodes to 190–208 steps at
   3×, a ratio of about 0.4.
-* Task 0's current episodes are longer (506–636), so expect roughly 200–255 after conversion,
-  with little margin for the longest. The converter records `within_student_limit` per demo;
-  if demos exceed it, convert with `--speed 4` (163–177 steps in the prototype, floor about 160).
+* **Measured on `preflight2`, training layouts, 3× (12 November, conversion still running when
+  read):** task 0, 48 kept of 48 teacher successes, 188–216 steps (mean 201) from 499–577;
+  task 1, 14 kept so far, 164–173 steps (mean 168) from 413–427. None rejected, none over the
+  280-step limit, so 3× leaves a margin of more than 60 steps and `--speed 4` is not needed.
+* Idle frames dropped per demo: about 6 (task 0) and 4 (task 1). In one demo per task, dropping
+  them made the stored sequence fail on replay, so all were kept ("kept all idle frames").
+* Tracking lag, the distance between the re-executed hand and the teacher's recorded hand path:
+  about 11 mm throughout.
 
 ### P4. Facts that shaped the design
 
@@ -274,13 +278,16 @@ From [trace2vla-review.md](trace2vla-review.md):
 ### P5. Not yet verified
 
 * Fine-tuning on the GPU, and whether it raises the student's success.
-* The converter on any task other than task 0.
+* The converter on tasks other than 0 and 1.
 * The dashboard's Trace2VLA pages against a full experiment.
 
 ## Student (SmolVLA)
 
 * **Baseline:** 0 / 1,500 on `libero_object_swap`; 462 / 500 on standard `libero_object` (paper
   96%).
+* **Before training, `preflight2` official scenes (12 November, running when read):** 0 of the
+  first 9 episodes of task 0; every one graded `semantic`, the butter placed in the basket,
+  280 steps each. The same behaviour as the 1,500-episode baseline.
 * **How it fails:** it never lifts the requested object. In 5 of 10 tasks it lifts whatever sits
   where the target used to be, and places it in 4 of those; in 5 it lifts nothing.
 * **Actions per prediction:** 10 of the 50 predicted, by measurement (78% / 93% / 83% for

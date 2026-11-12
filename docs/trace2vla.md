@@ -57,7 +57,7 @@ is what the teacher's perception gets right.
 | | Scope | Completion gate | Status |
 |---|---|---|---|
 | **M0** Foundation | Teacher and student baselines in the same simulator; the bridge from teacher episodes to student training data; an archive of every episode with labels | One verified teacher success exported without time or action ambiguity; measured baseline table | **Done for two tasks** (teacher 96 / 100, student 0 / 100 on the same scenes). Eight tasks have no teacher program yet |
-| **M1** Success only | Train the student on verified teacher successes; before and after on the same scenes; demo-count sweep; retention | First complete train → evaluate cycle; a learning curve | **Code complete, first GPU run pending** (the [preflight](trace2vla-preflight.md)) |
+| **M1** Success only | Train the student on verified teacher successes; before and after on the same scenes; demo-count sweep; retention | First complete train → evaluate cycle; a learning curve | **In progress** ([preflight](trace2vla-preflight.md)): teacher data collected (98 / 100 on training layouts) and converted; dataset and fine-tuning next |
 | **M2** Failure aware | Use labelled failures: teacher corrections for physical failures, relabelling and contrasts for semantic ones | An ablation showing whether targeted corrections beat success-only and generic replay | Labels exist. Training with them is not started |
 | **M3** Continual | One persistent student across a sequence of tasks, with retesting of old tasks | Retention and sample-efficiency curves across skills | Not started. The pipeline is built so a loop can call it |
 | **M4** Optional | The agent proposes tasks; the student steers what to collect; on-device updates | Benefit under matched budgets | Not started |
@@ -149,19 +149,20 @@ given.
 | ASPIRE paper, `libero_object_swap` | about 98% (its own seeded layouts, not the official scenes) |
 | Programs from session `20261112-033519` (tasks 0 and 1) | 3 / 3 development, 3 / 3 held-out, each task |
 | Official scenes, earlier programs (12 November) | task 1: 41 / 50. Task 0: 0 / 34 (the program aimed at the wrong can and its grasp was out of reach) |
+| Training layouts (seeded 1001–1050), current programs | task 0: 48 / 50, task 1: 50 / 50 |
 | Official scenes, current programs (experiment `preflight2`) | **task 0: 46 / 50, task 1: 50 / 50** (96 / 100). All 100 episodes replay exactly; every success placed the requested object. Task 0's four failures all used a grasp suggested by the grasp planner and closed on nothing; the 46 that fell back to the program's own top-down grasp succeeded |
 
 **Bridge (teacher episode → student demonstration)**
 
 | Measurement | Result |
 |---|---|
-| Replays in the student's control that still solve the task | 27 / 28 |
-| Steps after conversion | 3×: 190–208. 4×: 163–177. Floor about 160. Student limit 280 |
+| Replays in the student's control that still solve the task | prototype 27 / 28; `preflight2` at 3×: 62 / 62 so far (48 of task 0, 14 of task 1) |
+| Steps after conversion at 3× | task 0: 188–216 (teacher 499–577); task 1: 164–173 (teacher 413–427). Student limit 280 |
 | Scene reproducibility | exact from (suite, task, mode, seed), in a freshly built environment only |
 | End-to-end pipeline | verified on CPU with 6 recorded teacher episodes: grade, convert, dataset, train (three methods), evaluate, report |
 
-**Not yet measured:** whether fine-tuning on teacher data raises the student's success (H1). The
-converter on tasks other than task 0. Training on the GPU.
+**Not yet measured:** whether fine-tuning on teacher data raises the student's success (H1).
+Training on the GPU. The converter on tasks other than 0 and 1.
 
 ## 6. Where the proposal changed
 
