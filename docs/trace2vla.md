@@ -140,6 +140,7 @@ given.
 | `libero_object_swap`, 10 tasks × 50 official scenes × 3 seeds | **0 / 1,500 = 0.0%** | not published before |
 | Parity with LeRobot's own LIBERO environment | exact: images, robot state, simulator state and policy actions | |
 | Actions executed per prediction | 10 of 50, chosen by measurement: 78% / 93% / 83% for 50 / 10 / 1 | |
+| Before training, `preflight2`, tasks 0 and 1, official scenes | 0 / 100; 92 placed another object in the basket, 8 lifted another object | |
 | How it fails (10 tasks, one episode each) | never lifted the requested object; 5 lifted another object, 4 of those placed it; 5 lifted nothing | [review §2.4](trace2vla-review.md) |
 
 **Teacher (T0)**

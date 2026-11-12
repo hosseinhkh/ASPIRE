@@ -336,9 +336,13 @@ From [trace2vla-review.md](trace2vla-review.md):
 
 * **Baseline:** 0 / 1,500 on `libero_object_swap`; 462 / 500 on standard `libero_object` (paper
   96%).
-* **Before training, `preflight2` official scenes (12 November, running when read):** 0 of the
-  first 9 episodes of task 0; every one graded `semantic`, the butter placed in the basket,
-  280 steps each. The same behaviour as the 1,500-episode baseline.
+* **Before training, `preflight2` official scenes (12 November):** 0 / 100 (tasks 0 and 1,
+  seed 0). Graded failures: 92 `semantic` (another object placed in the basket) and 8 `both`
+  (another object, not placed). Task 0 placed the butter.
+* **The same two tasks on the standard layouts** (`before-standard`, running when read): about
+  70–80% over the first 11 episodes. The instruction and the objects are identical; only the
+  layout differs. This pair of runs is the clearest statement of the problem the project
+  attacks.
 * **How it fails:** it never lifts the requested object. In 5 of 10 tasks it lifts whatever sits
   where the target used to be, and places it in 4 of those; in 5 it lifts nothing.
 * **Actions per prediction:** 10 of the 50 predicted, by measurement (78% / 93% / 83% for
