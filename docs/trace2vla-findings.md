@@ -23,7 +23,7 @@ Last updated: 12 November 2026 (evening).
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
 | P5 | Fine-tuning on the GPU has never been run | Next step of the preflight |
-| P6 | The dataset step rejected successful demos for a state drift of 1–5×10⁻⁵ | **Fixed 12 November** (cause: float32 rounding of the stored actions). A dataset built before the fix is valid, only smaller |
+| P6 | The dataset step rejected successful demos for a state drift of 1–5×10⁻⁵ (`d50`: 77 of 98 kept, all 21 rejections in task 1) | **Fixed 12 November** (cause: float32 rounding of the stored actions). A dataset built before the fix is valid, only smaller; the preflight trains on `d50` as it is |
 
 ## Teacher (the ASPIRE agent and its programs)
 
@@ -315,10 +315,16 @@ The ASPIRE paper reports about 98% for the suite, on its own seeded layouts.
 
 ### P6. Successful demos rejected for a tiny state drift (12 November, fixed)
 
-**Seen.** Building `d50` on `preflight2`, the dataset step rejected demos of task 1 with
-`rejected task_01/seed_1002: success True, state drift 3.40e-05` (5 of the first 17; task 0:
-none). The replay solved the task; the states differed from the stored ones by hundredths of
-a millimetre. The rule was: reject when the drift is above 1e-5.
+**Seen.** Building `d50` on `preflight2`, the dataset step rejected demos with
+`rejected task_01/seed_1002: success True, state drift 3.40e-05`. Final count: **77 kept of 98,
+21 rejected, all from task 1** (task 0: 48 kept, task 1: 29 kept, 14,584 frames). Every
+rejected replay solved the task; their drift was 1.1e-5 to 5.5e-5. Of the 77 kept, 44 also
+drifted, by less than 1e-5. The rule was: reject when the drift is above 1e-5.
+
+**Decision for the preflight:** train on this `d50` (77 demos) now, so SmolVLA and π0.5 learn
+from the same frames (π0.5 gets a copy with its own statistics); build the full 98-demo dataset
+with the fix for the experiments that follow. Task 1 has fewer demos (29 against 48), which
+the per-task results should be read against.
 
 **Cause.** The converter's final replay played the actions in float64 and recorded the states
 of that replay, but `steps.npz` stores the actions as float32. The dataset step replays the
