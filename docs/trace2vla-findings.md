@@ -15,7 +15,7 @@ Last updated: 12 November 2026 (evening).
 
 | # | Finding | Status |
 |---|---|---|
-| T1 | Grasps suggested by the grasp planner fail every time they are executed (12 of 12) | **Open.** Cause not established. Workaround: the program's own top-down grasp |
+| T1 | Grasps suggested by the grasp planner fail every time they are executed (12 of 12) | **Cause found, not fixed**: the planner runs in the robot base frame, and its pose is the gripper base used as the fingertip point. Both from the original release. Workaround: the program's own top-down grasp |
 | T4 | A confident SAM3 mask on the wrong object cannot be detected from scores | Open by nature. The agent must check the image |
 | T5 | The basket centre from the median of points is 5 cm off; task 0's program still uses it | Program still fragile (4 of 50 lowering moves stalled, all 4 still succeeded) |
 | I1 | The GPU memory reservation is not handed over on demand | Open. Workaround documented |
@@ -26,34 +26,83 @@ Last updated: 12 November 2026 (evening).
 
 ## Teacher (the ASPIRE agent and its programs)
 
-### T1. Grasps suggested by the grasp planner fail when executed (12 November)
+### T1. Grasps from the grasp planner fail (12 November; cause found, not fixed)
 
-* **What.** `generate_grasps` (Contact-GraspNet) followed by `select_grasp(strategy="top_down")`
-  sometimes returns a candidate. Every episode that executed such a candidate closed the gripper
-  on nothing: 8 of 8 in the first run of task 1 (cream cheese) and 4 of 4 in task 0 (alphabet
-  soup) on the official scenes. In the same runs the programs' own top-down grasp (hand pointing
-  down at the object's centre) succeeded 137 of 137.
-* **Evidence.** `outputs/trace2vla/preflight2/teacher/official/task_00/{0019,0028,0032,0033}`;
-  the `select-grasp` and `close-gripper` calls of each run.
-  * The candidates have low scores (0.15–0.22).
-  * Each candidate's position is 0.103–0.109 m from its own `contact_point`, the distance from
-    Contact-GraspNet's gripper base to its fingertips (0.1034 m). The hand went to the
-    candidate's position and stopped about 10 cm from the object.
-  * `select_grasp("top_down")` accepts an approach up to 37° from vertical
-    (`vertical_threshold=0.8`); the four candidates were tilted 24–35°.
-* **What was tested.** Moving the four recorded candidates 0.1034 m along their approach
-  direction and executing them in the simulator. The hand then reached the can, and still closed
-  on nothing in all four (two moves stalled against the can). So "the pose is the gripper base,
-  shift it by 10 cm" is **not** a sufficient fix, and it is not established whether the harness
-  mixes two frames or the candidates are simply poor for these objects.
-* **Also.** For the 2 cm cream cheese box the planner often returns no grasp at all, and a call
-  costs 16–42 s when the planner runs on the CPU (I2).
-* **Practice until this is understood.** Teacher programs for cans and boxes should use their
-  own top-down grasp at the object's geometry centre, and treat the planner's candidate as
-  optional. The agent prompt does not say this yet.
-* **To do.** Compare with the ASPIRE paper's released programs, if any use these candidates
-  successfully; test candidates on an object with a clear side grasp; decide whether the
-  candidate pose should be converted to the public end-effector frame.
+**In short.** Every grasp suggested by the grasp planner (Contact-GraspNet) that a program
+executed closed on nothing: 12 of 12. The programs' own top-down grasp succeeded every time. The
+recordings point to two defects in how the harness calls the planner, both present in the
+original ASPIRE v1.0 release. Neither blocks Trace2VLA: teacher episodes that used a planner
+grasp all failed, and only successes become training data.
+
+**What the recordings show.** Every planner call in the recordings, read for this entry:
+
+| Where | Object | Calls | Candidates | Score | Approach, degrees from straight down | Executed | Result |
+|---|---|---|---|---|---|---|---|
+| Agent session `20261112-033519`, task 0 v01 | tomato sauce can (the agent's wrong pick) | 3 | 15 | 0.15–0.29 | **127–152**: pointing up, from under the can; contact points 4–5 cm below the can's centre, at table height | 0 | none passed `top_down`; the program used its own grasp |
+| Same session, task 0 v02–v03 and held-out | alphabet soup can | 8 | 25 | 0.15–0.23 | 55–112, mostly horizontal | 0 | none passed `top_down` |
+| Same session, task 1 v01 | cream cheese box, 2 cm tall | 3 | 1 | 0.15 | 40 | 0 | two calls returned no grasp at all |
+| Experiment `preflight`, official scenes, task 1 | cream cheese box | 9 | | 0.15–0.17 | 11–36 | 9 | **8 closed on nothing, 1 out of reach** |
+| Experiment `preflight2`, official scenes, task 0 (seeds 19, 28, 32, 33) | alphabet soup can | 4 | | 0.19–0.22 | 24–35 | 4 | **4 closed on nothing** |
+| Experiment `preflight2`, training layouts, task 0 | alphabet soup can | 2 failures | | | | | not read; probably the same |
+
+* `select_grasp(strategy="top_down")` accepts a candidate whose approach is within 37° of
+  straight down (`vertical_threshold=0.8`). Most candidates were far outside that, so the
+  programs fell back to their own grasp, and that is why the teacher still works.
+* **Every candidate's position is 0.103–0.109 m from its own contact point**, 45 of 45 in the
+  session, whatever the object. That is Contact-GraspNet's gripper depth (0.1034 m from the
+  gripper base to the fingertips) plus half the finger opening.
+* Executed candidates stopped about 10 cm above the object and closed on air.
+
+**Cause 1, likely: the planner is run in the robot's base frame.** `generate_grasps`
+(`src/cap_harness/api.py`) projects the object and the whole scene into the robot base frame
+and sends both. The grasp service (`src/cap_harness/providers/graspnet/service.py`) runs the
+network on the points as received. Contact-GraspNet was trained on point clouds in a camera
+frame, with z pointing from the camera into the scene. In the base frame z points up, so the
+network sees the scene as if from a camera under the table. That matches what it proposes:
+grasps reaching up from under the tomato can, side grasps on the soup can, nothing on the flat
+box, all with low scores. The service does try other viewpoints, but only when the first pass
+returns nothing, and its virtual cameras are placed within 25 cm of the robot base's origin,
+not around the object.
+
+**Cause 2, likely: the pose is the gripper base, used as the fingertip point.** A public
+`Pose` addresses the point between the fingertips (`robot0_eef`). The IK service moves 0.1 m
+back from it to the hand (`PANDA_EEF_TO_HAND_OFFSET_M` in
+`src/cap_harness/providers/pyroki/client.py`). Contact-GraspNet's pose is the gripper base, so
+the fingertips end about 10 cm short of the contact point. The client corrects only the
+rotation of the fingers about the approach axis (`_LOCAL_Z_90_DEG`).
+
+**What was tested.** The four failed candidates of `preflight2`, moved 0.1034 m along their
+approach direction and executed in the simulator (CPU, PyRoki IK). The hand then reached the can,
+and still closed on nothing in all four; two moves stalled against the can. So fixing the
+position alone is not enough: the candidates themselves are poor, which fits cause 1.
+
+**Both are in the original release.** The base-frame request and the service's first pass and
+retry are in ASPIRE v1.0 (commit `fa00f0e`). This fork changed only the service's logging and
+its loading on a CPU. The ASPIRE paper's teacher results may therefore rest on programs that
+also fell back to their own grasps; do not claim anything about that without checking.
+
+**What it costs today.**
+
+* 0.3 s per call on an idle GPU, 2.6 s on the CPU, up to 42 s on a loaded machine, for a
+  candidate that is almost never used and fails when it is.
+* Agent versions: the session of 11 November lost a version to `select_grasp("highest_score")`
+  candidates the arm could not reach, and its report proposed avoiding them.
+* About 4–8% of teacher episodes on the official scenes (4 of 50 in task 0, 8 of 50 in task 1
+  with the earlier program).
+
+**What to do, in order of cost.**
+
+1. **Now, free:** teacher programs for cans and boxes use their own top-down grasp at the
+   object's geometry centre and do not call the planner. The current task 1 program already
+   does; task 0's still calls it and uses a candidate when one passes. The agent prompt does not
+   say this yet.
+2. **Fix, small:** in `generate_grasps`, express both point clouds in the camera's own frame
+   (OpenCV convention, z into the scene) before calling the planner, transform the grasps back,
+   and move each pose 0.1034 m along its approach so that it addresses the fingertip point.
+   Then rerun the four failed seeds and about 20 scenes of tasks 0 and 1, and compare the
+   approach angles, the scores and the empty-grasp rate with the table above.
+3. Keep the published behaviour selectable (`CAP_HARNESS_COMPAT=published`), as for the other
+   harness fixes, so paper comparisons stay like for like.
 
 ### T2. SAM3 does not recognise product names (11–12 November, fixed)
 

@@ -184,6 +184,15 @@ Four things on our side were wrong and are fixed:
   `localize_object(...).geometry.pose.position` for a container, and `run-batch` warns when a
   move stalls short of its target ("something is in the way").
 
+## 7. Grasps from Contact-GraspNet (open)
+
+Every planner grasp a program executed closed on nothing (12 of 12). The likely causes are two
+defects in the original release: `generate_grasps` sends points in the robot base frame,
+while Contact-GraspNet expects a camera frame, and the returned pose is the gripper base,
+about 10 cm behind the fingertip point that a public `Pose` addresses. Evidence, what was
+tested and a proposed fix: [trace2vla-findings.md](trace2vla-findings.md), entry T1. Not
+fixed yet; programs that use their own top-down grasp are unaffected.
+
 ## Comparing with the paper
 
 The fixes are on by default. `CAP_HARNESS_COMPAT=published` restores the published release's
