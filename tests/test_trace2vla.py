@@ -233,6 +233,38 @@ def test_episodes_of_a_dead_service_or_a_replaced_program_are_not_counted(tmp_pa
     }
 
 
+def test_teacher_run_reports_each_episode_as_it_ends(tmp_path) -> None:
+    """The batch's output goes to its log file, and every finished seed is reported live."""
+    experiment = _experiment(tmp_path, tasks=(0,))
+    program = tmp_path / "program.py"
+    program.write_text("result = 1\n")
+    teacher.register_program(experiment, 0, program)
+    batch = tmp_path / "fake-cap-harness"
+    batch.write_text(
+        "#!/bin/sh\n"
+        "echo 'simulator chatter'\n"
+        "echo 'seed 1001: task_success=True program_ok=True 36.3s pid=1 rss=10MB'\n"
+        "echo 'seed 1002: task_success=False program_ok=False 12.0s pid=1 rss=10MB'\n"
+        "echo 'warning (seeds 1002): close_gripper closed on nothing'\n"
+    )
+    batch.chmod(0o755)
+    lines: list[str] = []
+    summary = teacher.run_scene_set(
+        experiment,
+        scenes.SceneSet("train", "seeded", (1001, 1002), "train"),
+        [0],
+        cap_harness=batch,
+        log=lines.append,
+    )
+    assert "  task 0 seed 1001: success, 36 s  [1/2]" in lines
+    assert "  task 0 seed 1002: not solved (program error), 12 s  [2/2]" in lines
+    assert any(line.strip().startswith("warning (seeds 1002)") for line in lines)
+    assert not any("chatter" in line for line in lines)
+    (log_file,) = experiment.teacher_dir("train", 0).glob("batch-*.log")
+    assert "simulator chatter" in log_file.read_text()
+    assert summary["tasks"]["0"]["exit_status"] == 0
+
+
 def test_a_session_program_carries_its_held_out_record(tmp_path) -> None:
     workspace = tmp_path / "agents" / "llm-libero-pro-libero_object_swap-0"
     (workspace / "dev_v04").mkdir(parents=True)

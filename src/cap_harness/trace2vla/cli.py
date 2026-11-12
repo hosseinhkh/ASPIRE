@@ -766,6 +766,12 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, FileExistsError, KeyError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print(
+            "\nstopped. What finished is kept; run the same command again to continue.",
+            file=sys.stderr,
+        )
+        return 130
 
 
 if __name__ == "__main__":

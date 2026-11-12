@@ -22,6 +22,7 @@ closes. On `libero_object_swap` the student starts at 0 of 1,500 episodes.
 | What it is, how it works, where it stands | [`docs/trace2vla.md`](docs/trace2vla.md) |
 | What is left to do, and the experiments for the paper | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
 | Run the first end-to-end pass | [`docs/trace2vla-preflight.md`](docs/trace2vla-preflight.md) |
+| What we have learned so far, and what is open | [`docs/trace2vla-findings.md`](docs/trace2vla-findings.md) |
 
 Everything else below is ASPIRE itself, with the GPU-server tooling this fork added.
 
@@ -528,6 +529,7 @@ That releases GPU 0.
 | LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
 | **Trace2VLA overview**: goal, design, status, results so far, glossary | [`docs/trace2vla.md`](docs/trace2vla.md) |
 | Trace2VLA roadmap: work ahead, experiments for the paper, risks, open decisions | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
+| Trace2VLA findings log: what was measured, what went wrong and why, fixes, open items (grasp planner, CPU load, GPU reservation) | [`docs/trace2vla-findings.md`](docs/trace2vla-findings.md) |
 | Trace2VLA related work: closest papers, what is published, what is open, expected baselines | [`docs/trace2vla-related-work.md`](docs/trace2vla-related-work.md) |
 | VLA student: SmolVLA on LIBERO / LIBERO-Pro in ASPIRE's simulator (setup, parity, baseline) | [`docs/vla-student.md`](docs/vla-student.md) |
 | Trace2VLA design review: measurements, design changes, pipeline structure, order of work | [`docs/trace2vla-review.md`](docs/trace2vla-review.md) |

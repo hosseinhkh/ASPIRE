@@ -9,6 +9,7 @@ part each.
 |---|---|
 | **This page** | goal, design, status, results so far, glossary |
 | [trace2vla-roadmap.md](trace2vla-roadmap.md) | what is left to do, the experiments for the paper, risks, open decisions |
+| [trace2vla-findings.md](trace2vla-findings.md) | everything learned so far: what went wrong and why, what was fixed, what is open |
 | [trace2vla-related-work.md](trace2vla-related-work.md) | the closest published work, what is already taken, what looks open |
 | [trace2vla-review.md](trace2vla-review.md) | the measurements behind the design (11 November 2026) |
 | [trace2vla-preflight.md](trace2vla-preflight.md) | every command of the first end-to-end pass |

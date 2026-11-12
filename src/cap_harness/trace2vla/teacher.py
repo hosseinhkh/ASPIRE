@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import Iterable
 import os
 from pathlib import Path
+import re
 import shutil
 import statistics
 import subprocess
@@ -197,6 +198,53 @@ def service_ports_down(ports: Iterable[int] = (8114, 8115, 8116)) -> list[int]:
     return down
 
 
+_SEED_LINE = re.compile(r"^seed (\d+): task_success=(\w+) program_ok=(\w+) ([\d.]+)s")
+
+
+def _run_batch(
+    command: list[str],
+    environment: dict[str, str],
+    log_path: Path,
+    task_id: int,
+    total: int,
+    log: Any,
+) -> int:
+    """Run one batch, keep its full output in `log_path`, and report each episode as it ends."""
+    finished = 0
+    with (
+        log_path.open("w", encoding="utf-8") as stream,
+        subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=environment,
+            cwd=REPOSITORY_ROOT,
+            text=True,
+            bufsize=1,
+        ) as process,
+    ):
+        try:
+            for line in process.stdout or ():
+                stream.write(line)
+                stream.flush()
+                seen = _SEED_LINE.match(line)
+                if seen:
+                    finished += 1
+                    outcome = "success" if seen.group(2) == "True" else "not solved"
+                    if seen.group(3) != "True":
+                        outcome += " (program error)"
+                    log(
+                        f"  task {task_id} seed {int(seen.group(1))}: {outcome}, "
+                        f"{float(seen.group(4)):.0f} s  [{finished}/{total}]"
+                    )
+                elif line.startswith(("warning (", "seed ")):
+                    log("  " + line.strip())
+        except KeyboardInterrupt:
+            process.terminate()
+            raise
+        return process.wait()
+
+
 def run_scene_set(
     experiment: Experiment,
     scenes: SceneSet,
@@ -260,15 +308,9 @@ def run_scene_set(
             f"task {task_id}: running {len(missing)} scenes of '{scenes.name}' ({scenes.init_mode}) with {workers} workers"
         )
         started = time.monotonic()
-        with (out / f"batch-{stamp}.log").open("w", encoding="utf-8") as stream:
-            code = subprocess.run(
-                command,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-                env=environment,
-                cwd=REPOSITORY_ROOT,
-                check=False,
-            ).returncode
+        code = _run_batch(
+            command, environment, out / f"batch-{stamp}.log", task_id, len(missing), log
+        )
         after = episodes_of(experiment, scenes.name, task_id)
         ran = sorted(set(after) - set(done))
         service_seeds = [

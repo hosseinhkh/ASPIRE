@@ -47,7 +47,7 @@ M4 (the agent proposes tasks, on-device updates) is out of scope for a first pap
 | **A round script** | M3 | One command that runs evaluate → collect → convert → dataset → train → evaluate → gate, reading the ledger |
 | **A second student** as a sanity check | Confirms the setup against published LIBERO-Pro numbers | `lerobot/pi05_libero` should reproduce about 0.17 (object) and 0.38 (goal) if the setup is right. Planned and not yet run |
 
-Teacher quality: every episode that executed a grasp suggested by the grasp planner
+Teacher quality ([findings T1](trace2vla-findings.md)): every episode that executed a grasp suggested by the grasp planner
 (Contact-GraspNet) failed, 12 of 12 over two runs, while the programs' own top-down grasps
 succeeded 137 of 137. The suggested poses sit about 10 cm from their own contact point; moving
 them 10 cm along the approach direction did not fix them in a simulator test, so the cause is
