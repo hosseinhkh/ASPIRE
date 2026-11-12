@@ -49,7 +49,7 @@ M4 (the agent proposes tasks, on-device updates) is out of scope for a first pap
 
 Teacher quality: every episode that executed a grasp suggested by the grasp planner
 (Contact-GraspNet) failed, 12 of 12 over two runs, while the programs' own top-down grasps
-succeeded 87 of 87. The suggested poses sit about 10 cm from their own contact point; moving
+succeeded 137 of 137. The suggested poses sit about 10 cm from their own contact point; moving
 them 10 cm along the approach direction did not fix them in a simulator test, so the cause is
 open. Until it is understood, teacher programs for box and can tasks should use their own
 top-down grasp.
