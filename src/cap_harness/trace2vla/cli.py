@@ -638,7 +638,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     experiment = Experiment.open(args.name)
     label, policy, student = _checkpoint(experiment, args.checkpoint, args.student)
     scenes = scene_set(experiment.settings, args.scenes)
-    suite = args.suite or experiment.suite
+    suite = args.suite or scenes.suite_or(experiment.suite)
     out = experiment.eval_dir(args.eval)
     previous = read_json(out / "eval.json") or {}
     if previous and students.infer(previous)[0] != student.key:
@@ -717,8 +717,10 @@ def cmd_eval_steps(args: argparse.Namespace) -> int:
         return 2
     student = students.get(students.infer(record)[0])
     scenes = scene_set(experiment.settings, args.scenes)
-    suite = args.suite or experiment.suite
-    tag = args.tag or (scenes.name if suite == experiment.suite else f"{suite}-{scenes.name}")
+    suite = args.suite or scenes.suite_or(experiment.suite)
+    tag = args.tag or (
+        scenes.name if suite == scenes.suite_or(experiment.suite) else f"{suite}-{scenes.name}"
+    )
     # Every evaluation below runs in this student's environment.
     students.reexec(student, "cap_harness.trace2vla", args.argv)
     wanted = set(parse_int_list(args.steps)) if args.steps else None
@@ -848,6 +850,42 @@ def cmd_checkpoints(args: argparse.Namespace) -> int:
     if args.move and args.dry_run:
         print("nothing moved (without --dry-run they would be)")
     return 1 if failed else 0
+
+
+def cmd_scenes(args: argparse.Namespace) -> int:
+    """List the experiment's scene sets, or add one (for example a sibling layout)."""
+    experiment = Experiment.open(args.name)
+    if args.add:
+        if args.add in scene_sets(experiment.settings) and not args.replace:
+            print(f"error: scene set {args.add!r} exists (pass --replace)", file=sys.stderr)
+            return 2
+        if args.suite:
+            from cap_harness.vla.protocol import task_count
+
+            count = task_count(args.suite)  # also checks that the suite exists
+            missing = [t for t in experiment.tasks if t >= count]
+            if missing:
+                print(f"error: {args.suite} has no tasks {missing}", file=sys.stderr)
+                return 2
+        if args.init_mode == "saved" and args.suite and "_alt" in args.suite:
+            print(
+                f"error: {args.suite} has no saved layouts; use --init-mode seeded",
+                file=sys.stderr,
+            )
+            return 2
+        spec = {"init_mode": args.init_mode, "seeds": compact(parse_int_list(args.seeds)),
+                "role": args.role}  # fmt: skip
+        if args.suite:
+            spec["suite"] = args.suite
+        experiment.settings.setdefault("scene_sets", {})[args.add] = spec
+        experiment.save_settings()
+        experiment.log("scene_set_added", scene_set=args.add, **spec)
+    for name, scenes in sorted(scene_sets(experiment.settings).items()):
+        print(
+            f"  {name:<16} {scenes.role:<5} {scenes.init_mode:<6} seeds {compact(scenes.seeds):<12} "
+            f"{scenes.suite_or(experiment.suite)}"
+        )
+    return 0
 
 
 def cmd_grade_student(args: argparse.Namespace) -> int:
@@ -1143,6 +1181,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="skip step 0 (the checkpoint the run started from)",
     )
+
+    c = add("scenes", cmd_scenes)
+    c.add_argument("--add", metavar="SET", help="add a scene set with this name")
+    c.add_argument(
+        "--suite", help="its suite, e.g. libero_object_swap_alt1 (default: the experiment's)"
+    )
+    c.add_argument("--init-mode", default="seeded", choices=("saved", "seeded"))
+    c.add_argument("--seeds", default="1001-1050")
+    c.add_argument("--role", default="train", choices=("train", "dev", "test"))
+    c.add_argument("--replace", action="store_true")
 
     c = add("checkpoints", cmd_checkpoints, needs_name=False)
     c.add_argument("name", nargs="?", help="an experiment: list (or --move) its runs' checkpoints")

@@ -5,7 +5,7 @@ the risks; and the decisions that are still open. The goal and current status ar
 [project overview](trace2vla.md). What may be claimed is in
 [related work](trace2vla-related-work.md).
 
-Last updated: 12 November 2026. Update the status columns when a step finishes.
+Last updated: 13 November 2026. Update the status columns when a step finishes.
 
 ## 1. The order of work
 
@@ -36,7 +36,7 @@ M4 (the agent proposes tasks, on-device updates) is out of scope for a first pap
 
 | Item | Why | Notes |
 |---|---|---|
-| **Sibling-layout scene sets** | The main experiment trains on layouts the test never shows | Generate the other swap partners with LIBERO-Pro's own tool (five candidates per task in `libero_ood/ood_spatial_relation.yaml`; the official suite is one draw). Add them as scene sets with role `train` |
+| **Sibling-layout scene sets** | The main experiment trains on layouts the test never shows | **Built 13 November:** suites `libero_object_swap_alt1…alt4` (LIBERO-Pro's rule, the other four partners per task), and scene sets that name their suite (`t2v.sh scenes NAME --add …`). Readiness and data plan: [trace2vla-full-run.md](trace2vla-full-run.md) |
 | **Replay mixing** | Retention | Merge the teacher dataset with `lerobot/libero` (`lerobot-edit-dataset`, operation `merge`); the dataset writer already matches its feature names, image size and declared fps |
 | **Converter checked on all ten tasks** | It is validated on task 0 only | Thin or tall objects may need slower contact phases. Record the yield per task |
 | **Teacher programs for all ten tasks** | Only tasks 0 and 1 exist | About \$4–7 of LLM cost per task in the last session. Consider the full campaign (`demo.sh campaign`), which also grows the skill library |

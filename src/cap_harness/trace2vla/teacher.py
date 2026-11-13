@@ -306,7 +306,7 @@ def run_scene_set(
         command = [
             str(cap_harness), "run-batch",
             "--benchmark", experiment.benchmark,
-            "--suite", experiment.suite,
+            "--suite", scenes.suite_or(experiment.suite),
             "--task-id", str(task_id),
             "--seeds", *compact(missing).split(","),
             "--program", str(experiment.program(task_id)),

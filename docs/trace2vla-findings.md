@@ -15,7 +15,8 @@ Last updated: 12 November 2026 (evening).
 
 | # | Finding | Status |
 |---|---|---|
-| T1 | Grasps suggested by the grasp planner fail every time they are executed (12 of 12) | **Cause found, not fixed**: the planner runs in the robot base frame, and its pose is the gripper base used as the fingertip point. Both from the original release. Workaround: the program's own top-down grasp |
+| T1 | Grasps suggested by the grasp planner fail every time they are executed (12 of 12) | **Cause found, not fixed; avoided** (13 November): the teacher prompt (`scripts/gpu/prompts/llm_quick_demo.md`) now tells new programs to use their own top-down grasp for upright cans, boxes and bottles and not to call the planner. The harness fix is still open |
+| P8 | Seeded layouts barely vary: wide objects sit at their region's centre for every seed | Variety comes from the sibling layouts (`libero_object_swap_alt1…4`), built 13 November |
 | T4 | A confident SAM3 mask on the wrong object cannot be detected from scores | Open by nature. The agent must check the image |
 | T5 | The basket centre from the median of points is 5 cm off; task 0's program still uses it | Program still fragile (4 of 50 lowering moves stalled, all 4 still succeeded) |
 | I1 | The GPU memory reservation is not handed over on demand | Open. Workaround documented |
@@ -352,6 +353,24 @@ training itself was not affected (the learning rate kept falling step by step). 
 now takes the previous step plus the logging interval whenever that agrees with the printed
 value, and the dashboard repairs `metrics.jsonl` files written before the fix when it reads
 them. Tests: `tests/test_training_steps.py`.
+
+### P8. Seeded layouts barely vary; the sibling layouts do (13 November)
+
+**Measured** in the simulator, `libero_object_swap_alt1` task 0, seeds 7, 8, 9 and 1001: the
+alphabet soup and the salad dressing stood at exactly the same spot for every seed (to 0.1 mm);
+the milk moved by about 5 mm. Each object's starting region is a 5 × 5 cm square, and objects
+about that wide end up at its centre. The demos of `preflight2` differ by 1–1.5 cm between
+seeds (start states), the same picture. So 50 seeds of one layout are close to one scene, and
+the 50 official scenes of a task differ by centimetres too (P4).
+
+**Consequence:** variety for training has to come from layouts. LIBERO-Pro draws each task's
+swap partner from five candidates; the other four give layouts with the target about 20 cm
+elsewhere, same instruction, same objects. They are generated with LIBERO-Pro's own rule (it
+reproduces the ten official swap files byte for byte) into `configs/libero_layouts/` and
+registered as suites `libero_object_swap_alt1…alt4` (`src/cap_harness/libero/layouts.py`).
+Checked: in `alt1` task 0 the soup stands where the salad dressing stands in the standard
+layout (within 1 mm), 22 cm from its own place, and the instruction is word for word the
+official one. See [trace2vla-full-run.md](trace2vla-full-run.md).
 
 ### P4. Facts that shaped the design
 

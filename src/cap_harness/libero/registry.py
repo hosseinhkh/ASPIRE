@@ -224,6 +224,11 @@ class LiberoSuiteRegistry:
                 mapping = get_benchmark_dict()
         if not isinstance(mapping, Mapping):
             raise LiberoRegistryError("LIBERO get_benchmark_dict() did not return a mapping")
+        if self._provided_benchmark_dict is None and isinstance(mapping, dict):
+            # The generated sibling layouts (cap_harness.libero.layouts) next to LIBERO's suites.
+            from cap_harness.libero import layouts
+
+            layouts.register(mapping)
         self._benchmark_dict_cache = mapping
         return mapping
 
@@ -330,7 +335,7 @@ class LiberoSuiteRegistry:
             raise LiberoRegistryError(
                 f"init states for {metadata.task_ref} are not a sized sequence"
             ) from exc
-        if count <= 0:
+        if count <= 0 and not getattr(suite, "seeded_only", False):
             raise LiberoRegistryError(f"init states are empty for {metadata.task_ref}")
         self._init_states_cache[key] = states
         return states

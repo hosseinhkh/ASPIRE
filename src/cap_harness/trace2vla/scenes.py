@@ -25,9 +25,18 @@ class SceneSet:
     init_mode: str
     seeds: tuple[int, ...]
     role: str  # test | train | dev
+    #: Another suite than the experiment's (e.g. a sibling layout, libero_object_swap_alt1).
+    suite: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"init_mode": self.init_mode, "seeds": compact(self.seeds), "role": self.role}
+        spec = {"init_mode": self.init_mode, "seeds": compact(self.seeds), "role": self.role}
+        if self.suite:
+            spec["suite"] = self.suite
+        return spec
+
+    def suite_or(self, default: str) -> str:
+        """The suite these scenes are drawn from: their own, else the experiment's."""
+        return self.suite or default
 
 
 def compact(seeds: tuple[int, ...] | list[int]) -> str:
@@ -64,6 +73,7 @@ def scene_sets(settings: dict[str, Any]) -> dict[str, SceneSet]:
             init_mode=str(spec["init_mode"]),
             seeds=tuple(parse_int_list(str(spec["seeds"]))),
             role=str(spec.get("role", "train")),
+            suite=str(spec["suite"]) if spec.get("suite") else None,
         )
         for name, spec in declared.items()
     }

@@ -69,6 +69,14 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    `localize_object(...).geometry.pose.position`, not the median of its point cloud: one
    camera sees mostly the near wall, so the median sits about 5 cm toward the camera and the
    object lands on the rim.
+
+   For grasping cans, boxes and bottles standing upright, use your own top-down grasp at the
+   object's `geometry.pose.position` (descend from above, close, then check `closed_empty`),
+   and do not call `generate_grasps` / `select_grasp`. In this harness the grasp planner's
+   candidates are unreliable: in recorded runs every candidate a program executed closed on
+   nothing (12 of 12), because the planner is run on points in the robot's base frame and its
+   pose is the gripper base, not the fingertip point. Use it only for an object a top-down
+   grasp cannot take, and then verify the grasp before lifting.
 4. Diagnose failures in this order, and fix the failure mode, not the seed:
    a. `{{WS}}/dev_vNN/batch.json`: the `warnings` list first (run-batch also prints it). It
       names causes that the program's own error does not: a guessed or ambiguous object, a

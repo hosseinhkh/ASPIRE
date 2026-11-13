@@ -1,0 +1,350 @@
+{
+  "about": "LIBERO-Pro swap with each task's other candidates; see cap_harness.libero.layouts",
+  "source": "third_party/LIBERO-PRO libero_ood/ood_spatial_relation.yaml",
+  "suites": {
+    "libero_object_swap_alt1": {
+      "base": "libero_object_swap",
+      "init_mode": "seeded",
+      "tasks": [
+        {
+          "task_id": 0,
+          "name": "pick_up_the_alphabet_soup_and_place_it_in_the_basket",
+          "target": "alphabet_soup_1",
+          "partner": "salad_dressing_1",
+          "official_partner": "butter_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_alphabet_soup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 1,
+          "name": "pick_up_the_cream_cheese_and_place_it_in_the_basket",
+          "target": "cream_cheese_1",
+          "partner": "milk_1",
+          "official_partner": "alphabet_soup_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_cream_cheese_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 2,
+          "name": "pick_up_the_salad_dressing_and_place_it_in_the_basket",
+          "target": "salad_dressing_1",
+          "partner": "ketchup_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_salad_dressing_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 3,
+          "name": "pick_up_the_bbq_sauce_and_place_it_in_the_basket",
+          "target": "bbq_sauce_1",
+          "partner": "ketchup_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_bbq_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 4,
+          "name": "pick_up_the_ketchup_and_place_it_in_the_basket",
+          "target": "ketchup_1",
+          "partner": "bbq_sauce_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_ketchup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 5,
+          "name": "pick_up_the_tomato_sauce_and_place_it_in_the_basket",
+          "target": "tomato_sauce_1",
+          "partner": "butter_1",
+          "official_partner": "milk_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 6,
+          "name": "pick_up_the_butter_and_place_it_in_the_basket",
+          "target": "butter_1",
+          "partner": "orange_juice_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_butter_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 7,
+          "name": "pick_up_the_milk_and_place_it_in_the_basket",
+          "target": "milk_1",
+          "partner": "tomato_sauce_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_milk_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 8,
+          "name": "pick_up_the_chocolate_pudding_and_place_it_in_the_basket",
+          "target": "chocolate_pudding_1",
+          "partner": "orange_juice_1",
+          "official_partner": "ketchup_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_chocolate_pudding_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 9,
+          "name": "pick_up_the_orange_juice_and_place_it_in_the_basket",
+          "target": "orange_juice_1",
+          "partner": "butter_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt1/pick_up_the_orange_juice_and_place_it_in_the_basket.bddl"
+        }
+      ]
+    },
+    "libero_object_swap_alt2": {
+      "base": "libero_object_swap",
+      "init_mode": "seeded",
+      "tasks": [
+        {
+          "task_id": 0,
+          "name": "pick_up_the_alphabet_soup_and_place_it_in_the_basket",
+          "target": "alphabet_soup_1",
+          "partner": "cream_cheese_1",
+          "official_partner": "butter_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_alphabet_soup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 1,
+          "name": "pick_up_the_cream_cheese_and_place_it_in_the_basket",
+          "target": "cream_cheese_1",
+          "partner": "tomato_sauce_1",
+          "official_partner": "alphabet_soup_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_cream_cheese_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 2,
+          "name": "pick_up_the_salad_dressing_and_place_it_in_the_basket",
+          "target": "salad_dressing_1",
+          "partner": "alphabet_soup_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_salad_dressing_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 3,
+          "name": "pick_up_the_bbq_sauce_and_place_it_in_the_basket",
+          "target": "bbq_sauce_1",
+          "partner": "salad_dressing_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_bbq_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 4,
+          "name": "pick_up_the_ketchup_and_place_it_in_the_basket",
+          "target": "ketchup_1",
+          "partner": "salad_dressing_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_ketchup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 5,
+          "name": "pick_up_the_tomato_sauce_and_place_it_in_the_basket",
+          "target": "tomato_sauce_1",
+          "partner": "orange_juice_1",
+          "official_partner": "milk_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 6,
+          "name": "pick_up_the_butter_and_place_it_in_the_basket",
+          "target": "butter_1",
+          "partner": "chocolate_pudding_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_butter_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 7,
+          "name": "pick_up_the_milk_and_place_it_in_the_basket",
+          "target": "milk_1",
+          "partner": "butter_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_milk_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 8,
+          "name": "pick_up_the_chocolate_pudding_and_place_it_in_the_basket",
+          "target": "chocolate_pudding_1",
+          "partner": "bbq_sauce_1",
+          "official_partner": "ketchup_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_chocolate_pudding_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 9,
+          "name": "pick_up_the_orange_juice_and_place_it_in_the_basket",
+          "target": "orange_juice_1",
+          "partner": "bbq_sauce_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt2/pick_up_the_orange_juice_and_place_it_in_the_basket.bddl"
+        }
+      ]
+    },
+    "libero_object_swap_alt3": {
+      "base": "libero_object_swap",
+      "init_mode": "seeded",
+      "tasks": [
+        {
+          "task_id": 0,
+          "name": "pick_up_the_alphabet_soup_and_place_it_in_the_basket",
+          "target": "alphabet_soup_1",
+          "partner": "milk_1",
+          "official_partner": "butter_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_alphabet_soup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 1,
+          "name": "pick_up_the_cream_cheese_and_place_it_in_the_basket",
+          "target": "cream_cheese_1",
+          "partner": "butter_1",
+          "official_partner": "alphabet_soup_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_cream_cheese_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 2,
+          "name": "pick_up_the_salad_dressing_and_place_it_in_the_basket",
+          "target": "salad_dressing_1",
+          "partner": "cream_cheese_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_salad_dressing_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 3,
+          "name": "pick_up_the_bbq_sauce_and_place_it_in_the_basket",
+          "target": "bbq_sauce_1",
+          "partner": "alphabet_soup_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_bbq_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 4,
+          "name": "pick_up_the_ketchup_and_place_it_in_the_basket",
+          "target": "ketchup_1",
+          "partner": "alphabet_soup_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_ketchup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 5,
+          "name": "pick_up_the_tomato_sauce_and_place_it_in_the_basket",
+          "target": "tomato_sauce_1",
+          "partner": "chocolate_pudding_1",
+          "official_partner": "milk_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 6,
+          "name": "pick_up_the_butter_and_place_it_in_the_basket",
+          "target": "butter_1",
+          "partner": "bbq_sauce_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_butter_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 7,
+          "name": "pick_up_the_milk_and_place_it_in_the_basket",
+          "target": "milk_1",
+          "partner": "orange_juice_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_milk_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 8,
+          "name": "pick_up_the_chocolate_pudding_and_place_it_in_the_basket",
+          "target": "chocolate_pudding_1",
+          "partner": "salad_dressing_1",
+          "official_partner": "ketchup_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_chocolate_pudding_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 9,
+          "name": "pick_up_the_orange_juice_and_place_it_in_the_basket",
+          "target": "orange_juice_1",
+          "partner": "ketchup_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt3/pick_up_the_orange_juice_and_place_it_in_the_basket.bddl"
+        }
+      ]
+    },
+    "libero_object_swap_alt4": {
+      "base": "libero_object_swap",
+      "init_mode": "seeded",
+      "tasks": [
+        {
+          "task_id": 0,
+          "name": "pick_up_the_alphabet_soup_and_place_it_in_the_basket",
+          "target": "alphabet_soup_1",
+          "partner": "tomato_sauce_1",
+          "official_partner": "butter_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_alphabet_soup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 1,
+          "name": "pick_up_the_cream_cheese_and_place_it_in_the_basket",
+          "target": "cream_cheese_1",
+          "partner": "orange_juice_1",
+          "official_partner": "alphabet_soup_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_cream_cheese_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 2,
+          "name": "pick_up_the_salad_dressing_and_place_it_in_the_basket",
+          "target": "salad_dressing_1",
+          "partner": "milk_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_salad_dressing_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 3,
+          "name": "pick_up_the_bbq_sauce_and_place_it_in_the_basket",
+          "target": "bbq_sauce_1",
+          "partner": "cream_cheese_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_bbq_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 4,
+          "name": "pick_up_the_ketchup_and_place_it_in_the_basket",
+          "target": "ketchup_1",
+          "partner": "milk_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_ketchup_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 5,
+          "name": "pick_up_the_tomato_sauce_and_place_it_in_the_basket",
+          "target": "tomato_sauce_1",
+          "partner": "bbq_sauce_1",
+          "official_partner": "milk_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 6,
+          "name": "pick_up_the_butter_and_place_it_in_the_basket",
+          "target": "butter_1",
+          "partner": "ketchup_1",
+          "official_partner": "tomato_sauce_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_butter_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 7,
+          "name": "pick_up_the_milk_and_place_it_in_the_basket",
+          "target": "milk_1",
+          "partner": "chocolate_pudding_1",
+          "official_partner": "cream_cheese_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_milk_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 8,
+          "name": "pick_up_the_chocolate_pudding_and_place_it_in_the_basket",
+          "target": "chocolate_pudding_1",
+          "partner": "alphabet_soup_1",
+          "official_partner": "ketchup_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_chocolate_pudding_and_place_it_in_the_basket.bddl"
+        },
+        {
+          "task_id": 9,
+          "name": "pick_up_the_orange_juice_and_place_it_in_the_basket",
+          "target": "orange_juice_1",
+          "partner": "salad_dressing_1",
+          "official_partner": "chocolate_pudding_1",
+          "bddl": "libero_object_swap_alt4/pick_up_the_orange_juice_and_place_it_in_the_basket.bddl"
+        }
+      ]
+    }
+  }
+}

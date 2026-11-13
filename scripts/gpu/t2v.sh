@@ -4,6 +4,8 @@
 #   scripts/gpu/t2v.sh init NAME --suite libero_object_swap --tasks 0,1
 #   scripts/gpu/t2v.sh check NAME                 sanity checks (environment, services, simulator)
 #   scripts/gpu/t2v.sh teacher-add NAME --from SESSION_OR_CAMPAIGN_DIR
+#   scripts/gpu/t2v.sh scenes NAME [--add SET --suite S --seeds 1001-1050 --role train]
+#                                                 scene sets; S may be a sibling layout (_alt1..4)
 #   scripts/gpu/t2v.sh teacher-run NAME --scenes official|train|dev [--workers 2]
 #   scripts/gpu/t2v.sh teacher-grade NAME --scenes SET
 #   scripts/gpu/t2v.sh convert NAME --scenes train [--speed 3]
@@ -80,7 +82,7 @@ run_stage() {  # run_stage STAGE ARGS...
 }
 
 case "$cmd" in
-  init|check|teacher-add|teacher-import|report|status|checkpoints)
+  init|check|teacher-add|teacher-import|report|status|checkpoints|scenes)
     run_stage "$cmd" "$@" ;;
   teacher-run)
     echo "teacher-run uses the conda env's GPU (ASPIRE_GPU=${ASPIRE_GPU:-unset}) and the model services" >&2

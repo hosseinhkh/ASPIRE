@@ -145,6 +145,10 @@ def _benchmark(suite: str):
 
     suites = benchmark.get_benchmark_dict()
     if suite not in suites:
+        from cap_harness.libero import layouts
+
+        layouts.register(suites)  # the generated sibling layouts
+    if suite not in suites:
         raise ValueError(f"unknown LIBERO suite {suite!r}")
     return suites[suite]()
 
