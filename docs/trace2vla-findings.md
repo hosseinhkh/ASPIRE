@@ -22,7 +22,7 @@ Last updated: 12 November 2026 (evening).
 | I6 | An episode stopped by Ctrl-C was counted, and `teacher-grade` stopped on it | Fixed 12 November; rerun `teacher-run`, nothing else to redo |
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
-| P5 | Fine-tuning on the GPU has never been run | Next step of the preflight |
+| S1 | Fine-tuned SmolVLA: 0% → 86% on the swap suite, 89% → ~0% on the standard layouts, forgetting complete by step 500 | Open: most likely a position shortcut; next: replay mixing, LoRA, π0.5 for comparison |
 | P6 | The dataset step rejected successful demos for a state drift of 1–5×10⁻⁵ (`d50`: 77 of 98 kept, all 21 rejections in task 1) | **Fixed 12 November** (cause: float32 rounding of the stored actions). A dataset built before the fix is valid, only smaller; the preflight trains on `d50` as it is |
 
 ## Teacher (the ASPIRE agent and its programs)
@@ -393,6 +393,42 @@ From [trace2vla-review.md](trace2vla-review.md):
   identical between ASPIRE's adapter and LeRobot's own LIBERO environment.
 * **Checkpoint:** `lerobot/smolvla_libero`, already fine-tuned on LIBERO. `smolvla_base` was
   trained on 6-joint arms and cannot command this robot.
+
+### S1. First fine-tuning: it learns the swap and forgets the standard layouts (13 November)
+
+`ft-full`: the whole model (the checkpoint trains the vision-language part too:
+`train_expert_only` and `freeze_vision_encoder` are false), 3,000 steps, batch 32, lr 5e-5, on
+`d50` (77 teacher demos: task 0 48, task 1 29). `ft-curve`: the same, saving every 500 steps,
+with 20-episode probes per step. Numbers as of 13 November, about 01:00; the two marked
+running were not finished.
+
+| Evaluation | Suite, scenes | Before | After |
+|---|---|---|---|
+| `before-official` → `after-official` | swap, official (100) | 0 / 100 | **86 / 100** (14 `physical`) |
+| `before-standard` → `after-standard` | standard, official (100) | 89 / 100 | **0 / 77** running (73 `both`, 4 `semantic`) |
+| curve, swap `dev` probe (20) | step 0 / 500 / 1000 / 1500 / 2000 | 0 | 6, 9, 9, 19 |
+| curve, standard probe (20) | step 0 / 500 / 1000 / 1500 | 17 | 0, 0, 0 |
+
+* **The forgetting is total by step 500**, the first checkpoint: there is no step that keeps
+  both. Choosing an earlier checkpoint does not help.
+* **How it fails on the standard layouts:** almost all `both` or `semantic`, i.e. the *wrong
+  object*, not clumsy grasps. Its manipulation is intact (86% on the swap suite); what changed
+  is which object it goes for.
+* **Most likely reading (to confirm on the videos):** with two tasks whose layouts differ by
+  centimetres, the instruction alone tells where to reach. The model learned "this instruction:
+  go to the swapped position" instead of "find this object". On the standard layouts that
+  position holds the other object. The 86% on the swap suite then measures re-learned positions,
+  not object grounding. How to confirm: watch `after-standard` episodes; the hand should go to
+  where the target sits in the *swap* layout.
+* **Consequences:** more swap-only demos (98 instead of 77) will not change this. What can:
+  data where the same instruction needs different positions, i.e. the original LIBERO
+  demonstrations mixed in (replay, roadmap S2) or teacher demos on the standard layouts;
+  training only part of the model (LoRA on the action expert keeps the vision-language part);
+  and an evaluation on layouts neither seen in training nor in the swap draw (held-out pairs).
+* **π0.5 before training on the swap suite** (`pi-before-official`, running): 56 / 96, failures
+  20 `semantic`, 20 `physical`. Far above the 17% the LIBERO-PRO paper reports for openpi's own
+  π0.5 checkpoint; this is LeRobot's checkpoint. π0.5 already finds the swapped object about
+  half the time, where SmolVLA never does.
 
 ## Process
 
