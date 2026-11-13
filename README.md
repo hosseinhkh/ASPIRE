@@ -20,6 +20,7 @@ closes. On `libero_object_swap` the student starts at 0 of 1,500 episodes.
 | | |
 |---|---|
 | What it is, how it works, where it stands | [`docs/trace2vla.md`](docs/trace2vla.md) |
+| The three propositions: automated adaptation, continual learning, an agent with its own policy tool | [`docs/trace2vla-propositions.md`](docs/trace2vla-propositions.md) |
 | What is left to do, and the experiments for the paper | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
 | Run the first end-to-end pass | [`docs/trace2vla-preflight.md`](docs/trace2vla-preflight.md) |
 | What we have learned so far, and what is open | [`docs/trace2vla-findings.md`](docs/trace2vla-findings.md) |
@@ -528,6 +529,7 @@ That releases GPU 0.
 | Harness fixes (motion timing, point clouds, boxes, diagnostics) and why | [`docs/harness-fixes.md`](docs/harness-fixes.md) |
 | LIBERO-Pro | [`docs/libero-pro.md`](docs/libero-pro.md) |
 | **Trace2VLA overview**: goal, design, status, results so far, glossary | [`docs/trace2vla.md`](docs/trace2vla.md) |
+| Trace2VLA propositions: the three layers (automated adaptation, continual learning, an agent with its own policy tool), how to strengthen each, experiments, references | [`docs/trace2vla-propositions.md`](docs/trace2vla-propositions.md) |
 | Trace2VLA roadmap: work ahead, experiments for the paper, risks, open decisions | [`docs/trace2vla-roadmap.md`](docs/trace2vla-roadmap.md) |
 | Trace2VLA full run: what the preflight taught, every issue and its status, scope, data plan, go/no-go | [`docs/trace2vla-full-run.md`](docs/trace2vla-full-run.md) |
 | Trace2VLA findings log: what was measured, what went wrong and why, fixes, open items (grasp planner, CPU load, GPU reservation) | [`docs/trace2vla-findings.md`](docs/trace2vla-findings.md) |
