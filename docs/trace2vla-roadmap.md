@@ -61,7 +61,7 @@ they add about 35 points).
 
 ## 3b. π0.5 as a second student (readiness check and implementation, 12 November)
 
-**Status: implemented, not yet run on the GPU.** Every command that loads a policy takes
+**Status: implemented; first GPU runs on 13 November** (light test 2/2; the loading warnings are harmless, see [vla-student.md](vla-student.md#first-run-on-the-gpu-13-november)). Every command that loads a policy takes
 `--student smolvla|pi05` (default SmolVLA, whose behaviour, run names, protocol keys and outputs
 are unchanged). π0.5 runs in its own `.venv-pi05`, built by `scripts/gpu/vla.sh setup-pi05`,
 and a command moves itself there. Datasets carry their student's statistics
@@ -70,8 +70,7 @@ their student, the report and the dashboard show it, and `vla.sh label-students`
 records from before. Tests: `tests/test_students.py`, `tests/test_students_pipeline.py`,
 `tests/test_label_students.py`. Built and tested on CPU: the environment (same shared package
 versions as `.venv-libero`), the routing between environments, the dataset copy, the training
-command, the reports and the dashboard. Not yet done: a π0.5 policy load and evaluation on the
-GPU, and measured memory. Commands:
+command, the reports and the dashboard. Still to measure: training memory and time. Commands:
 [trace2vla-preflight.md](trace2vla-preflight.md#π05-the-same-experiment-with-the-second-student);
 design: [vla-student.md](vla-student.md#two-students-smolvla-and-π05).
 

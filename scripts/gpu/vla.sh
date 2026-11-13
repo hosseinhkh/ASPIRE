@@ -48,8 +48,14 @@ need_vla() {
 announce_gpu() {
   echo "VLA on GPU $GPU (CUDA_VISIBLE_DEVICES for this command only; the conda env is unchanged)" >&2
   if [[ -n "${ASPIRE_GPU:-}" && "$ASPIRE_GPU" == "$GPU" ]]; then
-    local need="about 3 GB"
-    [[ "$STUDENT" == pi05 ]] && need="about 10 GB"
+    # Runs before the arguments are parsed: look for the student among them.
+    local need="about 3 GB" previous="" arg
+    for arg in "$@"; do
+      if [[ "$arg" == --student=pi05 || ("$previous" == --student && "$arg" == pi05) ]]; then
+        need="about 10 GB"
+      fi
+      previous="$arg"
+    done
     echo "note: ASPIRE also uses GPU $GPU (ASPIRE_GPU). The student needs $need; pass --gpu N to move it." >&2
   fi
 }
@@ -101,7 +107,7 @@ launch() {  # launch OUT_DIR benchmark-args... : foreground, or detached with --
 
 cmd="${1:-}"
 [[ -n "$cmd" ]] && shift
-case "$cmd" in parity|sanity|baseline|benchmark|lerobot-eval) announce_gpu ;; esac
+case "$cmd" in parity|sanity|baseline|benchmark|lerobot-eval) announce_gpu "$@" ;; esac
 case "$cmd" in
   setup-pi05)
     "$REPO_ROOT/scripts/bootstrap_pi05.sh" "$@"

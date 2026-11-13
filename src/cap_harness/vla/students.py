@@ -62,6 +62,8 @@ class Student:
     eval_config: Mapping[str, Any] = field(default_factory=dict)
     #: Extra lerobot-train arguments.
     train_args: Sequence[str] = ()
+    #: Environment variables the student's commands start with, unless already set.
+    environment: Mapping[str, str] = field(default_factory=dict)
 
     def python(self, repo_root: Path = REPOSITORY_ROOT) -> Path:
         return Path(repo_root) / self.venv / "bin" / "python"
@@ -133,6 +135,10 @@ PI05 = Student(
     # and a needless risk on a new GPU architecture.
     eval_config={"compile_model": False},
     train_args=("--policy.compile_model=false",),
+    # The PaliGemma tokenizer is used before the simulator and the trainer's data workers fork;
+    # with its threads on, every fork printed a warning. One instruction per prediction needs
+    # no threads.
+    environment={"TOKENIZERS_PARALLELISM": "false"},
 )
 
 STUDENTS: dict[str, Student] = {student.key: student for student in (SMOLVLA, PI05)}
@@ -246,6 +252,8 @@ def reexec(
     the student's environment. Returns only when no move is needed. The process keeps its pid,
     so ``t2v.sh stop`` and ``vla.sh stop`` still find it.
     """
+    for name, value in student.environment.items():
+        os.environ.setdefault(name, value)
     if in_runtime(student, repo_root) or os.environ.get(STAY_ENV) == "1":
         return
     if os.environ.get(REEXEC_ENV) == student.key:

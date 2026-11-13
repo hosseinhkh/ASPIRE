@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -228,3 +229,15 @@ def test_benchmark_report_mode_uses_the_runs_own_student(tmp_path, monkeypatch, 
     monkeypatch.setattr(benchmark, "ensure_runtime_env", lambda: None)
     assert benchmark.main(["--suite", "libero_object", "--out", str(root), "--report"]) == 0
     assert "pi0.5 (LeRobot docs): 99%" in capsys.readouterr().out
+
+
+def test_a_student_command_starts_with_the_student_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("TOKENIZERS_PARALLELISM", raising=False)
+    monkeypatch.setenv(students.STAY_ENV, "1")
+    students.reexec(students.SMOLVLA, "m", [], repo_root=tmp_path)
+    assert "TOKENIZERS_PARALLELISM" not in os.environ  # SmolVLA unchanged
+    students.reexec(students.PI05, "m", [], repo_root=tmp_path)
+    assert os.environ["TOKENIZERS_PARALLELISM"] == "false"
+    monkeypatch.setenv("TOKENIZERS_PARALLELISM", "true")  # a value set by the user wins
+    students.reexec(students.PI05, "m", [], repo_root=tmp_path)
+    assert os.environ["TOKENIZERS_PARALLELISM"] == "true"

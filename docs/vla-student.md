@@ -93,6 +93,28 @@ too: [trace2vla-preflight.md](trace2vla-preflight.md#π05-the-same-experiment-wi
 Memory (estimates, to be measured): evaluation about 10 GB; LoRA training roughly 20–35 GB; full
 fine-tuning roughly 50–70 GB, so an otherwise empty 96 GB card.
 
+### First run on the GPU (13 November)
+
+`setup-pi05` on the server: the environment check passed (transformers 4.53.3, tokenizers
+0.21.4; numpy, MuJoCo, robosuite, LIBERO, LeRobot, torch, pandas, peft and the rest identical to
+`.venv-libero`), the checkpoint downloaded (7.47 GB), and its 19 tests passed. The 2-episode
+light test on GPU 0 solved both (`libero_object` task 0, 137 and 142 steps, 9–12 s each).
+
+Loading prints two warnings that are **harmless**, checked against the checkpoint and the code:
+
+* `Could not remap state dict keys … Missing key(s): …language_model.embed_tokens.weight`.
+  PaliGemma shares one matrix between its token embedding and its output layer (`lm_head`).
+  The checkpoint stores it once, as `paligemma.lm_head.weight` (257,152 × 2,048), and LeRobot's
+  model ties the two (the same tensor, checked in `.venv-pi05`). LeRobot loads with
+  `strict=True`, which copies every weight it finds *before* raising about the missing name, and
+  catches the error to print this line. So `embed_tokens` holds the checkpoint's values and every
+  other weight is loaded (checked with a small PaliGemma: the same load leaves nothing unloaded).
+* `Vision embedding key might need handling: …patch_embedding…`: an information line in
+  LeRobot's key fixer; those two tensors are loaded unchanged.
+
+The `huggingface/tokenizers: The current process just got forked` lines came from the
+tokenizer's threads; π0.5 commands now start with `TOKENIZERS_PARALLELISM=false`.
+
 ### Which student a record belongs to
 
 Every new record names its student: `run.json` and `progress.json` of a benchmark or evaluation,
