@@ -222,11 +222,12 @@ the experiment's `logs/` (`<time>-object_collection-<step>.log`):
 | `agent-test N` | One coding agent writes task N's program against all five layouts (in the terminal, about 45–75 min, one agent's LLM cost), then the program records 3 new scenes of each layout (experiment `object-agent-test`) and a verdict says whether it works on every layout |
 | `agent-fix N [PROGRAM]` | The same, but the agent repairs an existing program (default: task N's program from the last `agent-test` or `agent-fix`): it runs it first as version 1, then fixes only what fails, keeping every layout it solves. The LLM is paid only for what fails |
 | `pilot` | Pipeline test (about 20–30 min): experiment `object-pilot`, tasks 0–1 × 5 layouts × 3 scenes with the preflight's programs through `collect`, a dataset, and a verdict |
-| `setup` | Experiment `object-full`: 10 tasks, 25 scenes on each layout (`--replace`, so it also fixes an existing one), `t2v.sh check` (missing programs are expected). It registers no program unless `PROGRAMS=folder` is set: every program comes from an agent that saw all five layouts |
+| `setup` | Experiment `object-full`: 10 tasks, 25 scenes on each layout (`--replace`, so it also fixes an existing one), dev scenes (2001–2010) on every sibling layout for evaluation, `t2v.sh check` (missing programs are expected). Each task takes the tested program `agent-test`/`agent-fix` left in `object-agent-test` (`PROGRAMS="folder ..."`, first folder wins); the others get an agent that sees all five layouts |
 | `start` | In the background: one session of coding agents for the tasks without a program, each developing against all five layouts (`AGENT_LAYOUTS=all`; log `logs/<time>-agents.log`), then `collect --follow` taking each program as its agent finishes. Refuses when a collection already runs |
 | `status` | The collection table, and each agent: working, or finished with its held-out score |
 | `stop` | Stops the collection (and its background jobs) and the agents' session; finished work is kept; `start` continues |
 | `datasets` | After the collection: `main-25` (alt1–3), `control-25` (official partner's layout), and their π0.5 copies |
+| `evaluate CHECKPOINT [STUDENT]` | In the background, seven evaluations of a model (a training run, `RUN@STEP`, or `base` with `smolvla`/`pi05`): the official swap scenes, the standard layout, and the dev scenes of the official and each sibling layout |
 
 Where things are, per experiment (`outputs/trace2vla/<name>/`): `logs/` holds the steps' logs,
 the agents' log and `collect`'s own log; `logs/collect/` one log per background grading and

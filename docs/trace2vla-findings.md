@@ -419,6 +419,26 @@ agent per task rather than one per (task, layout): ten sessions instead of fifty
 task, and a teacher that does not need re-programming for each placement. A task whose program
 still fails on some layout can get a per-layout agent afterwards.
 
+#### P10, alt1 settled by replaying the contacts (13 November, late)
+
+The repair agent (`agent-fix 0`, 32 min, \$17.55) turned the gripper 90 degrees as advised and
+still failed alt1 (held-out 8/10 again). Replaying its recorded alt1 run in the simulator and
+listing every robot-object contact gave the cause, which neither the agent nor the images
+showed:
+
+* default yaw: the first contact is the **hand** (`gripper0_hand_collision`) on the milk carton
+  at 8.8 cm height, then a finger; the carton stands 10.8 cm from the soup along the finger
+  direction, inside the hand's reach;
+* yaw 90: the milk is clear, but a finger lands **on the soup itself**. The program's centre
+  (`geometry.pose.position`) is 1.6 cm toward the camera from the true centre (0.667 vs 0.651 m):
+  the camera sees only the near half of the can. Across the line of sight (default yaw) that does
+  not matter; along it, the open gripper leaves about 7 mm each side of the can.
+
+So alt1 is solvable with both a turn and a centre corrected away from the camera. The agent
+prompt now states these facts (hand width, the camera-side shift and its correction, yaw within
+±90 degrees, which also cost the agent a version). Tools: `stall_contacts.py`-style replay of a
+recorded run with the simulator's contact list (analysis only, never given to the agent).
+
 #### P10, continued: one agent against all five layouts (task 0, 13 November)
 
 `object_collection.sh agent-test 0`: one agent, every batch on the five layouts (development

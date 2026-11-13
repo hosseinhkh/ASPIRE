@@ -26,10 +26,16 @@
 #   scripts/gpu/object_collection.sh stop       stop both; finished work is kept, start continues
 #   scripts/gpu/object_collection.sh datasets   after the collection: main-25 (alt1-3), control-25
 #                                               (the official partner's layout), their pi0.5 copies
+#   scripts/gpu/object_collection.sh evaluate CHECKPOINT [STUDENT]
+#                                               in the background: CHECKPOINT (a training run, RUN@STEP,
+#                                               or base with STUDENT smolvla|pi05) on every layout:
+#                                               the official swap scenes, the standard layout, and the
+#                                               dev scenes of the official and each sibling layout
 #
 # Settings (environment variables): EXP=object-full TASKS=0-9 PILOT=object-pilot SCENES=25
-# WORKERS=2 PREPARE_WORKERS=6 DATASET_WORKERS=4 PROGRAMS= (a folder of task_NN.py for setup to
-# register; default none: every program comes from an agent) PILOT_PROGRAMS=preflight2's
+# WORKERS=2 PREPARE_WORKERS=6 DATASET_WORKERS=4 PROGRAMS (folders of task_NN.py, first one
+# wins per task, for setup; default: object-agent-test's tested programs; tasks with none get an
+# agent) PILOT_PROGRAMS (the same for pilot; default object-agent-test's, then preflight2's)
 # AGENT_TEST=object-agent-test AGENT_LAYOUTS=all ("" = the official layout only)
 # LLM_BUDGET=25 LLM_TOTAL_BUDGET=250 AGENTS_NAME=objagents; COLLECT_FLAGS="--no-videos" adds flags
 # to t2v.sh collect; SKIP_CHECK=1 skips t2v.sh check;
@@ -47,8 +53,8 @@ SCENES="${SCENES:-25}"
 WORKERS="${WORKERS:-2}"
 PREPARE_WORKERS="${PREPARE_WORKERS:-6}"
 DATASET_WORKERS="${DATASET_WORKERS:-4}"
-PROGRAMS="${PROGRAMS:-}"
-PILOT_PROGRAMS="${PILOT_PROGRAMS:-outputs/trace2vla/preflight2/teacher/programs}"
+PROGRAMS="${PROGRAMS-outputs/trace2vla/object-agent-test/teacher/programs}"
+PILOT_PROGRAMS="${PILOT_PROGRAMS:-outputs/trace2vla/object-agent-test/teacher/programs outputs/trace2vla/preflight2/teacher/programs}"
 AGENT_TEST="${AGENT_TEST:-object-agent-test}"
 AGENT_LAYOUTS="${AGENT_LAYOUTS-all}"
 LLM_BUDGET="${LLM_BUDGET:-25}"
@@ -60,7 +66,7 @@ SESSION_SH="${SESSION_SH:-scripts/gpu/session.sh}"
 read -r -a COLLECT_EXTRA <<< "${COLLECT_FLAGS:-}"
 SUITE=libero_object_swap
 LAYOUTS="alt1-train,alt2-train,alt3-train,alt4-train,train"
-T2V=scripts/gpu/t2v.sh
+T2V="${T2V_SH:-scripts/gpu/t2v.sh}"
 OUT=outputs/trace2vla
 PY=.venv-libero/bin/python
 
@@ -125,18 +131,32 @@ make_scenes() {  # make_scenes EXP FIRST-LAST: the five training layouts, that m
   run $T2V scenes "$1" --add train --replace --seeds "$2" --role train
 }
 
-add_programs() {  # add_programs EXP FOLDER: register FOLDER's task_NN.py for tasks without one
-  [[ -n "$2" ]] || { echo "no programs registered here: each task's program comes from its coding agent"; return; }
-  [[ -d "$2" ]] || die "no programs folder $2"
-  local missing task
-  missing="$(missing_programs "$1")"
-  for task in $missing; do
-    if [[ -f "$2/task_$(printf %02d "$task").py" ]]; then
-      run $T2V teacher-add "$1" --from "$2"
-      return
-    fi
+add_programs() {  # add_programs EXP "FOLDER...": each task's program from the first folder with one
+  local exp="$1" folders=($2) tasks task folder file registered found=0
+  ((${#folders[@]})) || { echo "no programs registered here: each task's program comes from its coding agent"; return; }
+  tasks="$("$PY" -c 'import json,sys; print(" ".join(str(t) for t in json.load(open(sys.argv[1]))["tasks"]))' "$OUT/$exp/experiment.json")"
+  for task in $tasks; do
+    for folder in "${folders[@]}"; do
+      file="$folder/task_$(printf %02d "$task").py"
+      [[ -f "$file" ]] || continue
+      registered="$OUT/$exp/teacher/programs/task_$(printf %02d "$task").py"
+      if cmp -s "$file" "$registered"; then
+        echo "task $task: $file (registered already)"
+      else
+        run $T2V teacher-add "$exp" --program "$file" --task "$task" --force
+      fi
+      found=$((found + 1))
+      break
+    done
   done
-  echo "the tasks with a program in $2 have theirs already"
+  echo "$found task(s) with a program from ${folders[*]}; the others get a coding agent"
+}
+
+make_eval_scenes() {  # make_eval_scenes EXP: dev scenes (2001-2010) on each sibling layout
+  local k
+  for k in 1 2 3 4; do
+    run $T2V scenes "$1" --add "alt$k-dev" --replace --suite "${SUITE}_alt$k" --seeds 2001-2010 --role dev > /dev/null
+  done
 }
 
 bedrock_ready() {  # bedrock_ready AGENTS: credentials set, and the key outlives that many agents
@@ -279,6 +299,7 @@ cmd_setup() {
   step "Experiment $EXP: tasks $TASKS, scenes 1001-$last on each of the 5 layouts"
   [[ -f "$OUT/$EXP/experiment.json" ]] || run $T2V init "$EXP" --suite "$SUITE" --tasks "$TASKS" --train-seeds "1001-$last"
   make_scenes "$EXP" "1001-$last"
+  make_eval_scenes "$EXP"
   add_programs "$EXP" "$PROGRAMS"
   step "Checks (tasks without a program get theirs from the coding agents: start)"
   check "$EXP" programs-later
@@ -393,6 +414,27 @@ cmd_datasets() {
   copy "control-$SCENES"
 }
 
+cmd_evaluate() {  # cmd_evaluate CHECKPOINT [STUDENT]
+  local checkpoint="${1:-}" student="${2:-}"
+  [[ -n "$checkpoint" ]] || die "evaluate needs a checkpoint: a training run, RUN@STEP, or base (with smolvla|pi05)"
+  [[ -f "$OUT/$EXP/experiment.json" ]] || die "no experiment $EXP"
+  log_to "$EXP" "evaluate"
+  local tag="${checkpoint//@/-step}" extra=() set
+  if [[ "$checkpoint" == base ]]; then
+    [[ -n "$student" ]] || die "evaluate base needs the student: smolvla or pi05"
+    tag="base-$student"
+    extra=(--student "$student")
+  fi
+  step "$checkpoint on every layout, in the background (one evaluation per scene set; seed 0)"
+  run $T2V eval --detach "$EXP" --name "$tag-official" --checkpoint "$checkpoint" --scenes official --seeds 0 "${extra[@]+"${extra[@]}"}"
+  run $T2V eval --detach "$EXP" --name "$tag-standard" --checkpoint "$checkpoint" --suite libero_object --scenes official --seeds 0 "${extra[@]+"${extra[@]}"}"
+  for set in dev alt1-dev alt2-dev alt3-dev alt4-dev; do
+    run $T2V eval --detach "$EXP" --name "$tag-$set" --checkpoint "$checkpoint" --scenes "$set" --seeds 0 "${extra[@]+"${extra[@]}"}"
+  done
+  echo
+  echo "seven evaluations started; results: scripts/gpu/t2v.sh status $EXP, or the dashboard (Evaluations)"
+}
+
 case "${1:-}" in
   agent-test) shift; cmd_agent_test "${1:-}" ;;
   agent-fix) shift; cmd_agent_test "${1:-}" "${2:-registered}" ;;
@@ -402,6 +444,7 @@ case "${1:-}" in
   status) cmd_status ;;
   stop) cmd_stop ;;
   datasets) cmd_datasets ;;
+  evaluate) shift; cmd_evaluate "${1:-}" "${2:-}" ;;
   -h|--help|"") usage ;;
   *) usage >&2; exit 2 ;;
 esac

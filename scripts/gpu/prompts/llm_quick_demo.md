@@ -87,6 +87,23 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    the gripper about the vertical axis (change the grasp orientation's yaw, often by 90
    degrees) so the fingers open toward free table, and choose that yaw from what the program
    observes (where the neighbours are), never per layout or per seed.
+
+   Three facts about top-down grasps here, measured in the simulator (task 0, a crowded
+   layout):
+   - The hand above the fingers is wider than the open fingers: about 10 cm each side of the
+     grasp point along the finger direction, from about 5 cm above the fingertips. A tall
+     neighbour within 10 cm along that direction stops the hand even when the fingers would
+     pass; it was the hand, not a finger, that first touched the milk carton.
+   - One camera sees only the near half of an object, so `geometry.pose.position` and the
+     point-cloud median lie toward the camera: 1.6 cm for a 6.6 cm can. When the fingers close
+     across the camera's line of sight (the default yaw with `agentview`) this does not matter;
+     when they close along it (after turning the gripper 90 degrees), a finger lands on the
+     object, because the open gripper leaves only about 7 mm each side of a can. Before such a
+     grasp, move the grasp point away from the camera (the camera's pose is in each
+     observation) by about the object's radius minus a few millimetres, the radius being half
+     its width across the line of sight.
+   - The gripper is symmetric: keep the grasp yaw within -90 to 90 degrees. A yaw near 180
+     degrees is the same grasp but often has no arm configuration (`ik_failed`).
 4. Diagnose failures in this order, and fix the failure mode, not the seed:
    a. `{{WS}}/dev_vNN/batch.json`: the `warnings` list first (run-batch also prints it). It
       names causes that the program's own error does not: a guessed or ambiguous object, a
