@@ -7,6 +7,9 @@
 #   scripts/gpu/t2v.sh scenes NAME [--add SET --suite S --seeds 1001-1050 --role train]
 #                                                 scene sets; S may be a sibling layout (_alt1..4)
 #   scripts/gpu/t2v.sh teacher-run NAME --scenes official|train|dev [--workers 2]
+#   scripts/gpu/t2v.sh collect NAME --scenes a,b,c [--programs-from SESSION --follow] [--workers 2]
+#                     [--prepare-workers 4]   the whole collection: programs as their agents finish,
+#                     teacher episodes, then grade and convert each finished scene set in the background
 #   scripts/gpu/t2v.sh teacher-grade NAME --scenes SET[,SET...] [--workers 8]
 #   scripts/gpu/t2v.sh convert NAME --scenes train[,alt1-train,...] [--speed 3] [--workers 8]
 #   scripts/gpu/t2v.sh prepare NAME --scenes a,b,c [--workers 8]   grade, then convert, in one command
@@ -25,8 +28,8 @@
 #   scripts/gpu/t2v.sh logs NAME                  the newest log of the experiment, followed
 #   scripts/gpu/t2v.sh stop NAME [STAGE]          stop its background stages (or only STAGE: train, eval, ...)
 #
-# Put --detach right after the stage name to run it in the background (teacher-run, teacher-grade,
-# convert, prepare, dataset, train, eval, eval-steps): it survives a closed terminal and logs to
+# Put --detach right after the stage name to run it in the background (collect, teacher-run,
+# teacher-grade, convert, prepare, dataset, train, eval, eval-steps): it survives a closed terminal and logs to
 # outputs/trace2vla/NAME/logs/. GPU: --gpu N first, or ASPIRE_T2V_GPU (default 0). teacher-run
 # keeps the conda env's own GPU, where ASPIRE's model services are.
 # Students: SmolVLA (default) or pi0.5 (--student pi05 on dataset and eval; train takes the
@@ -64,7 +67,9 @@ experiment_dir() {
 run_stage() {  # run_stage STAGE ARGS...
   local stage="$1"; shift
   local env=("${BASE_ENV[@]}")
-  [[ "$stage" == teacher-run ]] || env+=("${GPU_ENV[@]}")
+  if [[ "$stage" == teacher-run ]]; then :
+  elif [[ "$stage" == collect ]]; then env+=(T2V_PREPARE_GPU="$GPU")  # teacher: the services' GPU
+  else env+=("${GPU_ENV[@]}"); fi
   if ((DETACH)); then
     local dir log
     dir="$(experiment_dir "${1:-}")"
@@ -87,6 +92,9 @@ case "$cmd" in
     run_stage "$cmd" "$@" ;;
   teacher-run)
     echo "teacher-run uses the conda env's GPU (ASPIRE_GPU=${ASPIRE_GPU:-unset}) and the model services" >&2
+    run_stage "$cmd" "$@" ;;
+  collect)
+    echo "collect: the teacher uses the conda env's GPU (ASPIRE_GPU=${ASPIRE_GPU:-unset}) and the model services; grading and conversion use GPU $GPU" >&2
     run_stage "$cmd" "$@" ;;
   teacher-grade|convert|prepare|dataset|train|eval|eval-steps|grade-student)
     echo "$cmd on GPU $GPU (this command only; --gpu N or ASPIRE_T2V_GPU to change)" >&2

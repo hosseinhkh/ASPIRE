@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import atexit
 from dataclasses import dataclass, field
-import itertools
 from pathlib import Path
 import time
 from typing import Any
@@ -269,23 +268,16 @@ def claim_demo_set(root: Path, scene_set: str) -> None:
     """A demo set holds the episodes of one scene set: its folders are named by task and seed
     only, so a second scene set's seed 1001 would be taken for the first one's. Refuse that.
     """
-    from cap_harness.trace2vla.store import read_json
+    from cap_harness.trace2vla.progress import demo_set_source
 
-    source = root / "source.json"
-    owner = (read_json(source) or {}).get("scene_set")
-    if owner is None:  # made before source.json existed: the episodes say where they came from
-        made = itertools.chain(
-            root.glob("task_*/seed_*/episode.json"), root.glob("task_*/seed_*.rejected.json")
-        )
-        owner = next(
-            (found for p in made if (found := (read_json(p) or {}).get("scene_set"))), None
-        )
+    # Made before source.json existed: the episodes say where they came from.
+    owner = demo_set_source(root)
     if owner is not None and owner != scene_set:
         raise ValueError(
             f"demo set {root.name!r} holds the episodes of scene set {owner!r}; convert "
             f"'{scene_set}' into another demo set (--demos NAME, or leave --demos out)"
         )
-    write_json(source, {"scene_set": scene_set})
+    write_json(root / "source.json", {"scene_set": scene_set})
 
 
 def _convert_scene_set(

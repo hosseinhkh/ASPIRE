@@ -13,14 +13,32 @@ const FAMILY = {
   no_attempt: ["muted", "never closed on an object"],
   unknown: ["muted", "not graded"],
 };
-let expTab = "Compare";
+let expTab = null; // the first visit opens Pipeline while a collection exists, else Compare
 let teacherSet = null;
 let demoSet = null;
 
 const percent = (v) => (v === null || v === undefined ? "-" : `${(100 * v).toFixed(1)}%`);
 const minutes = (s) => (s === null || s === undefined ? "-" : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 const zip = (path, media, label) => `<a class="btn" href="/download?path=${q(path)}&media=${media ? 1 : 0}">${esc(label)}</a>`;
-const statusBadge = (s) => `<span class="badge ${{ running: "ok", finished: "ok", interrupted: "warn", stopped: "bad", failed: "bad" }[s] || "muted"}">${esc(s || "-")}${s === "running" ? " ●" : ""}</span>`;
+const statusBadge = (s) => `<span class="badge ${{ running: "ok", finished: "ok", waiting: "warn", interrupted: "warn", stopped: "bad", failed: "bad", died: "bad" }[s] || "muted"}">${esc(s || "-")}${s === "running" ? " ●" : ""}</span>`;
+// t2v.sh collect: the state of each (scene set, task), its background conversion, each task's program.
+const CELL = { recording: ["ok", "recording ●"], recorded: ["ok", "recorded"], pending: ["muted", "to record"], incomplete: ["bad", "incomplete"], busy: ["warn", "another process has it"] };
+const PREP = { queued: ["muted", "conversion queued"], running: ["ok", "converting ●"], finished: ["ok", "converted"], problems: ["warn", "conversion: see log"] };
+const PROGRAM = {
+  registered: ["ok", "registered"], taken: ["ok", "from its coding agent"], waiting: ["muted", "waiting"], agent_running: ["warn", "agent working ●"],
+  no_program: ["bad", "agent wrote none"], weak: ["bad", "too weak, not used"], unchecked: ["warn", "not checked on held-out scenes"],
+};
+const cardRate = (k, n) => {
+  if (!n) return '<span class="muted">-</span>';
+  const p = pct(k, n), cls = p >= 80 ? "ok" : p >= 40 ? "warn" : "bad";
+  return `${k}/${n} <span class="muted" style="font-size:13px">${p}%</span><div class="rate"><span class="bar" style="width:120px"><span class="fill ${cls}" style="width:${p}%"></span></span></div>`;
+};
+const tag = (map, key) => (key && map[key] ? `<span class="badge ${map[key][0]}">${esc(map[key][1])}</span>` : "");
+const collectNow = (c) => {
+  const n = (c && c.now) || {};
+  if (n.stage === "teacher") return `teacher on ${n.scene_set}, task ${n.task}: ${n.done ?? 0}/${n.total ?? "?"}`;
+  return n.detail || (c && c.status) || "";
+};
 export const familyBadge = (f) => (f ? `<span class="badge ${(FAMILY[f] || ["muted"])[0]}" title="${esc((FAMILY[f] || ["", f])[1])}">${esc(f)}</span>` : "");
 // Runs recorded before pi0.5 support name no student: they are SmolVLA's.
 export const studentBadge = (label) => `<span class="chip" title="the student policy">${esc(label || "SmolVLA")}</span>`;
@@ -39,7 +57,7 @@ export async function renderList(app) {
     <p class="muted small">ASPIRE as the teacher, SmolVLA or pi0.5 as the student (each evaluation, dataset and training run shows which). Each experiment keeps the teacher's programs and episodes,
       the demonstrations converted to the student's control, the datasets, the training runs and the student's evaluations,
       with a ledger of what produced what. Start one with <span class="mono">scripts/gpu/t2v.sh init</span>.</p>
-    <div class="panel flush"><table class="table"><thead><tr><th>Experiment</th><th>Suite</th><th>Teacher (official scenes)</th><th>Demos</th><th>Datasets</th><th>Training</th><th>Student evaluations</th><th>Last event</th></tr></thead><tbody>
+    <div class="panel flush"><table class="table"><thead><tr><th>Experiment</th><th>Suite</th><th>Teacher (official scenes)</th><th>Collection</th><th>Demos</th><th>Datasets</th><th>Training</th><th>Student evaluations</th><th>Last event</th></tr></thead><tbody>
     ${
       data.items
         .map(
@@ -47,12 +65,17 @@ export async function renderList(app) {
           <td><b>${esc(e.name)}</b><div class="muted small">tasks ${esc((e.tasks || []).join(", "))}</div></td>
           <td class="mono small">${esc(e.suite || "")}</td>
           <td>${e.teacher_official ? rate(e.teacher_official.successes, e.teacher_official.episodes) : '<span class="muted">not run</span>'}</td>
+          <td class="small">${(() => {
+            const c = e.collection || {}, tot = c.totals || {};
+            if (!tot.planned && !c.status) return '<span class="muted">-</span>';
+            return `${rate(tot.recorded || 0, tot.planned || 0)}<div class="muted">${tot.kept || 0} demos kept · programs ${c.programs ?? 0}/${(e.tasks || []).length}</div>${c.status ? `<div>collect ${statusBadge(c.status)} <span class="muted">${esc(["running", "waiting"].includes(c.status) ? collectNow(c) : "")}</span></div>` : ""}`;
+          })()}</td>
           <td>${esc(e.demos)}</td><td>${esc(e.datasets)}</td>
           <td class="small">${e.training.map((t) => `${esc(t.name)} <span class="muted">${esc(t.student_label || "")}</span> ${statusBadge(t.status)}`).join("<br>")}</td>
           <td class="small">${e.evals.map((v) => `${esc(v.name)} <span class="muted">${esc(v.student_label || "")}</span>: <b>${percent(v.mean)}</b> ${v.status === "finished" ? "" : statusBadge(v.status)}`).join("<br>")}</td>
           <td class="small">${e.last_event ? `${esc(e.last_event.event)}<div class="muted">${esc(e.last_event.time)}</div>` : ""}</td></tr>`,
         )
-        .join("") || `<tr><td colspan="8" class="muted">No experiment yet: <span class="mono">scripts/gpu/t2v.sh init preflight --suite libero_object_swap --tasks 0,1</span></td></tr>`
+        .join("") || `<tr><td colspan="9" class="muted">No experiment yet: <span class="mono">scripts/gpu/t2v.sh init preflight --suite libero_object_swap --tasks 0,1</span></td></tr>`
     }</tbody></table></div>`;
   app.querySelectorAll("tr.click").forEach((tr) => (tr.onclick = () => (location.hash = tr.dataset.href)));
 }
@@ -87,7 +110,16 @@ export async function renderExperiment(app, params, ctx) {
         .join("")
     : card("Student before → after", "-", "t2v.sh eval --checkpoint base");
   const demos = d.demos.reduce((n, s) => n + (s.accepted || 0), 0);
-  const running = d.training.some((t) => t.progress.status === "running") || d.evals.some((e) => e.progress.status === "running");
+  const pipe = d.pipeline || { collect: {}, scene_sets: [], programs: {}, tasks: [], totals: {}, background: [], claims: [] };
+  const collecting = ["running", "waiting", "starting"].includes((pipe.collect || {}).status);
+  const running = collecting || pipe.background.length > 0 || d.training.some((t) => t.progress.status === "running") || d.evals.some((e) => e.progress.status === "running");
+  if (!expTab) expTab = (pipe.collect || {}).status || pipe.scene_sets.some((s) => s.in_collection) ? "Pipeline" : "Compare";
+  const nowLines = [
+    ...(collecting ? [`collect: ${esc(collectNow(pipe.collect))}`] : []),
+    ...d.training.filter((t) => t.progress.status === "running").map((t) => `train ${esc(t.name)}: step ${t.progress.step ?? 0}/${t.progress.steps ?? "?"}${t.progress.eta_s ? `, ${minutes(t.progress.eta_s)} left` : ""}`),
+    ...d.evals.filter((e) => e.progress.status === "running").map((e) => `eval ${esc(e.name)}: ${e.progress.done ?? 0}/${e.progress.planned ?? "?"}`),
+    ...pipe.background.filter((b) => !["collect", "train", "eval", "eval-steps"].includes(b.stage)).map((b) => `${esc(b.stage)} (pid ${esc(b.pid)})`),
+  ];
   teacherSet = teacherSet && d.teacher[teacherSet] ? teacherSet : Object.keys(d.teacher)[0] || null;
   demoSet = demoSet && d.demos.some((s) => s.name === demoSet) ? demoSet : (d.demos[0] || {}).name || null;
 
@@ -96,16 +128,85 @@ export async function renderExperiment(app, params, ctx) {
     <div class="page-head"><h1>${esc(d.name)} <span class="muted">${esc(suite)}</span></h1>
       <div class="toolbar"><span class="btn-group">${zip(d.path, false, "Download logs")}${zip(d.path, true, "Download all")}</span></div></div>
     <div class="cards">
+      ${card("Now running", nowLines.length ? `${nowLines.length}` : "nothing", nowLines.join("<br>"))}
       ${card("Teacher on official scenes", official ? `<b>${percent(official.mean)}</b>` : "not run", official ? `${official.successes}/${official.episodes} episodes` : "t2v.sh teacher-run --scenes official")}
       ${progressCards}
       ${card("Demonstrations", `${demos}`, d.demos.map((s) => `${esc(s.name)}: ${s.accepted} kept, ${s.rejected} rejected`).join("<br>"))}
       ${card("Datasets", `${d.datasets.length}`, d.datasets.map((s) => `${esc(s.name)} <span class="muted">${esc(s.student_label || "")}</span>: ${s.episodes} episodes, ${s.frames} frames`).join("<br>"))}
       ${card("Training", `${d.training.length}`, d.training.map((t) => `${esc(t.name)} <span class="muted">${esc(t.student_label || "")}</span> ${statusBadge(t.progress.status)} ${t.progress.step ?? 0}/${t.progress.steps ?? "?"}`).join("<br>"))}
     </div>
-    ${tabs("t2v-exp", ["Compare", "Teacher", "Demos", "Training", "Evaluations", "Datasets", "Ledger"], expTab)}`;
+    ${tabs("t2v-exp", ["Pipeline", "Compare", "Teacher", "Demos", "Training", "Evaluations", "Datasets", "Ledger"], expTab)}`;
 
   const taskName = (t) => `<b>${esc(suite)}:${esc(t)}</b><div class="muted small">${esc((d.settings.instructions || {})[String(t)] || "")}</div>`;
   const cell = (t) => (t ? rate(t.successes, t.episodes) : '<span class="muted">-</span>');
+
+  // Data collection: per task and scene set, what the teacher recorded and solved, what was graded
+  // and what became demonstrations; what t2v.sh collect is doing; what runs right now.
+  const pipeline = () => {
+    const c = pipe.collect || {}, tot = pipe.totals || {}, now = c.now || {};
+    const order = c.scene_sets || [];
+    const rank = (s) => (order.includes(s.name) ? order.indexOf(s.name) : order.length + pipe.scene_sets.indexOf(s));
+    const sets = [...pipe.scene_sets].sort((a, b) => rank(a) - rank(b));
+    const hasProgram = (task) => (pipe.programs[String(task)] || {}).registered;
+    const start = `<pre class="mono small">scripts/gpu/t2v.sh collect --detach ${esc(d.name)} --scenes alt1-train,alt2-train,alt3-train,alt4-train,train --workers 2 --prepare-workers 4</pre>`;
+    if (!sets.length && !c.status)
+      return `<p class="muted">Nothing collected yet. One command records the teacher on every scene set, task by task, and grades and converts each finished one in the background (add <span class="mono">--programs-from SESSION --follow</span> to take each task's program from its coding agent as it finishes):</p>${start}`;
+    const banner = c.status
+      ? `<div class="panel"><div class="panel-head"><b>t2v.sh collect</b> ${statusBadge(c.status)} <span class="muted small">started ${esc(when(c.started))} · updated ${esc(when(c.updated))}${c.programs_from ? ` · programs from <span class="mono">${esc(c.programs_from)}</span>` : ""}${c.follow ? " · following" : ""}</span></div>
+        ${now.stage === "teacher" ? `<p>Recording <b>${esc(now.scene_set)}</b>, task <b>${esc(now.task)}</b>: ${rate(now.done || 0, now.total || 0)}</p>` : now.detail ? `<p>${esc(now.detail)}</p>` : ""}
+        ${c.status === "failed" ? `<div class="alert bad">${esc(c.error || "failed")}. Run the same command again: it continues where it stopped.</div>` : ""}
+        ${c.status === "died" ? `<div class="alert bad">Its process is gone without a word (killed, or the machine restarted). Run the same command again: it continues where it stopped.</div>` : ""}
+        ${c.summary && (c.summary.incomplete || []).length ? `<div class="alert warn">Incomplete: ${esc(c.summary.incomplete.join(", "))} (hover the cell for why).</div>` : ""}
+        <p class="small">${[
+          c.episodes_left ? `${esc(c.episodes_left)} teacher episodes left for the tasks that have a program` : "",
+          c.seconds_per_episode ? `${num(c.seconds_per_episode, 0)} s per episode so far` : "",
+          c.eta_s && collecting ? `about ${minutes(c.eta_s)} of recording to go` : "",
+          (c.prepare_running || []).length ? `converting ${esc(c.prepare_running.join(", "))}` : "",
+          (c.prepare_queued || []).length ? `${c.prepare_queued.length} conversions queued` : "",
+        ].filter(Boolean).join(" · ")}</p></div>`
+      : "";
+    const cards = `<div class="cards">
+      ${card("Teacher episodes", cardRate(tot.recorded || 0, tot.planned || 0), "recorded of planned (training and dev scenes)")}
+      ${card("Solved by the teacher", cardRate(tot.solved || 0, tot.recorded || 0), "only these can become demonstrations")}
+      ${card("Graded", cardRate(tot.graded || 0, tot.recorded || 0), "replayed in joint control; failure labels")}
+      ${card("Demonstrations kept", cardRate(tot.kept || 0, tot.solved || 0), `of the solved episodes; ${tot.rejected || 0} rejected at conversion`)}
+      ${card("Tasks with a program", `${Object.values(pipe.programs).filter((x) => x.registered).length}/${pipe.tasks.length}`, Object.entries(pipe.programs).filter(([, x]) => !x.registered).map(([k]) => `task ${esc(k)}`).join(", ") || "all")}
+    </div>`;
+    const cellHtml = (s, cell) => {
+      if (!cell) return '<td class="muted">-</td>';
+      const live = now.stage === "teacher" && now.scene_set === s.name && Number(now.task) === cell.task;
+      const recorded = Math.min(cell.planned, cell.recorded + (live ? now.done || 0 : 0));
+      const log = cell.prepare_log ? ` <a class="small" href="#/log?path=${q(`${d.path}/${cell.prepare_log}`)}">log</a>` : "";
+      if (!recorded && !live && cell.state !== "incomplete")
+        return `<td class="muted small" title="${esc(cell.note || "")}">0/${esc(cell.planned)} · ${hasProgram(cell.task) ? (cell.state === "busy" ? "another process has it" : "to record") : "no program yet"}</td>`;
+      const made = s.role === "test" ? "" : ` · <b>${cell.kept}</b> kept${cell.rejected ? ` · ${cell.rejected} rejected` : ""}`;
+      return `<td title="${esc(cell.note || "")}">${rate(recorded, cell.planned)}
+        <div class="small">${cell.solved} solved · ${cell.graded} graded${made}</div>
+        <div>${tag(CELL, live ? "recording" : cell.state)} ${tag(PREP, cell.prepare)}${log}</div></td>`;
+    };
+    const sum = (s, key) => s.cells.reduce((n, cell) => n + (cell[key] || 0), 0);
+    const matrix = `<h3>Per task and scene set</h3>
+      <p class="muted small">Each cell: teacher episodes recorded of planned; how many the teacher solved, how many were graded, and how many became demonstrations (kept). Hover a cell for a note.</p>
+      <div style="overflow-x:auto"><table class="table compact"><thead><tr><th>Task</th>${sets.map((s) => `<th>${esc(s.name)}${c.status && !s.in_collection ? ' <span class="muted small">(not in this collection)</span>' : ""}<div class="muted small">${esc(s.role)} · ${esc(s.suite || "")}<br>${esc(s.init_mode || "")} ${esc(s.seeds || "")}</div></th>`).join("")}</tr></thead><tbody>
+      ${pipe.tasks.map((t, i) => `<tr><td>${taskName(t)}</td>${sets.map((s) => cellHtml(s, s.cells[i])).join("")}</tr>`).join("")}
+      <tr><td><b>all tasks</b></td>${sets.map((s) => `<td>${rate(Math.min(sum(s, "recorded"), sum(s, "planned")), sum(s, "planned"))}<div class="small">${s.role === "test" ? "test scenes: graded, never converted" : `<b>${sum(s, "kept")}</b> demos kept${s.demo_sets.length ? ` in <span class="mono">${esc(s.demo_sets.join(", "))}</span>` : ""}`}</div></td>`).join("")}</tr>
+      </tbody></table></div>`;
+    const programs = `<h3>Teacher programs</h3><table class="table compact"><thead><tr><th>Task</th><th>Program</th><th>Note</th></tr></thead><tbody>
+      ${pipe.tasks.map((t) => {
+        const g = pipe.programs[String(t)] || {};
+        const state = g.registered ? (g.state === "taken" ? "taken" : "registered") : g.state || "waiting";
+        return `<tr><td>${taskName(t)}</td><td>${tag(PROGRAM, state)} <span class="mono small">${esc((g.sha256 || "").slice(0, 10))}</span></td><td class="small">${esc(g.note && g.note !== "registered" ? g.note : g.registered ? g.source || "" : "t2v.sh teacher-add, or collect --programs-from SESSION")}</td></tr>`;
+      }).join("")}</tbody></table>`;
+    const active = `<h3>Running now</h3>${
+      pipe.background.length || pipe.claims.length
+        ? `<table class="table compact"><thead><tr><th>What</th><th>Detail</th></tr></thead><tbody>
+          ${pipe.background.map((b) => `<tr><td><span class="chip">${esc(b.stage)}</span></td><td class="small">background stage (pid ${esc(b.pid)}); stop: <span class="mono">t2v.sh stop ${esc(d.name)} ${esc(b.stage)}</span></td></tr>`).join("")}
+          ${pipe.claims.map((x) => `<tr><td class="mono small">${esc(x.key)}</td><td class="small">${esc(x.holder)}</td></tr>`).join("")}</tbody></table>`
+        : '<p class="muted small">No background stage of this experiment is running.</p>'
+    }`;
+    const log = (c.log || []).length ? `<details ${collecting ? "open" : ""}><summary class="muted">collect: latest lines</summary><pre class="log">${c.log.map((l) => `<div>${esc(l)}</div>`).join("")}</pre></details>` : "";
+    return banner + cards + matrix + programs + active + log + (c.status ? "" : start);
+  };
 
   const compare = () => {
     const teacherTasks = Object.fromEntries(((official || {}).tasks || []).map((t) => [t.task_id, t]));
@@ -217,7 +318,7 @@ export async function renderExperiment(app, params, ctx) {
       ? d.datasets
           .map((s) => {
             const f = ((s.statistics || {}).frozen || {}).action;
-            return `<div class="panel"><div class="panel-head"><b>${esc(s.name)}</b> ${studentBadge(s.student_label)}${s.derived_from ? ` <span class="muted small">frames of ${esc(s.derived_from)}</span>` : ""} <span class="muted small">${esc(s.episodes)} episodes · ${esc(s.frames)} frames · per task ${esc(JSON.stringify(s.per_task))} · ${esc(s.rejected)} rejected at build · ${esc(s.created || "")}</span></div>
+            return `<div class="panel"><div class="panel-head"><b>${esc(s.name)}</b> ${studentBadge(s.student_label)}${s.derived_from ? ` <span class="muted small">frames of ${esc(s.derived_from)}</span>` : ""}${(s.demo_sets || []).length ? ` <span class="muted small">from ${esc(s.demo_sets.join(", "))}</span>` : ""} <span class="muted small">${esc(s.episodes)} episodes · ${esc(s.frames)} frames · per task ${esc(JSON.stringify(s.per_task))} · ${esc(s.rejected)} rejected at build · ${esc(s.created || "")}</span></div>
               <p class="small">Normalisation statistics: <span class="mono">${esc((s.statistics || {}).source || "")}</span></p>
               ${f ? `<table class="table compact"><thead><tr><th>Action</th>${["dx", "dy", "dz", "drx", "dry", "drz", "gripper"].map((n) => `<th>${n}</th>`).join("")}</tr></thead><tbody>
                 <tr><td>std used (checkpoint)</td>${f.checkpoint_std.map((v) => `<td>${num(v, 3)}</td>`).join("")}</tr>
@@ -236,7 +337,7 @@ export async function renderExperiment(app, params, ctx) {
        return `<tr><td class="small nowrap">${esc(time)}</td><td><span class="chip">${esc(event)}</span></td><td class="small mono">${esc(JSON.stringify(rest).slice(0, 400))}</td></tr>`;
      }).join("")}</tbody></table>`;
 
-  const bodies = { Compare: compare, Teacher: teacher, Demos: demosView, Training: training, Evaluations: evals, Datasets: datasets, Ledger: ledger };
+  const bodies = { Pipeline: pipeline, Compare: compare, Teacher: teacher, Demos: demosView, Training: training, Evaluations: evals, Datasets: datasets, Ledger: ledger };
   const reopen = (name) => document.querySelector(`#t2v-exp button[data-tab="${name}"]`).click();
   bindTabs("t2v-exp", (name) => bodies[name](), async (name) => {
     expTab = name;

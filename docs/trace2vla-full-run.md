@@ -80,6 +80,10 @@ Anchors that show the setup is right (each base model on the standard suites):
 | C4 | `teacher-run` over ten tasks stopped at the first task without a program, after hours of the others | **Fixed:** every task is checked before anything runs |
 | C5 | Nothing checked the disk before thousands of teacher episodes | **Fixed:** `teacher-run` refuses when the episodes (about 10 MB each with videos, counted generously) plus 10 GB do not fit; `--no-videos` or `--force` |
 | C6 | One scene set per `teacher-run` command | **Built:** `--scenes a,b,c` runs them one after another in one (detachable) command |
+| C7 | Collection needed one command per stage and per scene set, and waited for every program first | **Built 13 November:** `t2v.sh collect` (section 7): programs taken from the session as each agent finishes, teacher task by task, grading and conversion of each finished (scene set, task) in the background, retries, a status file. Tested with stand-ins (15 tests) and run for real with recorded episodes (background jobs, final pass, status, a second collection refused) |
+| C8 | A dataset could be built from test or dev scenes | **Fixed:** `dataset` refuses demo sets made from a test or dev scene set (`--allow-heldout` to override) |
+| C9 | `check` loaded only the experiment's own suite | **Fixed:** it also loads every task on each sibling layout a scene set uses |
+| C10 | The dashboard showed no collection progress | **Built:** Pipeline tab (per task and scene set), a "Now running" card, a Collection column on the experiment list, the demo sets behind each dataset |
 
 ## 3. Built for the full run (13 November): sibling layouts
 
@@ -177,45 +181,45 @@ Experiments, in order of what a reviewer needs:
 4. **Replay (S2):** the main setting plus original LIBERO-Object data.
 5. Three training seeds for the settings that go into tables.
 
-## 7. Collecting the object suite (`object-full`)
+## 7. Collecting the object suite in one command (`t2v.sh collect`)
 
-Decided 13 November: every layout (the official partner's, `train`, and `alt1`–`alt4`), 50
-seeded scenes each for training and 10 for development; which demo sets go into a dataset is
-chosen when the dataset is built. Each step resumes where it stopped when run again.
+Decided 13 November (evening): every layout of `libero_object_swap` (`train`, the official
+partner's, and `alt1`–`alt4`), 25 seeded scenes each, all ten tasks: 1,250 teacher episodes. The
+coding agents write the programs of tasks 2–9 while the teacher already records the tasks that
+have one.
 
-1. Teacher programs for tasks 2–9 (the only step that uses the LLM; about \$40–60):
-   ```bash
-   scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_object_swap:2 --llm libero-pro:libero_object_swap:3 --llm libero-pro:libero_object_swap:4 --llm libero-pro:libero_object_swap:5 --llm libero-pro:libero_object_swap:6 --llm libero-pro:libero_object_swap:7 --llm libero-pro:libero_object_swap:8 --llm libero-pro:libero_object_swap:9 --llm-budget 25 --llm-total-budget 200 --reserve 30
-   ```
-2. The experiment, its programs (tasks 0 and 1 from `preflight2`), and the scene sets
-   (`train` and `dev` exist by default):
-   ```bash
-   scripts/gpu/t2v.sh init object-full --suite libero_object_swap --tasks 0-9
-   scripts/gpu/t2v.sh teacher-add object-full --from outputs/trace2vla/preflight2/teacher/programs
-   scripts/gpu/t2v.sh teacher-add object-full --from outputs/sessions/<the session of step 1>
-   for k in 1 2 3 4; do scripts/gpu/t2v.sh scenes object-full --add alt$k-train --suite libero_object_swap_alt$k --seeds 1001-1050 --role train; scripts/gpu/t2v.sh scenes object-full --add alt$k-dev --suite libero_object_swap_alt$k --seeds 2001-2010 --role dev; done
-   ```
-3. Pilot, before the big run: the development scenes of every layout for the tasks that have
-   programs (about an hour for two tasks). It shows whether each program also works where the
-   target has moved:
-   ```bash
-   scripts/gpu/t2v.sh teacher-run --detach object-full --scenes dev,alt1-dev,alt2-dev,alt3-dev,alt4-dev --tasks 0,1 --workers 2
-   ```
-4. The training scenes, one command for every layout (about 2,500 episodes: roughly 12–15 hours
-   on two workers once all ten programs exist). Tasks can be added later: a rerun records only
-   what is missing.
-   ```bash
-   scripts/gpu/t2v.sh teacher-run --detach object-full --scenes alt1-train,alt2-train,alt3-train,alt4-train,train --workers 2
-   ```
-5. As each scene set finishes (or while it runs; rerun afterwards for the rest): grade and
-   convert, on several CPU cores:
-   ```bash
-   scripts/gpu/t2v.sh prepare --detach object-full --scenes alt1-train,alt2-train --workers 8
-   ```
-6. The datasets, once the demo sets they use are complete. The main experiment holds out a
-   position: train on `alt1`–`alt3`, and keep `alt4` (its dev scenes), the official swap and the
-   standard layout for testing. Seeded scenes of one layout barely differ (P8), so a layout used
-   for training is no longer a held-out position:
-   ```bash
-   scripts/gpu/t2v.sh dataset object-full --demos alt1-train-3x,alt2-train-3x,alt3-train-3x --name main-50 --per-task 50 --workers 4
-   ```
+`t2v.sh collect` does it all and resumes where it stopped when run again:
+
+* **Programs as they arrive.** With `--programs-from SESSION`, a task without a program takes the
+  one its coding agent wrote, once the agent has finished and its program solved at least half of
+  its held-out scenes (`--min-heldout`). A weaker program, or none, is reported and not used. With
+  `--follow` it waits for the missing ones until the session has finished.
+* **The teacher, task by task**, on every listed scene set in order (`--workers` episodes at once).
+* **Grading and conversion in the background**: as soon as a (scene set, task) is recorded, a
+  separate process grades and converts it (`--prepare-workers`) while the teacher goes on. Test
+  scene sets are graded only, never converted. A final pass at the end catches anything missed.
+* **Failures.** An episode a model service failed is recorded again. A (scene set, task) still
+  missing scenes after `--attempts` tries is left incomplete and named. Services that stop
+  answering are waited for (`--service-wait`, 30 min); services that answer but fail every
+  episode three times in a row stop the collection with a message. Two collections of one
+  experiment, or two commands on the same scene set and task, are refused.
+* **Progress**: `collect.json` in the experiment folder; `t2v.sh status` prints a table (one row
+  per task, one column per scene set); the dashboard's **Pipeline** tab shows the same, live:
+  what runs now, episodes recorded / solved / graded / kept per cell, each task's program and where
+  it came from, the background conversions with their logs, and the time left.
+
+The LeRobot dataset is built once at the end, from the demo sets an experiment uses (section 6):
+which layouts go into a dataset is a choice per experiment, not part of the collection.
+
+Commands: the light test and the full run are in the reply of 13 November and below.
+
+```bash
+scripts/gpu/t2v.sh check object-full          # also loads every task on each sibling layout
+scripts/gpu/t2v.sh collect --detach object-full --scenes alt1-train,alt2-train,alt3-train,alt4-train,train --programs-from "$SESSION" --follow --workers 2 --prepare-workers 6
+scripts/gpu/t2v.sh status object-full
+scripts/gpu/t2v.sh stop object-full collect   # stops it and its background jobs; rerun to continue
+```
+
+Start the model services yourself (`scripts/gpu/services.sh start`) before the session and the
+collection: a session that started the services stops them when it ends, and the collection
+would then wait for them. A session that finds them running leaves them up.

@@ -16,8 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from cap_harness.vla.protocol import parse_int_list
-
 
 @dataclass(frozen=True)
 class SceneSet:
@@ -65,13 +63,26 @@ DEFAULT_SCENE_SETS: dict[str, dict[str, str]] = {
 }
 
 
+def seeds_of(text: str) -> list[int]:
+    """Seeds of a scene set: "1001-1025,2001" -> [1001, ..., 1025, 2001]. Standard library only:
+    the dashboard reads scene sets too.
+    """
+    values: list[int] = []
+    for part in str(text).split(","):
+        low, dash, high = part.strip().partition("-")
+        if not low:
+            continue
+        values.extend(range(int(low), int(high) + 1) if dash else [int(low)])
+    return values
+
+
 def scene_sets(settings: dict[str, Any]) -> dict[str, SceneSet]:
     declared = {**DEFAULT_SCENE_SETS, **(settings.get("scene_sets") or {})}
     return {
         name: SceneSet(
             name=name,
             init_mode=str(spec["init_mode"]),
-            seeds=tuple(parse_int_list(str(spec["seeds"]))),
+            seeds=tuple(seeds_of(str(spec["seeds"]))),
             role=str(spec.get("role", "train")),
             suite=str(spec["suite"]) if spec.get("suite") else None,
         )

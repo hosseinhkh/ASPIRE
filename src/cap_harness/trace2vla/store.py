@@ -203,6 +203,10 @@ class Experiment:
             yield
         finally:
             for stream in held:
+                # Empty means free (read by the dashboard); a holder that died leaves its line,
+                # with a pid that no longer runs.
+                stream.seek(0)
+                stream.truncate()
                 stream.close()  # closing the file ends the flock
 
 

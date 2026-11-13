@@ -217,6 +217,29 @@ def cmd_check(args: argparse.Namespace) -> int:
         adapter.close()
     except Exception as exc:
         report(False, "simulator", f"{type(exc).__name__}: {exc}")
+    # Scene sets on other suites (the sibling layouts): every task loads there too.
+    others = sorted(
+        {s.suite for s in scene_sets(experiment.settings).values() if s.suite and s.suite != experiment.suite}
+    )  # fmt: skip
+    if others:
+        from cap_harness.trace2vla import replay
+
+        seeded = replay.osc_adapter(64, init_mode="seeded")
+        for suite in others:
+            broken = []
+            for task in experiment.tasks:
+                try:
+                    seeded.reset(f"{suite}:{task}", seed=1001)
+                except Exception as exc:
+                    broken.append(f"task {task}: {type(exc).__name__}: {exc}")
+            report(
+                not broken,
+                f"simulator: {suite}",
+                f"all {len(experiment.tasks)} tasks load"
+                if not broken
+                else "; ".join(broken)[:300],
+            )
+        seeded.close()
     print("all checks passed" if not failed else f"{failed} check(s) failed")
     return 1 if failed else 0
 
@@ -351,6 +374,104 @@ def cmd_teacher_run(args: argparse.Namespace) -> int:
         )
         print(_teacher_table(teacher.results(experiment, scenes.name)))
     return 0
+
+
+def cmd_collect(args: argparse.Namespace) -> int:
+    """Programs as their agents finish, teacher episodes on every scene set, and grading and
+    conversion of each finished (scene set, task) in the background: see collect.py.
+    """
+    import signal
+
+    from cap_harness.trace2vla import collect, teacher
+
+    experiment = Experiment.open(args.name)
+    sets = [scene_set(experiment.settings, name) for name in _scene_list(experiment, args.scenes)]
+    tasks = _tasks(experiment, args.tasks)
+    if args.programs_from and not (Path(args.programs_from) / "agents").is_dir():
+        print(f"error: no agents/ folder in {args.programs_from} (a session folder)", file=sys.stderr)  # fmt: skip
+        return 2
+    down = teacher.service_ports_down(collect.SERVICE_PORTS)
+    if down and not args.force:
+        print(
+            f"error: model services are not answering on ports {down}; start them "
+            "(scripts/gpu/services.sh start) or pass --force",
+            file=sys.stderr,
+        )
+        return 1
+    registered = teacher.programs(experiment)
+    episodes = sum(len(s.seeds) for s in sets) * len(tasks)
+    known = sum(len(teacher.missing_seeds(experiment, s, t)) for s in sets for t in tasks if t in registered)  # fmt: skip
+    unknown = sum(len(s.seeds) for s in sets) * sum(1 for t in tasks if t not in registered)
+    short = teacher.disk_shortfall(experiment, known + unknown, videos=not args.no_videos)
+    if short and not args.force:
+        print(f"error: {short} (or pass --force)", file=sys.stderr)
+        return 1
+    print(
+        f"collect: {len(tasks)} tasks x {len(sets)} scene sets ({episodes} scenes; "
+        f"{known + unknown} to record), programs for tasks {compact(sorted(registered)) or 'none'}"
+        + (f", the others from {args.programs_from}" if args.programs_from else "")
+    )
+
+    def stopped(*_args: Any) -> None:  # t2v.sh stop sends SIGTERM: record "stopped" on the way
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stopped)
+    collector = collect.Collector(
+        experiment, sets, tasks, workers=args.workers, prepare_workers=args.prepare_workers,
+        prepare_jobs=args.prepare_jobs, session=args.programs_from, min_heldout=args.min_heldout,
+        follow=args.follow, poll=args.poll, attempts=args.attempts, videos=not args.no_videos,
+        service_wait=60.0 * args.service_wait, argv=args.argv,
+        log=lambda line: print(line, flush=True),
+    )  # fmt: skip
+    code = collector.run()
+    print(_collect_table(experiment))
+    return code
+
+
+def _collect_table(experiment: Experiment) -> str:
+    """Scene sets x tasks: teacher episodes counted/planned, solved, demos kept."""
+    from cap_harness.trace2vla import progress
+
+    view = progress.overview(experiment.root)
+    status = view["collect"]
+    lines = []
+    if status:
+        now = status.get("now") or {}
+        doing = (
+            f"teacher {now.get('scene_set')}/task {now.get('task')} {now.get('done', 0)}/{now.get('total', '?')}"
+            if now.get("stage") == "teacher"
+            else now.get("detail") or ""
+        )
+        eta = status.get("eta_s")
+        lines.append(
+            f"collect: {status.get('status')}"
+            + (f", now {doing}" if doing else "")
+            + (f", {status.get('episodes_left')} episodes left" if status.get("episodes_left") else "")
+            + (f", about {eta / 3600:.1f} h" if eta and status.get("status") in ("running", "waiting") else "")
+            + (f" ({status['error']})" if status.get("error") and status.get("status") == "failed" else "")
+        )  # fmt: skip
+        waiting = {t: p for t, p in view["programs"].items() if not p.get("registered")}
+        for task, program in waiting.items():
+            lines.append(f"  task {task}: {program.get('note') or 'no program yet'}")
+    totals = view["totals"]
+    if totals["planned"]:
+        lines.append(
+            f"teacher episodes {totals['recorded']}/{totals['planned']}, solved {totals['solved']}, "
+            f"graded {totals['graded']}, demos kept {totals['kept']} (rejected {totals['rejected']})"
+        )
+        # One row per task, one column per scene set: recorded/planned, solved, demos kept.
+        sets = view["scene_sets"]
+        width = max([16, *(len(s["name"]) + 2 for s in sets)])
+        lines.append("  task" + "".join(f"{s['name']:>{width}}" for s in sets))
+        for index, task in enumerate(view["tasks"]):
+            row = ""
+            for s in sets:
+                c = s["cells"][index]
+                text = f"{c['recorded']}/{c['planned']} {c['solved']}ok {c['kept']}d"
+                row += f"{text:>{width}}"
+            lines.append(f"  {task:>4}{row}")
+        lines.append("  (each: teacher episodes counted/planned, solved (ok), demos kept (d))")
+    return "\n".join(lines)
 
 
 def _teacher_table(summary: dict[str, Any]) -> str:
@@ -520,6 +641,20 @@ def cmd_dataset(args: argparse.Namespace) -> int:
             return 2
         # Several demo sets (one per layout) make one dataset; --per-task applies to each.
         sets = [n.strip() for n in str(args.demos).split(",") if n.strip()]
+        from cap_harness.trace2vla.progress import demo_set_source
+
+        known = scene_sets(experiment.settings)
+        for demo_set in sets:
+            source = demo_set_source(experiment.demo_dir(demo_set))
+            role = known[source].role if source in known else None
+            if role in ("test", "dev") and not args.allow_heldout:
+                print(
+                    f"error: demo set '{demo_set}' comes from scene set '{source}', kept for "
+                    f"{'testing' if role == 'test' else 'choosing checkpoints'} ({role}); a "
+                    "dataset takes training scenes (--allow-heldout to override)",
+                    file=sys.stderr,
+                )
+                return 2
         demos: list[Path] = []
         for demo_set in sets:
             found = dataset.demo_dirs(
@@ -1094,6 +1229,8 @@ def cmd_status(args: argparse.Namespace) -> int:
                 else "teacher not run"
             )
         )
+    if (experiment.root / "collect.json").is_file():
+        print(_collect_table(experiment))
     for demo in report.demo_sets(experiment):
         print(f"demo set {demo['name']}: {demo['accepted']} kept, {demo['rejected']} rejected")
     for dataset in report.datasets(experiment):
@@ -1187,6 +1324,44 @@ def build_parser() -> argparse.ArgumentParser:
     )  # fmt: skip
 
     workers_help = "episodes at once, each worker with its own simulator (default 1; about one per free CPU core)"
+    c = add("collect", cmd_collect)
+    c.add_argument("--scenes", required=True, help="scene sets in the order to record: a,b,c")
+    c.add_argument("--tasks")
+    c.add_argument("--workers", type=int, default=2, help="teacher episodes at once (default 2)")
+    c.add_argument(
+        "--prepare-workers", type=int, default=4,
+        help="workers of each background grade-and-convert (default 4)",
+    )  # fmt: skip
+    c.add_argument(
+        "--prepare-jobs", type=int, default=1,
+        help="background grade-and-convert jobs at once (default 1)",
+    )  # fmt: skip
+    c.add_argument(
+        "--programs-from", metavar="SESSION",
+        help="a session folder: take each task's program from its coding agent once it finished",
+    )  # fmt: skip
+    c.add_argument(
+        "--min-heldout", type=float, default=0.5,
+        help="share of its held-out scenes an agent's program must solve to be used (default 0.5)",
+    )  # fmt: skip
+    c.add_argument(
+        "--follow", action="store_true",
+        help="wait for the programs still missing (until the session finishes)",
+    )  # fmt: skip
+    c.add_argument("--poll", type=float, default=60.0, help="seconds between looks while waiting")
+    c.add_argument(
+        "--attempts", type=int, default=3,
+        help="tries per scene set and task before it is left incomplete (default 3)",
+    )  # fmt: skip
+    c.add_argument(
+        "--service-wait", type=float, default=30.0,
+        help="minutes to wait for model services that stopped answering (default 30)",
+    )  # fmt: skip
+    c.add_argument("--no-videos", action="store_true")
+    c.add_argument(
+        "--force", action="store_true", help="start even when services look down or disk full"
+    )
+
     c = add("teacher-grade", cmd_teacher_grade)
     c.add_argument("--scenes", required=True, help="a scene set, or several: a,b,c")
     c.add_argument("--tasks")
@@ -1228,6 +1403,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument(
         "--per-task", type=int, help="at most this many demos per task, from each demo set"
     )
+    c.add_argument(
+        "--allow-heldout", action="store_true",
+        help="allow demo sets made from test or dev scene sets",
+    )  # fmt: skip
     c.add_argument(
         "--workers", type=int, default=1, help="build in this many parts at once, then merge"
     )

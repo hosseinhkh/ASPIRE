@@ -15,6 +15,7 @@ from typing import Any
 from dashboard_store import Store, downsample, read_json, read_npz
 from dashboard_vla import EPISODE_SERIES, progress_of, student_of
 
+from cap_harness.trace2vla import progress
 from cap_harness.trace2vla.store import is_probe
 from cap_harness.trace2vla.train import repair_steps
 
@@ -151,6 +152,7 @@ class T2vStore:
                     "student": student["key"],
                     "student_label": student["label"],
                     "derived_from": (manifest.get("derived_from") or {}).get("name"),
+                    "demo_sets": manifest.get("demo_sets") or [],
                     "created": manifest.get("created"),
                     "episodes": len(manifest.get("episodes", [])),
                     "frames": manifest.get("frames"),
@@ -232,6 +234,8 @@ class T2vStore:
             official = teacher.get("official") or {}
             evals = self._evals(root)
             training = self._training(root)
+            pipeline = progress.overview(root)
+            collect = pipeline["collect"]
             items.append(
                 {
                     "name": root.name,
@@ -264,6 +268,16 @@ class T2vStore:
                         }
                         for e in evals
                     ],
+                    "collection": {
+                        "status": collect.get("status"),
+                        "now": collect.get("now"),
+                        "eta_s": collect.get("eta_s"),
+                        "totals": pipeline["totals"],
+                        "programs": sum(
+                            1 for p in pipeline["programs"].values() if p["registered"]
+                        ),
+                    },
+                    "background": [b["stage"] for b in pipeline["background"]],
                     "last_event": events[-1] if events else None,
                     "modified": root.stat().st_mtime,
                 }
@@ -285,6 +299,7 @@ class T2vStore:
             "datasets": self._datasets(root),
             "training": self._training(root),
             "evals": self._evals(root),
+            "pipeline": progress.overview(root),
             "ledger": _events(root)[-LEDGER_TAIL:],
             "logs": [
                 {"path": self.store.rel(p), "name": p.name, "bytes": p.stat().st_size}
