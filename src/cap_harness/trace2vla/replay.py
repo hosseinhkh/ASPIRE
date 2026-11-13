@@ -192,8 +192,15 @@ def track_in_osc(
         )
         closed = grippers[min(index, n - 1)] < 0.5
         action[6] = 1.0 if closed else -1.0
+        try:
+            raw = adapter.step_native_action(action)
+        except ValueError as error:
+            # The simulator's own step limit (the adapter's horizon, 1,000) ended the episode
+            # before the hand finished the path: a failed re-execution, not an error.
+            if "terminated episode" not in str(error):
+                raise
+            break
         actions.append(action)
-        raw = adapter.step_native_action(action)
         steps += 1
         grader.step(raw, closed)
         if adapter.check_success():

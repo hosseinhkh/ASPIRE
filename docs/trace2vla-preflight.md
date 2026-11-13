@@ -374,6 +374,8 @@ layouts it has not seen; that is the held-out-layout experiment that follows the
 | Stop it (finished episodes are kept; rerun the same command to continue). Stops every background stage of the experiment; `stop preflight eval` stops only the evaluation, `stop preflight train` only the training | `scripts/gpu/t2v.sh stop preflight` |
 | All experiments | `scripts/gpu/t2v.sh status` |
 | Choose the GPU for simulate / train / evaluate stages | `scripts/gpu/t2v.sh --gpu 1 <stage> ...` |
+| Grade and convert several scene sets in one command, on several CPU cores | `scripts/gpu/t2v.sh prepare preflight --scenes train,alt1-train --workers 8` |
+| Build a dataset from several layouts, in parallel parts | `scripts/gpu/t2v.sh dataset preflight --demos alt1-train-3x,alt2-train-3x --per-task 25 --name d-alt --workers 4` |
 
 `teacher-run`, `teacher-grade`, `convert` and `eval` skip what is already done, so rerunning a
 command after an interruption continues it. `dataset` and `train` refuse to overwrite: give a

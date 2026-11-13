@@ -7,8 +7,9 @@
 #   scripts/gpu/t2v.sh scenes NAME [--add SET --suite S --seeds 1001-1050 --role train]
 #                                                 scene sets; S may be a sibling layout (_alt1..4)
 #   scripts/gpu/t2v.sh teacher-run NAME --scenes official|train|dev [--workers 2]
-#   scripts/gpu/t2v.sh teacher-grade NAME --scenes SET
-#   scripts/gpu/t2v.sh convert NAME --scenes train [--speed 3]
+#   scripts/gpu/t2v.sh teacher-grade NAME --scenes SET[,SET...] [--workers 8]
+#   scripts/gpu/t2v.sh convert NAME --scenes train[,alt1-train,...] [--speed 3] [--workers 8]
+#   scripts/gpu/t2v.sh prepare NAME --scenes a,b,c [--workers 8]   grade, then convert, in one command
 #   scripts/gpu/t2v.sh dataset NAME --demos train-3x --name d50 [--per-task 50] [--student pi05]
 #   scripts/gpu/t2v.sh dataset NAME --from-dataset d50 --student pi05 --name d50-pi05
 #   scripts/gpu/t2v.sh train NAME --dataset d50 --name ft-full [--method full|lora|lora-vlm]
@@ -25,7 +26,7 @@
 #   scripts/gpu/t2v.sh stop NAME [STAGE]          stop its background stages (or only STAGE: train, eval, ...)
 #
 # Put --detach right after the stage name to run it in the background (teacher-run, teacher-grade,
-# convert, dataset, train, eval, eval-steps): it survives a closed terminal and logs to
+# convert, prepare, dataset, train, eval, eval-steps): it survives a closed terminal and logs to
 # outputs/trace2vla/NAME/logs/. GPU: --gpu N first, or ASPIRE_T2V_GPU (default 0). teacher-run
 # keeps the conda env's own GPU, where ASPIRE's model services are.
 # Students: SmolVLA (default) or pi0.5 (--student pi05 on dataset and eval; train takes the
@@ -87,7 +88,7 @@ case "$cmd" in
   teacher-run)
     echo "teacher-run uses the conda env's GPU (ASPIRE_GPU=${ASPIRE_GPU:-unset}) and the model services" >&2
     run_stage "$cmd" "$@" ;;
-  teacher-grade|convert|dataset|train|eval|eval-steps|grade-student)
+  teacher-grade|convert|prepare|dataset|train|eval|eval-steps|grade-student)
     echo "$cmd on GPU $GPU (this command only; --gpu N or ASPIRE_T2V_GPU to change)" >&2
     run_stage "$cmd" "$@" ;;
   logs)

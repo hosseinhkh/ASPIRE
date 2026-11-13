@@ -101,11 +101,31 @@ Which partner each layout uses, per task: `configs/libero_layouts/manifest.json`
 | Item | Why | Size |
 |---|---|---|
 | **Replay mixing** | Retention (experiment S2): mix original LIBERO-Object demonstrations into training | Medium: LeRobot's dataset merge, feature names already match |
-| **Faster dataset building** | One writer renders ~30 s per demo: 1,500 demos is about 12 hours | Medium: build per task in parallel, then merge |
+| **Faster dataset building** | One writer renders ~30 s per demo: 1,500 demos is about 12 hours | **Built 13 November:** `dataset --workers N` builds N parts at once and merges them with LeRobot's `aggregate_datasets`; checked identical to a one-process build (every action, state, index, decoded frame and statistic) |
 | **Parallel evaluation** | One process: ~15 s per episode; 10 tasks × 50 scenes × 3 seeds = 1,500 episodes per model and suite | Medium: split by task across processes, one result table |
-| **A dataset from several layouts** | The main experiment trains on `alt1`, `alt2` and `alt3` together, 25 or 50 per layout; `dataset` takes one demo set today | Small: several `--demos`, `--per-task` per layout |
+| **A dataset from several layouts** | The main experiment trains on `alt1`, `alt2` and `alt3` together, 25 or 50 per layout | **Built 13 November:** `dataset --demos a,b,c --per-task 25` (the limit applies to each demo set) |
 | **An experiment over ten tasks** | `preflight2` has tasks 0 and 1 | Commands only: `t2v.sh init` with `--tasks 0-9`, register the programs |
 | Accept-or-roll-back gate, M2 labels from images, round script | M2 and M3 | Later; not needed for the M1 tables |
+
+## 4b. Collecting in parallel (built 13 November)
+
+| Stage | Parallel how | Limit |
+|---|---|---|
+| `teacher-run` | `--workers N` runs N seeds at once; one scene set per command, run several commands for several scene sets | The model services (SAM3 one request at a time): 2–3 workers |
+| `teacher-grade`, `convert` | `--workers N`: N episodes at once, each worker with its own simulator; `--scenes a,b,c` for several scene sets in one command | CPU cores: about one worker per free core |
+| `prepare` | `teacher-grade` then `convert`, for every listed scene set, one command | as above |
+| `dataset` | `--workers N`: N parts built at once, then merged; `--demos a,b,c` combines layouts | CPU cores and memory; the AV1 encoder uses several threads per part, so fewer workers than cores |
+
+What does not wait for what: a scene set's episodes can be graded and converted as soon as its
+`teacher-run` is done, while the teacher runs the next scene set (grading and conversion use no
+model services). Rerunning `prepare` later adds only what is new. A dataset is a fixed snapshot of
+the demos converted at the time it is built: build the main experiment's dataset once all ten
+tasks' layouts are converted (or build early ones under other names).
+
+Checked for real on CPU: three workers graded three teacher episodes at once; parallel and
+one-process conversion gave the same results; a demo whose re-execution ran into the simulator's
+step limit is now rejected (`re-execution_failed`) instead of stopping the command; a failing
+episode is reported, the others go on, and a rerun retries it.
 
 ## 5. Scope and cost of the full run (estimates)
 

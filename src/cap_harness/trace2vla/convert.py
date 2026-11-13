@@ -23,6 +23,7 @@ For each successful teacher episode:
 
 from __future__ import annotations
 
+import atexit
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
@@ -186,6 +187,52 @@ def convert_run(
     )
 
 
+#: This process's simulator adapters for conversion jobs (made on first use, kept between jobs).
+_ADAPTERS: dict[str, Any] = {}
+
+
+def _adapters(image_size: int) -> tuple[Any, Any]:
+    """Two OSC adapters: small images for the checks, student-size images for the recording."""
+    if "fast" not in _ADAPTERS:
+        _ADAPTERS["fast"] = replay.osc_adapter(64)
+        _ADAPTERS["recorder"] = replay.osc_adapter(image_size)
+        atexit.register(close_adapters)
+    return _ADAPTERS["fast"], _ADAPTERS["recorder"]
+
+
+def close_adapters() -> None:
+    for key in ("fast", "recorder"):
+        adapter = _ADAPTERS.pop(key, None)
+        if adapter is not None:
+            adapter.close()
+
+
+def convert_job(
+    task_id: int, seed: int, run: str, out: str, scene_set: str, settings: ConvertSettings
+) -> dict[str, Any]:
+    """Convert one teacher episode into ``out``: one unit of work, in this process or a worker.
+
+    Returns the summary; {"unreadable": why} when the recording cannot be read, {"skipped":
+    "teacher_failed"} when the teacher did not succeed (nothing is written then).
+    """
+    try:
+        episode = load_teacher_episode(Path(run))
+    # One unreadable recording must not stop the conversion of the others.
+    except (OSError, ValueError, KeyError) as exc:
+        return {"unreadable": str(exc)}
+    if not episode.success:
+        return {"skipped": "teacher_failed"}
+    fast, recorder = _adapters(settings.image_size)
+    target = Path(out)
+    summary = convert_episode(episode, target, fast=fast, recorder=recorder, settings=settings)
+    summary["scene_set"] = scene_set
+    if summary["accepted"]:
+        write_json(target / "episode.json", summary)
+    else:
+        write_json(target.with_name(target.name + ".rejected.json"), summary)
+    return summary
+
+
 def convert_scene_set(
     experiment: Any,
     scene_set: str,
@@ -193,9 +240,14 @@ def convert_scene_set(
     tasks: list[int],
     settings: ConvertSettings | None = None,
     *,
+    workers: int = 1,
     log: Any = print,
 ) -> dict[str, Any]:
-    """Convert every successful teacher episode of a scene set; skip the ones already done."""
+    """Convert every successful teacher episode of a scene set; skip the ones already done.
+
+    ``workers`` > 1 converts that many episodes at once, each worker with its own simulator.
+    """
+    from cap_harness.trace2vla import parallel
     from cap_harness.trace2vla.store import read_json
     from cap_harness.trace2vla.teacher import episodes_of
 
@@ -206,48 +258,51 @@ def convert_scene_set(
     if stored and stored != settings.to_dict():
         raise ValueError(f"demo set {name!r} was made with other settings; choose another --name")
     write_json(root / "settings.json", settings.to_dict())
-    fast = replay.osc_adapter(64)
-    recorder = replay.osc_adapter(settings.image_size)
-    new = 0
+    jobs: list[tuple[Any, ...]] = []
     stale: list[tuple[int, int]] = []  # demos made from a teacher episode that was replaced
-    try:
-        for task_id in tasks:
-            for seed, run in sorted(episodes_of(experiment, scene_set, task_id).items()):
-                out = root / f"task_{task_id:02d}" / f"seed_{seed}"
-                rejected = out.with_name(out.name + ".rejected.json")
-                made = read_json(out / "episode.json") or read_json(rejected)
-                if made:
-                    if made.get("source_run") and Path(made["source_run"]).name != run.name:
-                        stale.append((task_id, seed))
-                    continue
-                try:
-                    episode = load_teacher_episode(run)
-                # One unreadable recording must not stop the conversion of the others.
-                except (OSError, ValueError, KeyError) as exc:
-                    log(
-                        f"task {task_id} seed {seed}: SKIPPED, the recording cannot be read ({exc})"
-                    )
-                    continue
-                if not episode.success:
-                    continue
-                summary = convert_episode(
-                    episode, out, fast=fast, recorder=recorder, settings=settings
-                )
-                summary["scene_set"] = scene_set
-                new += 1
-                if summary["accepted"]:
-                    write_json(out / "episode.json", summary)
-                    log(
-                        f"task {task_id} seed {seed}: {summary['teacher_steps']} teacher steps -> "
-                        f"{summary['steps']} (idle frames dropped: {summary['tracked_steps'] - summary['steps']}, "
-                        f"dwell {summary['dwell']})"
-                    )
-                else:
-                    write_json(rejected, summary)
-                    log(f"task {task_id} seed {seed}: REJECTED ({summary['rejected']})")
-    finally:
-        fast.close()
-        recorder.close()
+    for task_id in tasks:
+        for seed, run in sorted(episodes_of(experiment, scene_set, task_id).items()):
+            out = root / f"task_{task_id:02d}" / f"seed_{seed}"
+            rejected = out.with_name(out.name + ".rejected.json")
+            made = read_json(out / "episode.json") or read_json(rejected)
+            if made:
+                if made.get("source_run") and Path(made["source_run"]).name != run.name:
+                    stale.append((task_id, seed))
+                continue
+            jobs.append((task_id, seed, str(run), str(out), scene_set, settings))
+    if jobs and workers > 1:
+        log(f"converting {len(jobs)} episodes of '{scene_set}' with {workers} workers")
+    counts = {"new": 0}
+    failed: list[str] = []
+
+    def done(job: tuple[Any, ...], summary: dict[str, Any]) -> None:
+        task_id, seed = job[0], job[1]
+        if "unreadable" in summary:
+            log(
+                f"task {task_id} seed {seed}: SKIPPED, the recording cannot be read ({summary['unreadable']})"
+            )
+            return
+        if summary.get("skipped"):
+            return
+        counts["new"] += 1
+        if summary["accepted"]:
+            log(
+                f"task {task_id} seed {seed}: {summary['teacher_steps']} teacher steps -> "
+                f"{summary['steps']} (idle frames dropped: {summary['tracked_steps'] - summary['steps']}, "
+                f"dwell {summary['dwell']})"
+            )
+        else:
+            log(f"task {task_id} seed {seed}: REJECTED ({summary['rejected']})")
+
+    def broke(job: tuple[Any, ...], error: BaseException) -> None:
+        failed.append(f"task {job[0]} seed {job[1]}")
+        log(
+            f"task {job[0]} seed {job[1]}: FAILED ({type(error).__name__}: {error}); rerun to retry"
+        )
+
+    parallel.run_jobs(
+        convert_job, jobs, workers=workers, on_result=done, on_error=broke, cleanup=close_adapters
+    )
     if stale:
         log(
             f"WARNING: {len(stale)} demos of '{name}' were made from teacher episodes that have "
@@ -256,10 +311,11 @@ def convert_scene_set(
         )
     summary = demo_summary(experiment, name)
     experiment.log(
-        "demos_converted", name=name, scene_set=scene_set, tasks=tasks, new=new,
+        "demos_converted", name=name, scene_set=scene_set, tasks=tasks, new=counts["new"],
         accepted=summary["accepted"], rejected=summary["rejected"], settings=settings.to_dict(),
+        failed=failed, workers=workers,
     )  # fmt: skip
-    return summary
+    return {**summary, "failed": failed}
 
 
 def demo_summary(experiment: Any, name: str) -> dict[str, Any]:

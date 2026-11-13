@@ -148,8 +148,13 @@ def build_dataset(
     vcodec: str = "libsvtav1",
     log: Any = print,
     student: str = students.DEFAULT_STUDENT,
+    allow_empty: bool = False,
 ) -> dict[str, Any]:
-    """Replay each demo and write it as one dataset episode. Returns the manifest."""
+    """Replay each demo and write it as one dataset episode. Returns the manifest.
+
+    ``allow_empty``: when no demo could be written, return a manifest with no episodes (and
+    the rejections) instead of raising; no dataset is left on disk then. Used for shards.
+    """
     chosen = students.get(student)
     import datasets as hf_datasets
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -239,6 +244,8 @@ def build_dataset(
         adapter.close()
     if not episodes:
         shutil.rmtree(out_dir, ignore_errors=True)
+        if allow_empty:
+            return {"name": name, "episodes": [], "rejected": rejected, "frames": 0}
         raise RuntimeError("no demo could be written to the dataset")
     dataset.finalize()
     frozen = freeze_stats(out_dir, checkpoint) if checkpoint is not None else None
@@ -262,6 +269,134 @@ def build_dataset(
             "student": chosen.key,
             "frozen": frozen,
         },
+    }
+    write_json(out_dir / "manifest.json", manifest)
+    return manifest
+
+
+def build_shard(
+    index: int,
+    demos: list[str],
+    shard_dir: str,
+    name: str,
+    image_size: int,
+    vcodec: str,
+    student: str,
+) -> dict[str, Any]:
+    """Build one shard of a dataset (a worker's job): the demos as an ordinary dataset, with the
+    statistics the data gives (they are frozen once, on the merged dataset).
+    """
+    return build_dataset(
+        [Path(d) for d in demos],
+        Path(shard_dir),
+        name=f"{name}-part{index}",
+        checkpoint=None,
+        image_size=image_size,
+        vcodec=vcodec,
+        log=lambda line: print(f"[part {index}] {line.strip()}", flush=True),
+        student=student,
+        allow_empty=True,
+    )
+
+
+def build_dataset_parallel(
+    demos: list[Path],
+    out_dir: Path,
+    *,
+    name: str,
+    checkpoint: Path | None,
+    workers: int,
+    image_size: int = IMAGE_SIZE,
+    vcodec: str = "libsvtav1",
+    log: Any = print,
+    student: str = students.DEFAULT_STUDENT,
+) -> dict[str, Any]:
+    """``build_dataset`` with the demos split over ``workers`` processes.
+
+    Each worker writes a shard (consecutive demos, so the order is the same as one process
+    would give); LeRobot's ``aggregate_datasets`` merges the shards into ``out_dir``, and the
+    checkpoint's statistics are frozen into the result as ``build_dataset`` does. Same
+    manifest, with the episodes numbered in order. With one worker it is ``build_dataset``.
+    """
+    from cap_harness.trace2vla import parallel
+
+    if workers <= 1 or len(demos) <= 1:
+        return build_dataset(
+            demos, out_dir, name=name, checkpoint=checkpoint, image_size=image_size,
+            vcodec=vcodec, log=log, student=student,
+        )  # fmt: skip
+    if out_dir.exists():
+        raise FileExistsError(f"{out_dir} already exists (choose another dataset name)")
+    chosen = students.get(student)
+    shards_root = out_dir.parent / f".{out_dir.name}.shards"
+    shutil.rmtree(shards_root, ignore_errors=True)  # left by an interrupted build
+    shards_root.mkdir(parents=True)
+    size = -(-len(demos) // workers)  # consecutive groups, the last one shorter
+    groups = parallel.chunks([str(d) for d in demos], size)
+    jobs = [
+        (index, group, str(shards_root / f"part{index}"), name, image_size, vcodec, chosen.key)
+        for index, group in enumerate(groups)
+    ]
+    log(f"building {len(demos)} demos in {len(jobs)} parts at once")
+    manifests: dict[int, dict[str, Any]] = {}
+    errors: list[str] = []
+    try:
+        parallel.run_jobs(
+            build_shard,
+            jobs,
+            workers=len(jobs),
+            on_result=lambda job, manifest: manifests.__setitem__(job[0], manifest),
+            on_error=lambda job, error: errors.append(
+                f"part {job[0]}: {type(error).__name__}: {error}"
+            ),
+        )
+        if errors:
+            raise RuntimeError("building the dataset failed: " + "; ".join(errors))
+        written = [i for i in sorted(manifests) if manifests[i]["episodes"]]
+        if not written:
+            raise RuntimeError("no demo could be written to the dataset")
+        from lerobot.datasets.aggregate import aggregate_datasets
+
+        log(f"merging {len(written)} parts into {out_dir}")
+        aggregate_datasets(
+            repo_ids=[f"trace2vla/{name}-part{i}" for i in written],
+            aggr_repo_id=f"trace2vla/{name}",
+            roots=[shards_root / f"part{i}" for i in written],
+            aggr_root=out_dir,
+        )
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(shards_root, ignore_errors=True)
+    episodes: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index in sorted(manifests):
+        for episode in manifests[index]["episodes"]:
+            episodes.append({**episode, "episode_index": len(episodes)})
+        rejected.extend(manifests[index]["rejected"])
+    frozen = freeze_stats(out_dir, checkpoint) if checkpoint is not None else None
+    manifest = {
+        "name": name,
+        "created": now_iso(),
+        "student": chosen.describe(),
+        "repo_id": f"trace2vla/{name}",
+        "root": str(out_dir),
+        "fps": FPS,
+        "image_size": image_size,
+        "episodes": episodes,
+        "rejected": rejected,
+        "frames": sum(e["frames"] for e in episodes),
+        "per_task": {
+            str(t): sum(1 for e in episodes if e["task_id"] == t)
+            for t in sorted({e["task_id"] for e in episodes})
+        },
+        "statistics": {
+            "source": str(checkpoint) if checkpoint else "computed from this dataset",
+            "student": chosen.key,
+            "frozen": frozen,
+        },
+        "built": {"workers": len(jobs), "parts": len(written)},
     }
     write_json(out_dir / "manifest.json", manifest)
     return manifest

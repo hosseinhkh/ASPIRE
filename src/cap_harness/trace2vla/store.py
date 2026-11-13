@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import socket
 from typing import Any
+import uuid
 
 from cap_harness.vla.libero_compat import REPOSITORY_ROOT
 
@@ -22,10 +23,17 @@ def now_iso() -> str:
 
 
 def atomic_write(path: Path, text: str) -> None:
+    """Write through a temporary file and rename it into place. The temporary name is unique
+    to the process and the call, so processes writing the same file at once (parallel
+    conversion workers updating a summary) never share one.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(text, encoding="utf-8")
-    os.replace(temporary, path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_json(path: Path, value: Any) -> None:

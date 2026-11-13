@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import atexit
 from collections import Counter
 from collections.abc import Iterable
 import os
@@ -460,73 +461,130 @@ def results(experiment: Experiment, scene_set: str, *, write: bool = False) -> d
 
 
 # ------------------------------------------------------------------------------ grading --
-def grade_scene_set(
-    experiment: Experiment, scene_set: str, tasks: Iterable[int], *, log: Any = print
-) -> dict[str, Any]:
-    """Joint-replay every ungraded teacher episode; store labels and simulator states."""
+#: This process's joint-control adapter for grading jobs (made on first use).
+_GRADER: dict[str, Any] = {}
+
+
+def _joint_adapter() -> Any:
     from cap_harness.trace2vla import replay
 
-    adapter = replay.joint_adapter()
-    counts: Counter[str] = Counter()
-    graded = 0
-    unreadable: list[str] = []
-    try:
-        for task_id in tasks:
-            out = experiment.grade_dir(scene_set, task_id)
-            for seed, run in sorted(episodes_of(experiment, scene_set, task_id).items()):
-                target = out / f"seed_{seed}.json"
-                existing = grade_of(experiment, scene_set, task_id, seed, run)
-                if existing:
-                    counts[existing.get("labels", {}).get("failure_family", "unknown")] += 1
-                    continue
-                try:
-                    episode = load_teacher_episode(run)
-                # One unreadable recording must not stop the grading of the others.
-                except (OSError, ValueError, KeyError) as exc:
-                    unreadable.append(f"task {task_id} seed {seed}")
-                    log(
-                        f"task {task_id} seed {seed}: SKIPPED, the recording cannot be read ({exc})"
-                    )
-                    continue
-                rollout = replay.joint_replay(adapter, episode)
-                out.mkdir(parents=True, exist_ok=True)
-                np.savez_compressed(
-                    out / f"seed_{seed}.npz",
-                    start_state=rollout.start_state,
-                    end_state=rollout.end_state,
-                )
-                write_json(
-                    target,
-                    {
-                        "run": experiment.rel(run),
-                        "scene": episode.scene,
-                        "success": rollout.success,
-                        "recorded_success": episode.success,
-                        "termination": episode.termination,
-                        "steps": rollout.steps,
-                        "labels": rollout.labels,
-                        **rollout.stats,
-                    },
-                )
-                graded += 1
-                counts[rollout.labels.get("failure_family", "unknown")] += 1
-                log(
-                    f"task {task_id} seed {seed}: {rollout.labels.get('failure_family')}"
-                    + (
-                        ""
-                        if rollout.stats["reproduced"]
-                        else f" (NOT reproduced: joints differ by {rollout.stats['max_joint_difference_rad']:.4f} rad)"
-                    )
-                )
-    finally:
+    if "adapter" not in _GRADER:
+        _GRADER["adapter"] = replay.joint_adapter()
+        atexit.register(close_grader)
+    return _GRADER["adapter"]
+
+
+def close_grader() -> None:
+    adapter = _GRADER.pop("adapter", None)
+    if adapter is not None:
         adapter.close()
+
+
+def grade_job(task_id: int, seed: int, run: str, rel: str, out: str) -> dict[str, Any]:
+    """Joint-replay one teacher episode and store its grade: one unit of work, in this process
+    or a worker. Returns the grade, or {"unreadable": why}.
+    """
+    from cap_harness.trace2vla import replay
+
+    try:
+        episode = load_teacher_episode(Path(run))
+    # One unreadable recording must not stop the grading of the others.
+    except (OSError, ValueError, KeyError) as exc:
+        return {"unreadable": str(exc)}
+    rollout = replay.joint_replay(_joint_adapter(), episode)
+    folder = Path(out)
+    folder.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        folder / f"seed_{seed}.npz", start_state=rollout.start_state, end_state=rollout.end_state
+    )
+    record = {
+        "run": rel,
+        "scene": episode.scene,
+        "success": rollout.success,
+        "recorded_success": episode.success,
+        "termination": episode.termination,
+        "steps": rollout.steps,
+        "labels": rollout.labels,
+        **rollout.stats,
+    }
+    write_json(folder / f"seed_{seed}.json", record)
+    return record
+
+
+def grade_scene_set(
+    experiment: Experiment,
+    scene_set: str,
+    tasks: Iterable[int],
+    *,
+    workers: int = 1,
+    log: Any = print,
+) -> dict[str, Any]:
+    """Joint-replay every ungraded teacher episode; store labels and simulator states.
+
+    ``workers`` > 1 grades that many episodes at once, each worker with its own simulator.
+    """
+    from cap_harness.trace2vla import parallel
+
+    tasks = list(tasks)
+    counts: Counter[str] = Counter()
+    jobs: list[tuple[Any, ...]] = []
+    for task_id in tasks:
+        out = experiment.grade_dir(scene_set, task_id)
+        for seed, run in sorted(episodes_of(experiment, scene_set, task_id).items()):
+            existing = grade_of(experiment, scene_set, task_id, seed, run)
+            if existing:
+                counts[existing.get("labels", {}).get("failure_family", "unknown")] += 1
+                continue
+            jobs.append((task_id, seed, str(run), experiment.rel(run), str(out)))
+    if jobs and workers > 1:
+        log(f"grading {len(jobs)} episodes of '{scene_set}' with {workers} workers")
+    graded = {"count": 0}
+    unreadable: list[str] = []
+    failed: list[str] = []
+
+    def done(job: tuple[Any, ...], record: dict[str, Any]) -> None:
+        task_id, seed = job[0], job[1]
+        if "unreadable" in record:
+            unreadable.append(f"task {task_id} seed {seed}")
+            log(
+                f"task {task_id} seed {seed}: SKIPPED, the recording cannot be read ({record['unreadable']})"
+            )
+            return
+        graded["count"] += 1
+        family = record["labels"].get("failure_family", "unknown")
+        counts[family] += 1
+        log(
+            f"task {task_id} seed {seed}: {family}"
+            + (
+                ""
+                if record["reproduced"]
+                else f" (NOT reproduced: joints differ by {record['max_joint_difference_rad']:.4f} rad)"
+            )
+        )
+
+    def broke(job: tuple[Any, ...], error: BaseException) -> None:
+        failed.append(f"task {job[0]} seed {job[1]}")
+        log(
+            f"task {job[0]} seed {job[1]}: FAILED ({type(error).__name__}: {error}); rerun to retry"
+        )
+
+    parallel.run_jobs(
+        grade_job, jobs, workers=workers, on_result=done, on_error=broke, cleanup=close_grader
+    )
     experiment.log(
         "teacher_graded",
         scene_set=scene_set,
-        tasks=list(tasks),
-        graded=graded,
+        tasks=tasks,
+        graded=graded["count"],
         families=dict(counts),
         unreadable=unreadable,
+        failed=failed,
+        workers=workers,
     )
     results(experiment, scene_set, write=True)
-    return {"graded": graded, "families": dict(counts), "unreadable": unreadable}
+    return {
+        "graded": graded["count"],
+        "families": dict(counts),
+        "unreadable": unreadable,
+        "failed": failed,
+    }

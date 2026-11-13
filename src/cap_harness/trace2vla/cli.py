@@ -375,12 +375,29 @@ def cmd_teacher_grade(args: argparse.Namespace) -> int:
     from cap_harness.trace2vla import teacher
 
     experiment = Experiment.open(args.name)
-    summary = teacher.grade_scene_set(experiment, args.scenes, _tasks(experiment, args.tasks))
-    print(f"graded {summary['graded']} new episodes; families: {summary['families']}")
-    if summary["unreadable"]:
-        print(f"could not read, not graded: {', '.join(summary['unreadable'])}")
-    print(_teacher_table(teacher.results(experiment, args.scenes)))
-    return 1 if summary["unreadable"] else 0
+    code = 0
+    for scenes in _scene_list(experiment, args.scenes):
+        summary = teacher.grade_scene_set(
+            experiment, scenes, _tasks(experiment, args.tasks), workers=args.workers
+        )
+        print(
+            f"'{scenes}': graded {summary['graded']} new episodes; families: {summary['families']}"
+        )
+        if summary["unreadable"]:
+            print(f"could not read, not graded: {', '.join(summary['unreadable'])}")
+        if summary["failed"]:
+            print(f"failed (rerun to retry): {', '.join(summary['failed'])}")
+        print(_teacher_table(teacher.results(experiment, scenes)))
+        code = code or (1 if summary["unreadable"] or summary["failed"] else 0)
+    return code
+
+
+def _scene_list(experiment: Experiment, text: str) -> list[str]:
+    """Scene set names from "a,b,c", each checked to exist."""
+    names = [n.strip() for n in str(text).split(",") if n.strip()]
+    for name in names:
+        scene_set(experiment.settings, name)  # raises KeyError for an unknown one
+    return names
 
 
 # ------------------------------------------------------------------ convert and dataset --
@@ -392,9 +409,30 @@ def cmd_convert(args: argparse.Namespace) -> int:
     settings = convert.ConvertSettings(
         track=replay.TrackSettings(speed=args.speed), drop_idle=not args.keep_idle
     )
-    name = args.demos or f"{args.scenes}-{args.speed:g}x"
+    sets = _scene_list(experiment, args.scenes)
+    if args.demos and len(sets) > 1:
+        print(
+            "error: --demos names one demo set; leave it out with several --scenes", file=sys.stderr
+        )
+        return 2
+    code = 0
+    for scenes in sets:
+        code = (
+            _convert_one(
+                experiment, scenes, args.demos or f"{scenes}-{args.speed:g}x", settings, args
+            )
+            or code
+        )
+    return code
+
+
+def _convert_one(
+    experiment: Experiment, scenes: str, name: str, settings: Any, args: argparse.Namespace
+) -> int:
+    from cap_harness.trace2vla import convert
+
     summary = convert.convert_scene_set(
-        experiment, args.scenes, name, _tasks(experiment, args.tasks), settings
+        experiment, scenes, name, _tasks(experiment, args.tasks), settings, workers=args.workers
     )
     print(f"demo set '{name}': {summary['accepted']} kept, {summary['rejected']} rejected")
     for t in summary["tasks"]:
@@ -412,7 +450,16 @@ def cmd_convert(args: argparse.Namespace) -> int:
                 else ""
             )
         )
-    return 0 if summary["accepted"] else 1
+    if summary["failed"]:
+        print(f"  failed (rerun to retry): {', '.join(summary['failed'])}")
+    return 0 if summary["accepted"] and not summary["failed"] else 1
+
+
+def cmd_prepare(args: argparse.Namespace) -> int:
+    """Grade, then convert, every listed scene set: the teacher episodes become demo sets."""
+    grade = cmd_teacher_grade(args)
+    converted = cmd_convert(args)
+    return grade or converted
 
 
 def statistics_checkpoint(student: students.Student) -> Path:
@@ -457,27 +504,36 @@ def cmd_dataset(args: argparse.Namespace) -> int:
         if args.demos is None:
             print("error: --demos is required (or --from-dataset NAME)", file=sys.stderr)
             return 2
-        demos = dataset.demo_dirs(
-            experiment.demo_dir(args.demos), _tasks(experiment, args.tasks), args.per_task
-        )
-        if not demos:
-            print(
-                f"error: demo set '{args.demos}' has no accepted demos for these tasks (t2v.sh convert)",
-                file=sys.stderr,
+        # Several demo sets (one per layout) make one dataset; --per-task applies to each.
+        sets = [n.strip() for n in str(args.demos).split(",") if n.strip()]
+        demos: list[Path] = []
+        for demo_set in sets:
+            found = dataset.demo_dirs(
+                experiment.demo_dir(demo_set), _tasks(experiment, args.tasks), args.per_task
             )
-            return 1
+            if not found:
+                print(
+                    f"error: demo set '{demo_set}' has no accepted demos for these tasks (t2v.sh convert)",
+                    file=sys.stderr,
+                )
+                return 1
+            demos += found
         print(
-            f"building dataset '{args.dataset}' for {student.label} from {len(demos)} demos (statistics from {student.checkpoint})"
+            f"building dataset '{args.dataset}' for {student.label} from {len(demos)} demos of "
+            f"{', '.join(sets)} (statistics from {student.checkpoint})"
         )
-        manifest = dataset.build_dataset(
+        manifest = dataset.build_dataset_parallel(
             demos,
             experiment.dataset_dir(args.dataset),
             name=args.dataset,
             checkpoint=statistics_checkpoint(student),
             student=student.key,
+            workers=args.workers,
         )
+        manifest["demo_sets"] = sets
+        write_json(experiment.dataset_dir(args.dataset) / "manifest.json", manifest)
         experiment.log(
-            "dataset_built", name=args.dataset, demos=args.demos, student=student.key,
+            "dataset_built", name=args.dataset, demos=sets, student=student.key, workers=args.workers,
             episodes=len(manifest["episodes"]), frames=manifest["frames"], per_task=manifest["per_task"],
             rejected=len(manifest["rejected"]),
         )  # fmt: skip
@@ -1093,13 +1149,26 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-videos", action="store_true")
     c.add_argument("--force", action="store_true", help="run even when model services look down")
 
+    workers_help = "episodes at once, each worker with its own simulator (default 1; about one per free CPU core)"
     c = add("teacher-grade", cmd_teacher_grade)
-    c.add_argument("--scenes", required=True)
+    c.add_argument("--scenes", required=True, help="a scene set, or several: a,b,c")
     c.add_argument("--tasks")
+    c.add_argument("--workers", type=int, default=1, help=workers_help)
+
+    c = add("prepare", cmd_prepare)
+    c.add_argument("--scenes", required=True, help="a scene set, or several: a,b,c")
+    c.add_argument("--speed", type=float, default=3.0, help="speed-up over the teacher (default 3)")
+    c.add_argument(
+        "--keep-idle", action="store_true", help="keep frames where the robot stands still"
+    )
+    c.add_argument("--tasks")
+    c.add_argument("--workers", type=int, default=1, help=workers_help)
+    c.set_defaults(demos=None)
 
     c = add("convert", cmd_convert)
-    c.add_argument("--scenes", required=True)
+    c.add_argument("--scenes", required=True, help="a scene set, or several: a,b,c")
     c.add_argument("--demos", help="name of the demo set (default <scenes>-<speed>x)")
+    c.add_argument("--workers", type=int, default=1, help=workers_help)
     c.add_argument("--speed", type=float, default=3.0, help="speed-up over the teacher (default 3)")
     c.add_argument(
         "--keep-idle", action="store_true", help="keep frames where the robot stands still"
@@ -1119,7 +1188,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--from-dataset",
         help="copy this dataset's frames instead of rendering the demos again (with --student)",
     )
-    c.add_argument("--per-task", type=int, help="at most this many demos per task")
+    c.add_argument(
+        "--per-task", type=int, help="at most this many demos per task, from each demo set"
+    )
+    c.add_argument(
+        "--workers", type=int, default=1, help="build in this many parts at once, then merge"
+    )
     c.add_argument("--tasks")
 
     c = add("train", cmd_train)

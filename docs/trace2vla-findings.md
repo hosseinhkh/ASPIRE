@@ -372,6 +372,15 @@ Checked: in `alt1` task 0 the soup stands where the salad dressing stands in the
 layout (within 1 mm), 22 cm from its own place, and the instruction is word for word the
 official one. See [trace2vla-full-run.md](trace2vla-full-run.md).
 
+### P9. A re-execution that runs into the simulator's limit stopped the conversion (13 November, fixed)
+
+The converter's tracking loop allowed 1,500 steps; the simulator ends its episode at 1,000 and
+then raises `executing action in terminated episode` on the next step. A teacher episode whose
+re-execution had not succeeded by then stopped the whole `convert` command (seen with a recorded
+episode replayed from another seed's starting state). The loop now stops there and the demo is
+rejected as `re-execution_failed`, like any other failed re-execution. Conversion and grading also
+report a failing episode and go on with the others (`--workers`, P9's test run).
+
 ### P4. Facts that shaped the design
 
 From [trace2vla-review.md](trace2vla-review.md):
