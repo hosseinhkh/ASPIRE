@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import json
@@ -168,6 +169,45 @@ class Experiment:
 
     def eval_dir(self, name: str) -> Path:
         return self.root / "evals" / name
+
+    # -------------------------------------------------------------------------- locks --
+    @contextmanager
+    def hold(self, keys: Iterable[str], what: str) -> Iterator[None]:
+        """Claim each key for this process until the block ends, or raise Busy naming the
+        process that holds one. A claim is an flock on ``locks/<key>.lock``: it ends with the
+        process however that ends (Ctrl-C, kill, crash), so a claim is never left behind.
+        """
+        import fcntl
+
+        folder = self.root / "locks"
+        folder.mkdir(parents=True, exist_ok=True)
+        held: list[Any] = []
+        try:
+            for key in keys:
+                path = folder / f"{key}.lock"
+                stream = path.open("a+", encoding="utf-8")
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    stream.seek(0)
+                    holder = stream.read().strip() or "another process"
+                    stream.close()
+                    raise Busy(f"{key} is in use by {holder}; wait for it or stop it") from None
+                stream.seek(0)
+                stream.truncate()
+                stream.write(
+                    f"{what} (pid {os.getpid()} on {socket.gethostname()}, since {now_iso()})"
+                )
+                stream.flush()
+                held.append(stream)
+            yield
+        finally:
+            for stream in held:
+                stream.close()  # closing the file ends the flock
+
+
+class Busy(RuntimeError):
+    """Another process is working on the same scene set, demo set or task right now."""
 
 
 def is_probe(name: str, meta: Mapping[str, Any]) -> bool:

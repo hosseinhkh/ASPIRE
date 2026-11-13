@@ -84,3 +84,22 @@ def scene_set(settings: dict[str, Any], name: str) -> SceneSet:
     if name not in sets:
         raise KeyError(f"unknown scene set {name!r}; known: {', '.join(sorted(sets))}")
     return sets[name]
+
+
+def shared_scenes(
+    new: SceneSet, others: dict[str, SceneSet], default_suite: str
+) -> list[tuple[SceneSet, list[int]]]:
+    """The other scene sets that contain some of the same scenes (same suite, init mode and
+    seed), with the seeds they share.
+    """
+    suite = new.suite_or(default_suite)
+    found = []
+    for other in others.values():
+        if other.name == new.name or other.init_mode != new.init_mode:
+            continue
+        if other.suite_or(default_suite) != suite:
+            continue
+        common = sorted(set(new.seeds) & set(other.seeds))
+        if common:
+            found.append((other, common))
+    return found

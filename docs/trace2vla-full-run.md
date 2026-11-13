@@ -74,6 +74,12 @@ Anchors that show the setup is right (each base model on the standard suites):
 | — | Probes, curves, step 0, checkpoint evaluation by step | Built (`eval-steps`, dashboard Training tab) |
 | — | Checkpoints filling the home disk | Built: `t2v.sh checkpoints --set-root /data/...` and `--move` |
 | — | π0.5 loading warnings (`embed_tokens`) | Checked harmless |
+| C1 | Two commands could work on the same data at once (two `teacher-run` on one scene set and task record the same seeds twice; two conversions into one demo set write the same files) | **Fixed 13 November:** each `teacher-run`, `teacher-grade` and `convert` claims its (scene set or demo set, task) and a second one is refused with the holder's command and pid. The claim ends with its process however it ends, so nothing is left to clean up. Checked live |
+| C2 | A train scene set could share scenes with a test or dev set (same suite, init mode and seed) | **Fixed:** `scenes --add` refuses it; the same scenes in two training sets get a warning |
+| C3 | A second scene set converted into an existing demo set (`--demos`) was taken for the first one's seeds | **Fixed:** a demo set records its scene set (`source.json`; older ones are recognised by their episodes) and refuses another. Checked live |
+| C4 | `teacher-run` over ten tasks stopped at the first task without a program, after hours of the others | **Fixed:** every task is checked before anything runs |
+| C5 | Nothing checked the disk before thousands of teacher episodes | **Fixed:** `teacher-run` refuses when the episodes (about 10 MB each with videos, counted generously) plus 10 GB do not fit; `--no-videos` or `--force` |
+| C6 | One scene set per `teacher-run` command | **Built:** `--scenes a,b,c` runs them one after another in one (detachable) command |
 
 ## 3. Built for the full run (13 November): sibling layouts
 
@@ -111,7 +117,7 @@ Which partner each layout uses, per task: `configs/libero_layouts/manifest.json`
 
 | Stage | Parallel how | Limit |
 |---|---|---|
-| `teacher-run` | `--workers N` runs N seeds at once; one scene set per command, run several commands for several scene sets | The model services (SAM3 one request at a time): 2–3 workers |
+| `teacher-run` | `--workers N` runs N seeds at once; `--scenes a,b,c` runs several scene sets one after another in one command | The model services (SAM3 one request at a time): 2–3 workers, and one `teacher-run` at a time |
 | `teacher-grade`, `convert` | `--workers N`: N episodes at once, each worker with its own simulator; `--scenes a,b,c` for several scene sets in one command | CPU cores: about one worker per free core |
 | `prepare` | `teacher-grade` then `convert`, for every listed scene set, one command | as above |
 | `dataset` | `--workers N`: N parts built at once, then merged; `--demos a,b,c` combines layouts | CPU cores and memory; the AV1 encoder uses several threads per part, so fewer workers than cores |
@@ -121,6 +127,14 @@ What does not wait for what: a scene set's episodes can be graded and converted 
 model services). Rerunning `prepare` later adds only what is new. A dataset is a fixed snapshot of
 the demos converted at the time it is built: build the main experiment's dataset once all ten
 tasks' layouts are converted (or build early ones under other names).
+
+What is safe at once, and what is refused: grading and converting a scene set while
+`teacher-run` is still recording it is safe (only finished, finalized episodes are read; rerun
+`prepare` afterwards for the rest). A second `teacher-run` on the same scene set and task, a second
+`teacher-grade` of the same scene set and task, and a second conversion into the same demo set and
+task are refused while the first runs (C1). Every stage can be stopped (`t2v.sh stop NAME STAGE` or
+Ctrl-C) and resumed by running the same command: an interrupted teacher episode is recorded again,
+an unfinished grade or demo is made again (its `seed_N.json` or `episode.json` is written last).
 
 Checked for real on CPU: three workers graded three teacher episodes at once; parallel and
 one-process conversion gave the same results; a demo whose re-execution ran into the simulator's
@@ -163,17 +177,45 @@ Experiments, in order of what a reviewer needs:
 4. **Replay (S2):** the main setting plus original LIBERO-Object data.
 5. Three training seeds for the settings that go into tables.
 
-## 7. Order from here
+## 7. Collecting the object suite (`object-full`)
 
-1. **Now, no new code needed** (programs exist for tasks 0 and 1). Pull, then measure how the
-   teacher and the current students do on the new layouts, 10 scenes each:
+Decided 13 November: every layout (the official partner's, `train`, and `alt1`–`alt4`), 50
+seeded scenes each for training and 10 for development; which demo sets go into a dataset is
+chosen when the dataset is built. Each step resumes where it stopped when run again.
+
+1. Teacher programs for tasks 2–9 (the only step that uses the LLM; about \$40–60):
    ```bash
-   scripts/gpu/t2v.sh scenes preflight2 --add alt1-dev --suite libero_object_swap_alt1 --seeds 2001-2010 --role dev
+   scripts/gpu/session.sh run --tasks quick --no-preflight --llm libero-pro:libero_object_swap:2 --llm libero-pro:libero_object_swap:3 --llm libero-pro:libero_object_swap:4 --llm libero-pro:libero_object_swap:5 --llm libero-pro:libero_object_swap:6 --llm libero-pro:libero_object_swap:7 --llm libero-pro:libero_object_swap:8 --llm libero-pro:libero_object_swap:9 --llm-budget 25 --llm-total-budget 200 --reserve 30
    ```
-   (the same for `alt2-dev`, `alt3-dev`, `alt4-dev`), then `teacher-run --scenes alt1-dev` with
-   the services up, and `eval --scenes alt1-dev` for `base`, `ft-full` and π0.5. Expected: the
-   teacher succeeds (it finds objects by name); `ft-full` fails (it learned positions). That is
-   the paper's argument on two tasks, before any new collection.
-2. **In parallel:** teacher programs for tasks 2–9 (`session.sh`, the LLM step).
-3. While those run: replay mixing, parallel dataset building and evaluation (section 4).
-4. Then the full experiment `full1` with ten tasks and the scene sets of section 6.
+2. The experiment, its programs (tasks 0 and 1 from `preflight2`), and the scene sets
+   (`train` and `dev` exist by default):
+   ```bash
+   scripts/gpu/t2v.sh init object-full --suite libero_object_swap --tasks 0-9
+   scripts/gpu/t2v.sh teacher-add object-full --from outputs/trace2vla/preflight2/teacher/programs
+   scripts/gpu/t2v.sh teacher-add object-full --from outputs/sessions/<the session of step 1>
+   for k in 1 2 3 4; do scripts/gpu/t2v.sh scenes object-full --add alt$k-train --suite libero_object_swap_alt$k --seeds 1001-1050 --role train; scripts/gpu/t2v.sh scenes object-full --add alt$k-dev --suite libero_object_swap_alt$k --seeds 2001-2010 --role dev; done
+   ```
+3. Pilot, before the big run: the development scenes of every layout for the tasks that have
+   programs (about an hour for two tasks). It shows whether each program also works where the
+   target has moved:
+   ```bash
+   scripts/gpu/t2v.sh teacher-run --detach object-full --scenes dev,alt1-dev,alt2-dev,alt3-dev,alt4-dev --tasks 0,1 --workers 2
+   ```
+4. The training scenes, one command for every layout (about 2,500 episodes: roughly 12–15 hours
+   on two workers once all ten programs exist). Tasks can be added later: a rerun records only
+   what is missing.
+   ```bash
+   scripts/gpu/t2v.sh teacher-run --detach object-full --scenes alt1-train,alt2-train,alt3-train,alt4-train,train --workers 2
+   ```
+5. As each scene set finishes (or while it runs; rerun afterwards for the rest): grade and
+   convert, on several CPU cores:
+   ```bash
+   scripts/gpu/t2v.sh prepare --detach object-full --scenes alt1-train,alt2-train --workers 8
+   ```
+6. The datasets, once the demo sets they use are complete. The main experiment holds out a
+   position: train on `alt1`–`alt3`, and keep `alt4` (its dev scenes), the official swap and the
+   standard layout for testing. Seeded scenes of one layout barely differ (P8), so a layout used
+   for training is no longer a held-out position:
+   ```bash
+   scripts/gpu/t2v.sh dataset object-full --demos alt1-train-3x,alt2-train-3x,alt3-train-3x --name main-50 --per-task 50 --workers 4
+   ```

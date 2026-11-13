@@ -192,6 +192,33 @@ def episodes_of(experiment: Experiment, scene_set: str, task_id: int) -> dict[in
     return by_seed
 
 
+def missing_seeds(experiment: Experiment, scenes: SceneSet, task_id: int) -> list[int]:
+    """The scene set's seeds that have no counted teacher episode yet: what teacher-run runs."""
+    done = episodes_of(experiment, scenes.name, task_id)
+    return [seed for seed in scenes.seeds if seed not in done]
+
+
+#: Disk per teacher episode (run folder with its trace and keyframes; videos at 800x512), with
+#: room to spare: measured runs are about 6 MB with videos.
+EPISODE_BYTES = {True: 10 * 2**20, False: 3 * 2**20}
+#: Kept free on top of what the episodes need (demos and datasets are made from them later).
+DISK_MARGIN = 10 * 2**30
+
+
+def disk_shortfall(experiment: Experiment, episodes: int, *, videos: bool) -> str | None:
+    """None when the disk has room for this many teacher episodes, else why not."""
+    need = episodes * EPISODE_BYTES[videos] + DISK_MARGIN
+    free = shutil.disk_usage(experiment.root).free
+    if free >= need:
+        return None
+    return (
+        f"{episodes} teacher episodes need about {episodes * EPISODE_BYTES[videos] / 2**30:.1f} GB "
+        f"(+{DISK_MARGIN / 2**30:.0f} GB kept free), and only {free / 2**30:.1f} GB is free at "
+        f"{experiment.root}. Free some space"
+        + (", or pass --no-videos (about 3x smaller)" if videos else "")
+    )
+
+
 def set_aside(experiment: Experiment, scene_set: str, task_id: int) -> dict[str, list[int]]:
     """Seeds whose only runs are not counted, by reason."""
     counted = episodes_of(experiment, scene_set, task_id)
@@ -286,17 +313,46 @@ def run_scene_set(
     videos: bool = True,
     log: Any = print,
 ) -> dict[str, Any]:
-    """Run each task's program on the scene set's seeds that have no finished episode yet."""
-    cap_harness = cap_harness or REPOSITORY_ROOT / ".venv-libero" / "bin" / "cap-harness"
+    """Run each task's program on the scene set's seeds that have no finished episode yet.
+
+    Every task is checked to have a program, and claimed for this process, before any runs:
+    a second teacher-run on the same scene set and task is refused (store.Busy) instead of
+    recording the same seeds twice.
+    """
+    tasks = list(tasks)
     registered = programs(experiment)
+    without = [task_id for task_id in tasks if task_id not in registered]
+    if without:
+        raise FileNotFoundError(
+            f"no registered program for task(s) {compact(without)} (t2v.sh teacher-add); "
+            f"pass --tasks with the others to run those now"
+        )
+    keys = [f"teacher-{scenes.name}-task{task_id:02d}" for task_id in tasks]
+    with experiment.hold(keys, f"teacher-run on '{scenes.name}'"):
+        return _run_scene_set(
+            experiment, scenes, tasks, registered, workers=workers, max_steps=max_steps,
+            cap_harness=cap_harness, camera=camera, videos=videos, log=log,
+        )  # fmt: skip
+
+
+def _run_scene_set(
+    experiment: Experiment,
+    scenes: SceneSet,
+    tasks: list[int],
+    registered: dict[int, Any],
+    *,
+    workers: int,
+    max_steps: int,
+    cap_harness: Path | None,
+    camera: tuple[int, int],
+    videos: bool,
+    log: Any,
+) -> dict[str, Any]:
+    cap_harness = cap_harness or REPOSITORY_ROOT / ".venv-libero" / "bin" / "cap-harness"
     summary: dict[str, Any] = {"scene_set": scenes.name, "tasks": {}}
     for task_id in tasks:
-        if task_id not in registered:
-            raise FileNotFoundError(
-                f"task {task_id} has no registered program (t2v.sh teacher-add)"
-            )
         done = episodes_of(experiment, scenes.name, task_id)
-        missing = [seed for seed in scenes.seeds if seed not in done]
+        missing = missing_seeds(experiment, scenes, task_id)
         out = experiment.teacher_dir(scenes.name, task_id)
         if not missing:
             log(f"task {task_id}: all {len(scenes.seeds)} scenes of '{scenes.name}' already run")
@@ -568,9 +624,11 @@ def grade_scene_set(
             f"task {job[0]} seed {job[1]}: FAILED ({type(error).__name__}: {error}); rerun to retry"
         )
 
-    parallel.run_jobs(
-        grade_job, jobs, workers=workers, on_result=done, on_error=broke, cleanup=close_grader
-    )
+    keys = [f"grade-{scene_set}-task{task_id:02d}" for task_id in tasks]
+    with experiment.hold(keys, f"teacher-grade of '{scene_set}'"):
+        parallel.run_jobs(
+            grade_job, jobs, workers=workers, on_result=done, on_error=broke, cleanup=close_grader
+        )
     experiment.log(
         "teacher_graded",
         scene_set=scene_set,

@@ -33,7 +33,14 @@ from typing import Any
 
 import numpy as np
 
-from cap_harness.trace2vla.scenes import DEFAULT_SCENE_SETS, compact, scene_set, scene_sets
+from cap_harness.trace2vla.scenes import (
+    DEFAULT_SCENE_SETS,
+    SceneSet,
+    compact,
+    scene_set,
+    scene_sets,
+    shared_scenes,
+)
 from cap_harness.trace2vla.store import OUTPUTS, Experiment, read_json, write_json
 from cap_harness.vla import students
 from cap_harness.vla.libero_compat import ensure_runtime_env
@@ -327,15 +334,22 @@ def cmd_teacher_run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    scenes = scene_set(experiment.settings, args.scenes)
-    teacher.run_scene_set(
-        experiment,
-        scenes,
-        _tasks(experiment, args.tasks),
-        workers=args.workers,
-        videos=not args.no_videos,
-    )
-    print(_teacher_table(teacher.results(experiment, args.scenes)))
+    sets = [scene_set(experiment.settings, name) for name in _scene_list(experiment, args.scenes)]
+    tasks = _tasks(experiment, args.tasks)
+    episodes = sum(len(teacher.missing_seeds(experiment, s, t)) for s in sets for t in tasks)
+    short = teacher.disk_shortfall(experiment, episodes, videos=not args.no_videos)
+    if short and not args.force:
+        print(f"error: {short} (or pass --force)", file=sys.stderr)
+        return 1
+    if len(sets) > 1:
+        print(
+            f"{episodes} teacher episodes to record over {len(sets)} scene sets, one after another"
+        )
+    for scenes in sets:
+        teacher.run_scene_set(
+            experiment, scenes, tasks, workers=args.workers, videos=not args.no_videos
+        )
+        print(_teacher_table(teacher.results(experiment, scenes.name)))
     return 0
 
 
@@ -933,6 +947,24 @@ def cmd_scenes(args: argparse.Namespace) -> int:
                 "role": args.role}  # fmt: skip
         if args.suite:
             spec["suite"] = args.suite
+        new = SceneSet(args.add, args.init_mode, tuple(parse_int_list(args.seeds)), args.role,
+                       args.suite)  # fmt: skip
+        for other, common in shared_scenes(new, scene_sets(experiment.settings), experiment.suite):
+            where = (
+                f"seeds {compact(common)} of {new.suite_or(experiment.suite)} ({args.init_mode})"
+            )
+            if other.role != args.role:
+                # A scene in both a training set and a test or dev set would leak into the score.
+                print(
+                    f"error: '{args.add}' ({args.role}) and '{other.name}' ({other.role}) share "
+                    f"{where}; choose other seeds",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                f"warning: '{other.name}' has the same scenes ({where}); a dataset from both "
+                "would hold them twice"
+            )
         experiment.settings.setdefault("scene_sets", {})[args.add] = spec
         experiment.save_settings()
         experiment.log("scene_set_added", scene_set=args.add, **spec)
@@ -1143,11 +1175,16 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--only-successes", action="store_true")
 
     c = add("teacher-run", cmd_teacher_run)
-    c.add_argument("--scenes", required=True)
+    c.add_argument(
+        "--scenes", required=True, help="a scene set, or several run one after another: a,b,c"
+    )
     c.add_argument("--tasks")
     c.add_argument("--workers", type=int, default=2)
     c.add_argument("--no-videos", action="store_true")
-    c.add_argument("--force", action="store_true", help="run even when model services look down")
+    c.add_argument(
+        "--force", action="store_true",
+        help="run even when model services look down or the disk looks too full",
+    )  # fmt: skip
 
     workers_help = "episodes at once, each worker with its own simulator (default 1; about one per free CPU core)"
     c = add("teacher-grade", cmd_teacher_grade)

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import atexit
 from dataclasses import dataclass, field
+import itertools
 from pathlib import Path
 import time
 from typing import Any
@@ -246,10 +247,10 @@ def convert_scene_set(
     """Convert every successful teacher episode of a scene set; skip the ones already done.
 
     ``workers`` > 1 converts that many episodes at once, each worker with its own simulator.
+    A second conversion into the same demo set and task, while this one runs, is refused
+    (store.Busy).
     """
-    from cap_harness.trace2vla import parallel
     from cap_harness.trace2vla.store import read_json
-    from cap_harness.trace2vla.teacher import episodes_of
 
     settings = settings or ConvertSettings()
     root = experiment.demo_dir(name)
@@ -257,7 +258,50 @@ def convert_scene_set(
     stored = read_json(root / "settings.json")
     if stored and stored != settings.to_dict():
         raise ValueError(f"demo set {name!r} was made with other settings; choose another --name")
-    write_json(root / "settings.json", settings.to_dict())
+    keys = [f"demos-{name}-task{task_id:02d}" for task_id in tasks]
+    with experiment.hold(keys, f"convert of '{scene_set}' into '{name}'"):
+        claim_demo_set(root, scene_set)
+        write_json(root / "settings.json", settings.to_dict())
+        return _convert_scene_set(experiment, scene_set, name, root, tasks, settings, workers, log)
+
+
+def claim_demo_set(root: Path, scene_set: str) -> None:
+    """A demo set holds the episodes of one scene set: its folders are named by task and seed
+    only, so a second scene set's seed 1001 would be taken for the first one's. Refuse that.
+    """
+    from cap_harness.trace2vla.store import read_json
+
+    source = root / "source.json"
+    owner = (read_json(source) or {}).get("scene_set")
+    if owner is None:  # made before source.json existed: the episodes say where they came from
+        made = itertools.chain(
+            root.glob("task_*/seed_*/episode.json"), root.glob("task_*/seed_*.rejected.json")
+        )
+        owner = next(
+            (found for p in made if (found := (read_json(p) or {}).get("scene_set"))), None
+        )
+    if owner is not None and owner != scene_set:
+        raise ValueError(
+            f"demo set {root.name!r} holds the episodes of scene set {owner!r}; convert "
+            f"'{scene_set}' into another demo set (--demos NAME, or leave --demos out)"
+        )
+    write_json(source, {"scene_set": scene_set})
+
+
+def _convert_scene_set(
+    experiment: Any,
+    scene_set: str,
+    name: str,
+    root: Path,
+    tasks: list[int],
+    settings: ConvertSettings,
+    workers: int,
+    log: Any,
+) -> dict[str, Any]:
+    from cap_harness.trace2vla import parallel
+    from cap_harness.trace2vla.store import read_json
+    from cap_harness.trace2vla.teacher import episodes_of
+
     jobs: list[tuple[Any, ...]] = []
     stale: list[tuple[int, int]] = []  # demos made from a teacher episode that was replaced
     for task_id in tasks:
