@@ -31,7 +31,7 @@ it out means SmolVLA, exactly as before π0.5 support.
 | Cameras | LIBERO's two cameras renamed to `camera1` / `camera2` | LIBERO's names, no renaming |
 | Inputs and actions | two 256×256 images, 8-number state, instruction → 7-number hand movement | the same |
 | Actions per prediction | 10 | 10 |
-| Normalisation statistics of a training dataset | SmolVLA checkpoint's | π0.5 checkpoint's (mean and standard deviation) |
+| Normalisation statistics of a training dataset | SmolVLA checkpoint's | π0.5 checkpoint's (mean and standard deviation). For these two checkpoints they are identical to the last bit (checked 13 November): both were fine-tuned on the same LIBERO data. The copy still records the student, and keeps another π0.5 checkpoint right |
 | Training methods (learning rate) | `full` (5e-5), `lora` (1e-4), `lora-vlm` (1e-4) | `full` (2.5e-5, the checkpoint's own), `lora` (1e-4). `lora-vlm` is refused: its module names are not checked for π0.5 yet |
 | Evaluation settings | the checkpoint's | `torch.compile` off (the checkpoint asks for it: minutes of compiling per process) |
 | Standard LIBERO reference (spatial / object / goal / 10) | 90 / 96 / 92 / 71 (SmolVLA paper) | 97 / 99 / 98 / 96 (LeRobot docs) |
