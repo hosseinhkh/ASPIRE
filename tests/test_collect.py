@@ -389,3 +389,39 @@ def test_converting_when_the_teacher_solved_nothing_is_not_an_error(
         lambda *a, **k: {"accepted": 0, "rejected": 2, "tasks": [], "failed": []},
     )  # fmt: skip
     assert cli.main(["convert", root, "--scenes", "a-train"]) == 1  # every demo rejected
+
+
+def test_the_dashboard_finds_the_coding_agents_through_the_experiments_logs(tmp_path) -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "gpu"))
+    from dashboard_store import Store
+    from dashboard_t2v import T2vStore
+
+    outputs = tmp_path / "outputs"
+    exp = Experiment.create(outputs / "trace2vla" / "agents", {"suite": SUITE, "tasks": [0, 1]})
+    session = outputs / "sessions" / "20261113-213028-agent-task0"
+    workspace = agent(session, 0, finished=False, program=False, heldout=None)
+    (workspace / "transcript.jsonl").write_text("{}\n")
+    write_json(workspace / "dev_v01" / "batch.json", {
+        "passes": 3, "seeds": 6,
+        "layouts": {SUITE: {"passes": 3, "seeds": 3}, f"{SUITE}_alt1": {"passes": 0, "seeds": 3}},
+    })  # fmt: skip
+    (workspace / "dev_v02").mkdir()  # its batch is running
+    (exp.root / "logs").mkdir()
+    (exp.root / "logs" / "20261113-213017-object_collection-agent-test-task0.log").write_text(
+        f"this step's log: ...\nsession: {session}\ntasks: quick\n"
+    )
+    t2v = T2vStore(Store(outputs))
+    (found,) = t2v.experiment(exp.root)["agents"]
+    assert (found["task"], found["state"], found["program"]) == (0, "working", False)
+    assert found["versions"][0]["layouts"][f"{SUITE}_alt1"] == {
+        "passes": 0,
+        "seeds": 3,
+        "error": None,
+    }
+    assert found["versions"][1] == {"name": "dev_v02", "running": True}
+    assert found["transcript"].endswith("transcript.jsonl")
+    assert found["session"] == "sessions/20261113-213028-agent-task0"
+    (listed,) = [e for e in t2v.experiments()["items"] if e["name"] == "agents"]
+    assert listed["agents_working"] == [0]
+    write_json(workspace / "result.json", {"subtype": "success", "total_cost_usd": 7.5})
+    assert t2v.experiment(exp.root)["agents"][0]["state"] == "finished"

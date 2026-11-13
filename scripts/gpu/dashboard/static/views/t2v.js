@@ -67,8 +67,9 @@ export async function renderList(app) {
           <td>${e.teacher_official ? rate(e.teacher_official.successes, e.teacher_official.episodes) : '<span class="muted">not run</span>'}</td>
           <td class="small">${(() => {
             const c = e.collection || {}, tot = c.totals || {};
-            if (!tot.planned && !c.status) return '<span class="muted">-</span>';
-            return `${rate(tot.recorded || 0, tot.planned || 0)}<div class="muted">${tot.kept || 0} demos kept · programs ${c.programs ?? 0}/${(e.tasks || []).length}</div>${c.status ? `<div>collect ${statusBadge(c.status)} <span class="muted">${esc(["running", "waiting"].includes(c.status) ? collectNow(c) : "")}</span></div>` : ""}`;
+            const working = (e.agents_working || []).length ? `<div>coding agent at work: task ${esc(e.agents_working.join(", "))} <span class="badge warn">●</span></div>` : "";
+            if (!tot.planned && !c.status) return working || '<span class="muted">-</span>';
+            return `${rate(tot.recorded || 0, tot.planned || 0)}<div class="muted">${tot.kept || 0} demos kept · programs ${c.programs ?? 0}/${(e.tasks || []).length}</div>${c.status ? `<div>collect ${statusBadge(c.status)} <span class="muted">${esc(["running", "waiting"].includes(c.status) ? collectNow(c) : "")}</span></div>` : ""}${working}`;
           })()}</td>
           <td>${esc(e.demos)}</td><td>${esc(e.datasets)}</td>
           <td class="small">${e.training.map((t) => `${esc(t.name)} <span class="muted">${esc(t.student_label || "")}</span> ${statusBadge(t.status)}`).join("<br>")}</td>
@@ -112,10 +113,16 @@ export async function renderExperiment(app, params, ctx) {
   const demos = d.demos.reduce((n, s) => n + (s.accepted || 0), 0);
   const pipe = d.pipeline || { collect: {}, scene_sets: [], programs: {}, tasks: [], totals: {}, background: [], claims: [] };
   const collecting = ["running", "waiting", "starting"].includes((pipe.collect || {}).status);
-  const running = collecting || pipe.background.length > 0 || d.training.some((t) => t.progress.status === "running") || d.evals.some((e) => e.progress.status === "running");
-  if (!expTab) expTab = (pipe.collect || {}).status || pipe.scene_sets.some((s) => s.in_collection) ? "Pipeline" : "Compare";
+  const agents = d.agents || [];
+  const agentsWorking = agents.filter((a) => a.state === "working");
+  const running = collecting || agentsWorking.length > 0 || pipe.background.length > 0 || d.training.some((t) => t.progress.status === "running") || d.evals.some((e) => e.progress.status === "running");
+  if (!expTab) expTab = (pipe.collect || {}).status || agents.length || pipe.scene_sets.some((s) => s.in_collection) ? "Pipeline" : "Compare";
   const nowLines = [
     ...(collecting ? [`collect: ${esc(collectNow(pipe.collect))}`] : []),
+    ...agentsWorking.map((a) => {
+      const last = a.versions[a.versions.length - 1];
+      return `coding agent, task ${esc(a.task)}: ${last ? `${esc(last.name)} ${last.running ? "running" : `${last.passes}/${last.seeds}`}` : "exploring the scene"}`;
+    }),
     ...d.training.filter((t) => t.progress.status === "running").map((t) => `train ${esc(t.name)}: step ${t.progress.step ?? 0}/${t.progress.steps ?? "?"}${t.progress.eta_s ? `, ${minutes(t.progress.eta_s)} left` : ""}`),
     ...d.evals.filter((e) => e.progress.status === "running").map((e) => `eval ${esc(e.name)}: ${e.progress.done ?? 0}/${e.progress.planned ?? "?"}`),
     ...pipe.background.filter((b) => !["collect", "train", "eval", "eval-steps"].includes(b.stage)).map((b) => `${esc(b.stage)} (pid ${esc(b.pid)})`),
@@ -140,6 +147,36 @@ export async function renderExperiment(app, params, ctx) {
   const taskName = (t) => `<b>${esc(suite)}:${esc(t)}</b><div class="muted small">${esc((d.settings.instructions || {})[String(t)] || "")}</div>`;
   const cell = (t) => (t ? rate(t.successes, t.episodes) : '<span class="muted">-</span>');
 
+  // The coding agents writing this experiment's programs: each version's result on every layout.
+  const layoutName = (suite) => {
+    const alt = suite.match(/_alt(\d+)$/);
+    return alt ? `alt${alt[1]}` : "official";
+  };
+  const batchCell = (b) => {
+    if (!b) return '<span class="muted">-</span>';
+    if (b.running) return '<span class="badge warn">running ●</span>';
+    const per = Object.entries(b.layouts || {});
+    const parts = per.map(([name, r]) => `${esc(layoutName(name))} <b>${r.error ? "?" : `${r.passes}/${r.seeds}`}</b>${!r.error && r.passes < r.seeds ? " ✗" : ""}`);
+    return `${rate(b.passes || 0, b.seeds || 0)}${parts.length ? `<div class="small">${parts.join(" · ")}</div>` : ""}`;
+  };
+  const AGENT = { working: ["warn", "working ●"], finished: ["ok", "finished"], stopped: ["bad", "stopped"] };
+  const agentsView = () =>
+    agents.length
+      ? `<h3>Coding agents</h3>
+        <p class="muted small">Each agent writes one task's program. Every version runs on each layout (development seeds); the best one then runs once on held-out seeds. The collection needs a version that solves every layout.</p>
+        <table class="table compact"><thead><tr><th>Task</th><th>Agent</th><th>Versions (development)</th><th>Held-out</th><th></th></tr></thead><tbody>
+        ${agents
+          .map(
+            (a) => `<tr><td>${taskName(a.task)}</td>
+          <td>${tag(AGENT, a.state)}<div class="small muted">${a.state === "working" ? `last activity ${esc(when(a.updated))}` : esc(a.outcome || "")}${a.cost_usd != null ? ` · $${num(a.cost_usd, 2)}` : ""}${a.turns ? ` · ${esc(a.turns)} turns` : ""}</div></td>
+          <td>${a.versions.length ? a.versions.map((v) => `<div style="margin-bottom:4px"><span class="mono small">${esc(v.name)}</span> ${batchCell(v)}</div>`).join("") : '<span class="muted small">exploring the scene</span>'}</td>
+          <td>${batchCell(a.heldout)}${a.program ? "" : '<div class="small muted">no program_best.py yet</div>'}</td>
+          <td class="small nowrap">${a.transcript ? `<a href="#/agent?path=${q(a.transcript)}">conversation</a><br>` : ""}${a.session ? `<a href="#/session?path=${q(a.session)}">session</a>` : ""}</td></tr>`,
+          )
+          .join("")}
+        </tbody></table>`
+      : "";
+
   // Data collection: per task and scene set, what the teacher recorded and solved, what was graded
   // and what became demonstrations; what t2v.sh collect is doing; what runs right now.
   const pipeline = () => {
@@ -148,7 +185,9 @@ export async function renderExperiment(app, params, ctx) {
     const rank = (s) => (order.includes(s.name) ? order.indexOf(s.name) : order.length + pipe.scene_sets.indexOf(s));
     const sets = [...pipe.scene_sets].sort((a, b) => rank(a) - rank(b));
     const hasProgram = (task) => (pipe.programs[String(task)] || {}).registered;
+    const agentsBlock = agentsView();
     const start = `<pre class="mono small">scripts/gpu/t2v.sh collect --detach ${esc(d.name)} --scenes alt1-train,alt2-train,alt3-train,alt4-train,train --workers 2 --prepare-workers 4</pre>`;
+    if (!sets.length && !c.status && agents.length) return agentsBlock;
     if (!sets.length && !c.status)
       return `<p class="muted">Nothing collected yet. One command records the teacher on every scene set, task by task, and grades and converts each finished one in the background (add <span class="mono">--programs-from SESSION --follow</span> to take each task's program from its coding agent as it finishes):</p>${start}`;
     const banner = c.status
@@ -205,7 +244,7 @@ export async function renderExperiment(app, params, ctx) {
         : '<p class="muted small">No background stage of this experiment is running.</p>'
     }`;
     const log = (c.log || []).length ? `<details ${collecting ? "open" : ""}><summary class="muted">collect: latest lines</summary><pre class="log">${c.log.map((l) => `<div>${esc(l)}</div>`).join("")}</pre></details>` : "";
-    return banner + cards + matrix + programs + active + log + (c.status ? "" : start);
+    return banner + agentsBlock + cards + matrix + programs + active + log + (c.status ? "" : start);
   };
 
   const compare = () => {

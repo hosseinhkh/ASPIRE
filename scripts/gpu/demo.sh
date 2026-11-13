@@ -13,7 +13,7 @@
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
 #       --layouts: one program for several layouts of the task (all: the suite and its sibling
-#       layouts); every batch runs each layout (default seeds then 51 52 / 1 2 per layout).
+#       layouts); every batch runs each layout (development 51 52 53 and held-out 1 2, each layout).
 #
 #   scripts/gpu/demo.sh campaign  [--tasks FILE | --suite SUITE] [--run | --headless]
 #                                 [--budget-usd 30] [--max-turns 400] [--dev-seeds "51 52 53"]
@@ -287,8 +287,9 @@ PY
 )"
     fi
     [[ "$layouts" == *,* ]] || { echo "error: no sibling layouts of $suite (--layouts LIST)" >&2; exit 2; }
-    # Two scenes per layout keep a batch short; it runs every layout.
-    dev="${dev:-51 52}"; heldout="${heldout:-1 2}"
+    # Every batch runs each layout: two held-out scenes per layout keep the last batch short
+    # (the development seeds stay 51 52 53, so 15 episodes per version with five layouts).
+    heldout="${heldout:-1 2}"
   fi
   heldout="${heldout:-1 2 3}"
   local batch layouts_note=""

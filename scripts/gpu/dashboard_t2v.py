@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import statistics
+import time
 from typing import Any
 
 from dashboard_store import Store, downsample, read_json, read_npz
@@ -33,6 +34,26 @@ def _events(root: Path) -> list[dict[str, Any]]:
             except ValueError:
                 continue
     return events
+
+
+def _batch(folder: Path) -> dict[str, Any]:
+    """A coding agent's batch: solved of run, and per layout when it ran several (layouts_batch.py).
+    Without batch.json yet the batch is still running.
+    """
+    batch = read_json(folder / "batch.json")
+    if not isinstance(batch, dict):
+        return {"running": True}
+    layouts = {
+        name: {"passes": r.get("passes"), "seeds": r.get("seeds"), "error": r.get("error")}
+        for name, r in (batch.get("layouts") or {}).items()
+    }
+    return {
+        "running": False,
+        "passes": batch.get("passes"),
+        "seeds": batch.get("seeds"),
+        "layouts": layouts,
+        "warnings": [w.get("text") for w in batch.get("warnings") or []][:8],
+    }
 
 
 def _tail(path: Path, lines: int = LOG_TAIL) -> list[str]:
@@ -237,6 +258,67 @@ class T2vStore:
                 program["agent_path"] = self._rel_or_none(transcript)
         return pipeline
 
+    def _agents(self, root: Path) -> list[dict[str, Any]]:
+        """The coding agents writing this experiment's programs, with each version's result per
+        layout. Their sessions are found in the experiment's own logs: object_collection.sh
+        agent-test and start record the session.sh output, which names the session folder.
+        """
+        sessions: list[Path] = []
+        logs = sorted((root / "logs").glob("*-object_collection-agent-test-*.log")) + sorted(
+            (root / "logs").glob("*-agents.log")
+        )
+        for log in logs:
+            try:
+                with log.open(encoding="utf-8", errors="replace") as stream:
+                    head = stream.read(65536)
+            except OSError:
+                continue
+            for line in head.splitlines():
+                if line.startswith("session: "):
+                    folder = Path(line[len("session: ") :].strip())
+                    if folder.is_dir() and folder not in sessions:
+                        sessions.append(folder)
+        agents = []
+        for session in sessions:
+            meta = read_json(session / "session.json") or {}
+            for workspace in sorted((session / "agents").glob("llm-*")):
+                head, _, task = workspace.name.rpartition("-")
+                if not task.isdigit():
+                    continue
+                result = read_json(workspace / "result.json") or {}
+                transcript = workspace / "transcript.jsonl"
+                newest = max(
+                    (p.stat().st_mtime for p in workspace.rglob("*") if p.is_file()), default=0
+                )
+                state = "finished" if result else "working"
+                if not result and (meta.get("finished") or time.time() - newest > 1800):
+                    state = "stopped"
+                versions = []
+                for folder in sorted(workspace.glob("dev_v*")):
+                    versions.append({"name": folder.name, **_batch(folder)})
+                agents.append(
+                    {
+                        "task": int(task),
+                        "suite": head.split("-", 3)[-1] if head.count("-") >= 3 else head,
+                        "state": state,
+                        "session": self._rel_or_none(session),
+                        "session_name": session.name,
+                        "transcript": self._rel_or_none(transcript)
+                        if transcript.is_file()
+                        else None,
+                        "program": (workspace / "program_best.py").is_file(),
+                        "versions": versions,
+                        "heldout": _batch(workspace / "heldout")
+                        if (workspace / "heldout").is_dir()
+                        else None,
+                        "cost_usd": result.get("total_cost_usd"),
+                        "turns": result.get("num_turns"),
+                        "outcome": result.get("subtype"),
+                        "updated": newest,
+                    }
+                )
+        return agents
+
     # ------------------------------------------------------------------------- list --
     def experiments(self) -> dict[str, Any]:
         items = []
@@ -300,6 +382,9 @@ class T2vStore:
                         ),
                     },
                     "background": [b["stage"] for b in pipeline["background"]],
+                    "agents_working": [
+                        a["task"] for a in self._agents(root) if a["state"] == "working"
+                    ],
                     "last_event": events[-1] if events else None,
                     "modified": root.stat().st_mtime,
                 }
@@ -322,6 +407,7 @@ class T2vStore:
             "training": self._training(root),
             "evals": self._evals(root),
             "pipeline": self._pipeline(root),
+            "agents": self._agents(root),
             "ledger": _events(root)[-LEDGER_TAIL:],
             "logs": [
                 {"path": self.store.rel(p), "name": p.name, "bytes": p.stat().st_size}
