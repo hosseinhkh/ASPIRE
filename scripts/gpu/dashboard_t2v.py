@@ -15,6 +15,8 @@ from typing import Any
 from dashboard_store import Store, downsample, read_json, read_npz
 from dashboard_vla import EPISODE_SERIES, progress_of, student_of
 
+from cap_harness.trace2vla.train import repair_steps
+
 LEDGER_TAIL = 300
 LOG_TAIL = 200
 
@@ -84,6 +86,8 @@ class T2vStore:
                     "student_label": student["label"],
                     "suite": settings.get("suite"),
                     "checkpoint": meta.get("checkpoint_label") or settings.get("policy"),
+                    "training_run": meta.get("training_run"),
+                    "checkpoint_step": meta.get("checkpoint_step"),
                     "scene_set": meta.get("scene_set"),
                     "progress": progress_of(run),
                     "mean": results.get("mean"),
@@ -108,6 +112,8 @@ class T2vStore:
                         metrics.append(json.loads(line))
                     except ValueError:
                         continue
+            # Runs logged before exact steps read 1000, 1000, ..., 2000 after step 1000.
+            metrics = repair_steps(metrics, (record.get("settings") or {}).get("log_freq"))
             student = student_of(record)
             runs.append(
                 {

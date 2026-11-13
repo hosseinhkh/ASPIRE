@@ -184,6 +184,28 @@ passes over 100 demos); the preflight is what tells us whether they need changin
 methods to compare afterwards: `--method lora` (LeRobot's default LoRA: action expert only) and
 `--method lora-vlm` (LoRA that also covers the vision-language backbone).
 
+### Checkpoints during training (a learning curve)
+
+Training keeps only its last checkpoint unless asked. With `--save-freq 500` it keeps one every
+500 steps (about 2 GB each for SmolVLA), and `eval-steps` evaluates each one as it appears,
+next to the training on the same GPU:
+
+```bash
+scripts/gpu/t2v.sh train --detach preflight --dataset d50 --name ft-curve --method full --steps 3000 --batch-size 32 --save-freq 500
+```
+
+```bash
+scripts/gpu/t2v.sh eval-steps --detach preflight --checkpoint ft-curve --follow
+```
+
+Each checkpoint becomes an evaluation `ft-curve@STEP-dev` on the **dev** scenes (10 per task,
+20 episodes), shown as a table on the Training tab and in the report's "Checkpoints during
+training". Choose the step on dev, then evaluate only that step on the official scenes
+(`--checkpoint ft-curve@1500`): choosing it on the official scenes would make them part of the
+training decision. For retention along the way, add `--suite libero_object --scenes official
+--scene-list 1-10`. A rerun skips steps already evaluated; `t2v.sh stop preflight eval-steps`
+stops only the evaluations.
+
 ## Step 8: student after training, and the report
 
 ```bash

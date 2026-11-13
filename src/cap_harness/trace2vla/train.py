@@ -85,14 +85,58 @@ def big_number(text: str) -> float:
     return float(text[:-1]) * _UNITS[text[-1]] if text[-1] in _UNITS else float(text)
 
 
-def parse_metrics(line: str) -> dict[str, float] | None:
+def lerobot_number(value: float) -> str:
+    """A number the way LeRobot prints it in its log lines (format_big_number, no decimals):
+    1000-1499 is 1K, 1500 already 2K (Python rounds half to even).
+    """
+    for suffix in ("", "K", "M", "B", "T"):
+        if abs(value) < 1000:
+            return f"{value:.0f}{suffix}"
+        value /= 1000
+    return f"{value:.0f}Q"
+
+
+def exact_step(printed: str, previous: int, log_freq: int | None) -> int:
+    """The real step of a log line. From step 1000 LeRobot prints it rounded to thousands, so
+    the step is the previous one plus ``log_freq`` when that agrees with what is printed; the
+    printed value otherwise (a skipped line, or a run that did not start at step 0).
+    """
+    value = big_number(printed)
+    if printed[-1] not in _UNITS or not log_freq:
+        return int(value)
+    expected = previous + log_freq
+    return expected if lerobot_number(expected) == printed else int(value)
+
+
+def repair_steps(rows: list[dict[str, Any]], log_freq: int | None = None) -> list[dict[str, Any]]:
+    """metrics.jsonl written before exact steps: 1000, 1000, ..., 2000 back to 1000, 1050, ...
+    Rows already exact are unchanged.
+    """
+    if not rows:
+        return rows
+    log_freq = log_freq or int(rows[0].get("step") or 0)
+    previous, repaired = 0, []
+    for row in rows:
+        step = exact_step(lerobot_number(float(row.get("step") or 0)), previous, log_freq)
+        repaired.append({**row, "step": step})
+        previous = step
+    return repaired
+
+
+def parse_metrics(
+    line: str,
+    previous_step: int = 0,
+    log_freq: int | None = None,
+    batch_size: int | None = None,
+) -> dict[str, float] | None:
     match = METRIC.search(line)
     if not match:
         return None
     step, samples, episodes, epochs, loss, grad, lr, update_s, data_s = match.groups()
+    exact = exact_step(step, previous_step, log_freq)
     return {
-        "step": int(big_number(step)),
-        "samples": big_number(samples),
+        "step": exact,
+        "samples": exact * batch_size if batch_size else big_number(samples),
         "epochs": float(epochs),
         "loss": float(loss),
         "grad_norm": float(grad),
@@ -159,6 +203,33 @@ def check_student(dataset_root: Path, checkpoint: Path, student: students.Studen
     found = students.for_policy_type(students.checkpoint_type(checkpoint))
     if found is not None and found.key != student.key:
         raise ValueError(f"{checkpoint} is a {found.label} checkpoint, not {student.label}")
+
+
+def saved_steps(run_dir: Path) -> list[int]:
+    """Steps whose checkpoint is complete. LeRobot writes the model, then the optimizer state,
+    and only then points ``checkpoints/last`` at the new step, so a step is complete when
+    ``last`` points at it or at a later step.
+    """
+    root = run_dir / "lerobot" / "checkpoints"
+    try:
+        last = int((root / "last").resolve().name)
+    except (OSError, ValueError):
+        return []
+    steps = []
+    for folder in root.glob("[0-9]*"):
+        if folder.name.isdigit() and (folder / "pretrained_model").is_dir():
+            if int(folder.name) <= last:
+                steps.append(int(folder.name))
+    return sorted(steps)
+
+
+def checkpoint_at(run_dir: Path, step: int) -> Path | None:
+    """The policy a run saved at ``step``, when that checkpoint is complete."""
+    if step not in saved_steps(run_dir):
+        return None
+    root = run_dir / "lerobot" / "checkpoints"
+    folder = next(f for f in root.glob("[0-9]*") if f.name.isdigit() and int(f.name) == step)
+    return (folder / "pretrained_model").resolve()
 
 
 def checkpoint_of(run_dir: Path) -> Path | None:
@@ -251,7 +322,12 @@ def train(
             for line in process.stdout:
                 log.write(line)
                 log.flush()
-                parsed = parse_metrics(line)
+                parsed = parse_metrics(
+                    line,
+                    int(latest.get("step", 0)),
+                    resolved["log_freq"],
+                    resolved["batch_size"],
+                )
                 if parsed:
                     latest = parsed
                     metrics.write(json.dumps({"time": now_iso(), **parsed}) + "\n")

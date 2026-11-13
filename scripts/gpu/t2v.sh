@@ -12,6 +12,8 @@
 #   scripts/gpu/t2v.sh train NAME --dataset d50 --name ft-full [--method full|lora|lora-vlm]
 #   scripts/gpu/t2v.sh eval NAME --name after --checkpoint ft-full [--scenes official] [--seeds 0]
 #   scripts/gpu/t2v.sh eval NAME --name pi-before --student pi05 [--checkpoint base]
+#   scripts/gpu/t2v.sh eval NAME --name ft-500 --checkpoint ft-full@500   a checkpoint saved during training
+#   scripts/gpu/t2v.sh eval-steps NAME --checkpoint ft-full [--follow] [--scenes dev]   every saved step
 #   scripts/gpu/t2v.sh grade-student RUN_DIR      failure labels for an existing student run
 #   scripts/gpu/t2v.sh report NAME                teacher vs student before vs after
 #   scripts/gpu/t2v.sh status [NAME]              what exists, what is running, last events
@@ -19,7 +21,7 @@
 #   scripts/gpu/t2v.sh stop NAME [STAGE]          stop its background stages (or only STAGE: train, eval, ...)
 #
 # Put --detach right after the stage name to run it in the background (teacher-run, teacher-grade,
-# convert, dataset, train, eval): it survives a closed terminal and logs to
+# convert, dataset, train, eval, eval-steps): it survives a closed terminal and logs to
 # outputs/trace2vla/NAME/logs/. GPU: --gpu N first, or ASPIRE_T2V_GPU (default 0). teacher-run
 # keeps the conda env's own GPU, where ASPIRE's model services are.
 # Students: SmolVLA (default) or pi0.5 (--student pi05 on dataset and eval; train takes the
@@ -81,7 +83,7 @@ case "$cmd" in
   teacher-run)
     echo "teacher-run uses the conda env's GPU (ASPIRE_GPU=${ASPIRE_GPU:-unset}) and the model services" >&2
     run_stage "$cmd" "$@" ;;
-  teacher-grade|convert|dataset|train|eval|grade-student)
+  teacher-grade|convert|dataset|train|eval|eval-steps|grade-student)
     echo "$cmd on GPU $GPU (this command only; --gpu N or ASPIRE_T2V_GPU to change)" >&2
     run_stage "$cmd" "$@" ;;
   logs)

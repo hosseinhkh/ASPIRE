@@ -343,6 +343,16 @@ rounding and far below what a wrong scene, controller or code version gives, and
 reason for each rejection. Demos converted before the fix pass too; nothing has to be converted
 again. Tests: `tests/test_trace2vla_replay_precision.py`.
 
+### P7. Training progress showed 1000, 1000, ..., 2000 (13 November, fixed)
+
+LeRobot prints the step rounded to thousands from step 1000 on (`step:1K`, and 1500 already
+as `2K`, 2500 still as `2K`), and the training wrapper read that literally: the log, the progress
+and the dashboard showed `step 1000/3000` for steps 1000-1450 and `2000/3000` from 1500. The
+training itself was not affected (the learning rate kept falling step by step). The wrapper
+now takes the previous step plus the logging interval whenever that agrees with the printed
+value, and the dashboard repairs `metrics.jsonl` files written before the fix when it reads
+them. Tests: `tests/test_training_steps.py`.
+
 ### P4. Facts that shaped the design
 
 From [trace2vla-review.md](trace2vla-review.md):

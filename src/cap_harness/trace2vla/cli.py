@@ -23,9 +23,12 @@ status [NAME]                            what exists, what is running, last even
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -557,6 +560,20 @@ def cmd_train(args: argparse.Namespace) -> int:
     return 0 if record["status"] == "finished" else 1
 
 
+def _training_ref(experiment: Experiment, name: str) -> tuple[str | None, int | None]:
+    """(training run, step) for ``RUN`` or ``RUN@STEP`` when RUN is a training run of this
+    experiment; (None, None) otherwise. A malformed step is an error.
+    """
+    run_name, at, step = name.partition("@")
+    if not run_name or not experiment.training_dir(run_name).is_dir():
+        return None, None
+    if not at:
+        return run_name, None
+    if not step.isdigit():
+        raise ValueError(f"'{name}': the step after @ must be a number, e.g. {run_name}@500")
+    return run_name, int(step)
+
+
 def _checkpoint(
     experiment: Experiment, name: str, student: str | None = None
 ) -> tuple[str, str | None, students.Student]:
@@ -565,18 +582,34 @@ def _checkpoint(
     'base' is the base checkpoint of ``student`` (default SmolVLA); a training run or a
     checkpoint folder brings its own student, and naming a different one is an error.
     """
-    from cap_harness.trace2vla.train import checkpoint_of
+    from cap_harness.trace2vla.train import checkpoint_at, checkpoint_of, saved_steps
 
     if name == "base":
         chosen = students.get(student)
         return f"base ({chosen.checkpoint})", None, chosen
-    run = experiment.training_dir(name)
-    if run.is_dir():
-        path = checkpoint_of(run)
-        if path is None:
-            raise FileNotFoundError(f"training run '{name}' has no checkpoint yet")
+    run_name, step = _training_ref(experiment, name)
+    run = experiment.training_dir(run_name) if run_name else None
+    if run is not None:
+        if step is None:
+            path = checkpoint_of(run)
+            if path is None:
+                raise FileNotFoundError(f"training run '{run_name}' has no checkpoint yet")
+            label = f"training/{run_name}"
+        else:
+            path = checkpoint_at(run, step)
+            if path is None:
+                saved = saved_steps(run)
+                raise FileNotFoundError(
+                    f"training run '{run_name}' has no complete checkpoint at step {step} "
+                    + (
+                        f"(saved: {', '.join(str(s) for s in saved)})"
+                        if saved
+                        else "(none yet: train with --save-freq N to keep checkpoints during training)"
+                    )
+                )
+            label = f"training/{run_name}@{step}"
         found = students.get(students.infer(read_json(run / "run.json") or {})[0])
-        label, policy = f"training/{name}", str(path)
+        policy = str(path)
     elif Path(name).is_dir():
         label, policy = name, str(Path(name).resolve())
         found = students.for_source(policy) or students.get(student)
@@ -609,11 +642,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
     # Before anything heavy: each student runs in its own environment.
     students.reexec(student, "cap_harness.trace2vla", args.argv)
     out.mkdir(parents=True, exist_ok=True)
+    training_run, checkpoint_step = _training_ref(experiment, args.checkpoint)
     write_json(
         out / "eval.json",
         {
             "checkpoint_label": label,
             "checkpoint": policy,
+            "training_run": training_run,
+            "checkpoint_step": checkpoint_step,
             "scene_set": scenes.name,
             "suite": suite,
             "student": student.key,
@@ -641,6 +677,104 @@ def cmd_eval(args: argparse.Namespace) -> int:
         failure_families=results.get("failure_families"), exit_status=code,
     )  # fmt: skip
     return code
+
+
+def _alive(pid: object) -> bool:
+    try:
+        os.kill(int(pid), 0)  # type: ignore[arg-type]
+    except (TypeError, ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def cmd_eval_steps(args: argparse.Namespace) -> int:
+    """Evaluate every saved checkpoint of a training run, one after another; with --follow,
+    keep waiting for new ones while the training runs. Each becomes an evaluation of its own,
+    RUN@STEP-TAG, which a rerun skips once finished.
+    """
+    from cap_harness.trace2vla.train import saved_steps
+
+    ensure_runtime_env()
+    experiment = Experiment.open(args.name)
+    run = experiment.training_dir(args.checkpoint)
+    record = read_json(run / "run.json")
+    if not record:
+        print(f"error: no training run '{args.checkpoint}' in {experiment.root}", file=sys.stderr)
+        return 2
+    student = students.get(students.infer(record)[0])
+    scenes = scene_set(experiment.settings, args.scenes)
+    suite = args.suite or experiment.suite
+    tag = args.tag or (scenes.name if suite == experiment.suite else f"{suite}-{scenes.name}")
+    # Every evaluation below runs in this student's environment.
+    students.reexec(student, "cap_harness.trace2vla", args.argv)
+    wanted = set(parse_int_list(args.steps)) if args.steps else None
+    done: set[int] = set()
+    failed = 0
+    print(
+        f"evaluating checkpoints of '{run.name}' ({student.label}) on {suite}, scene set "
+        f"{scenes.name}{' (following the training)' if args.follow else ''}",
+        flush=True,
+    )
+
+    def pending() -> list[int]:
+        return [
+            s
+            for s in saved_steps(run)
+            if s not in done
+            and (wanted is None or s in wanted)
+            and (not args.every or s % args.every == 0)
+        ]
+
+    while True:
+        for step in pending():
+            name = f"{run.name}@{step}-{tag}"
+            out = experiment.eval_dir(name)
+            progress = read_json(out / "progress.json") or {}
+            if progress.get("status") != "finished":
+                command = [
+                    sys.executable, "-m", "cap_harness.trace2vla", "eval", str(experiment.root),
+                    "--name", name, "--checkpoint", f"{run.name}@{step}",
+                    "--scenes", scenes.name, "--seeds", args.seeds, "--video", args.video,
+                ]  # fmt: skip
+                for flag, value in (
+                    ("--suite", args.suite),
+                    ("--scene-list", args.scene_list),
+                    ("--tasks", args.tasks),
+                    ("--device", args.device),
+                ):
+                    if value:
+                        command += [flag, value]
+                print(f"step {step}: evaluating as '{name}'", flush=True)
+                code = subprocess.call(command)
+                if code != 0:
+                    failed += 1
+                    print(f"step {step}: evaluation exited with status {code}", flush=True)
+            results = read_json(out / "results.json") or {}
+            if results.get("episodes"):
+                print(
+                    f"step {step}: {results.get('successes')}/{results.get('episodes')} "
+                    f"({100 * float(results.get('mean') or 0):.0f}%)  [{name}]",
+                    flush=True,
+                )
+            done.add(step)
+        training = read_json(run / "progress.json") or {}
+        still_training = training.get("status") == "running" and _alive(training.get("pid"))
+        if not args.follow or not still_training:
+            # The last checkpoint may have landed after this round's listing.
+            if args.follow and pending():
+                continue
+            break
+        time.sleep(args.poll)
+    if not done:
+        print(
+            f"no saved checkpoint of '{run.name}' matched (saved: {saved_steps(run) or 'none'}; "
+            "train with --save-freq N to keep checkpoints during training)",
+            file=sys.stderr,
+        )
+        return 1
+    return 1 if failed else 0
 
 
 def cmd_grade_student(args: argparse.Namespace) -> int:
@@ -914,6 +1048,21 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--tasks")
     c.add_argument("--video", default="all", choices=("all", "failures", "none"))
     c.add_argument("--device")
+
+    c = add("eval-steps", cmd_eval_steps)
+    c.add_argument("--checkpoint", "--run", dest="checkpoint", required=True, help="a training run")
+    c.add_argument("--follow", action="store_true", help="wait for new checkpoints while it trains")
+    c.add_argument("--every", type=int, help="only steps that are a multiple of this")
+    c.add_argument("--steps", help="only these steps, e.g. 500,1000")
+    c.add_argument("--scenes", default="dev", help="scene set (default dev: kept for choosing)")
+    c.add_argument("--scene-list", help="override the scene numbers, e.g. 1-10")
+    c.add_argument("--suite", help="another suite, e.g. libero_object for retention")
+    c.add_argument("--seeds", default="0")
+    c.add_argument("--tasks")
+    c.add_argument("--video", default="failures", choices=("all", "failures", "none"))
+    c.add_argument("--device")
+    c.add_argument("--tag", help="end of each evaluation's name (default: the scene set)")
+    c.add_argument("--poll", type=float, default=30.0, help="seconds between looks (--follow)")
 
     c = add("grade-student", cmd_grade_student, needs_name=False)
     c.add_argument("run", help="a student benchmark run folder")

@@ -63,8 +63,12 @@ export async function renderExperiment(app, params, ctx) {
   const d = await api(`/api/t2v/experiment?path=${q(path)}`);
   const suite = d.settings.suite, tasks = d.settings.tasks || [];
   const official = d.teacher.official;
-  const main = d.evals.filter((e) => e.suite === suite);
-  const other = d.evals.filter((e) => e.suite !== suite);
+  // Next to the teacher: the experiment's suite on the official scenes only. A checkpoint saved
+  // during training is shown on its training run's curve (Training tab).
+  const isStep = (e) => e.checkpoint_step !== null && e.checkpoint_step !== undefined;
+  const isMain = (e) => e.suite === suite && (e.scene_set || "official") === "official";
+  const main = d.evals.filter((e) => !isStep(e) && isMain(e));
+  const other = d.evals.filter((e) => !isStep(e) && !isMain(e));
   // Before and after training, per student (SmolVLA and pi0.5 are compared separately).
   const studentLabels = [...new Set(main.map((e) => e.student_label || "SmolVLA"))];
   const progressCards = studentLabels.length
@@ -114,8 +118,8 @@ export async function renderExperiment(app, params, ctx) {
     </tbody></table>
     ${
       other.length
-        ? `<h3>Retention on other suites</h3><table class="table compact"><thead><tr><th>Evaluation</th><th>Student</th><th>Suite</th><th>Checkpoint</th><th>Success</th><th>Failures</th></tr></thead><tbody>
-        ${other.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td>${esc(e.name)}</td><td>${studentBadge(e.student_label)}</td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.checkpoint || "")}</td><td>${rate(e.successes || 0, e.episodes || 0)}</td><td class="small">${families(e.failure_families)}</td></tr>`).join("")}</tbody></table>`
+        ? `<h3>Retention and other scene sets</h3><table class="table compact"><thead><tr><th>Evaluation</th><th>Student</th><th>Suite</th><th>Scene set</th><th>Checkpoint</th><th>Success</th><th>Failures</th></tr></thead><tbody>
+        ${other.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td>${esc(e.name)}</td><td>${studentBadge(e.student_label)}</td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.scene_set || "")}</td><td class="small">${esc(e.checkpoint || "")}</td><td>${rate(e.successes || 0, e.episodes || 0)}</td><td class="small">${families(e.failure_families)}</td></tr>`).join("")}</tbody></table>`
         : ""
     }
     <h3>Same scene, side by side</h3>
@@ -156,6 +160,15 @@ export async function renderExperiment(app, params, ctx) {
       <h3>Episodes</h3><div id="demo-list"><p class="muted">Loading...</p></div>`;
   };
 
+  // Evaluations of the checkpoints a run saved during training (t2v.sh eval-steps).
+  const stepEvals = (run) => {
+    const rows = d.evals
+      .filter((e) => e.training_run === run && e.checkpoint_step !== null && e.checkpoint_step !== undefined)
+      .sort((a, b) => `${a.suite} ${a.scene_set}`.localeCompare(`${b.suite} ${b.scene_set}`) || a.checkpoint_step - b.checkpoint_step);
+    if (!rows.length) return "";
+    return `<h3>Checkpoints during training</h3><table class="table compact"><thead><tr><th>Step</th><th>Suite</th><th>Scene set</th><th>Success</th><th>Failures</th><th>Evaluation</th></tr></thead><tbody>
+      ${rows.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td><b>${esc(e.checkpoint_step)}</b></td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.scene_set || "")}</td><td>${rate(e.successes || 0, e.episodes || 0)} ${e.progress.status === "finished" ? "" : statusBadge(e.progress.status)}</td><td class="small">${families(e.failure_families)}</td><td class="small">${esc(e.name)}</td></tr>`).join("")}</tbody></table>`;
+  };
   const training = () =>
     d.training.length
       ? d.training
@@ -169,6 +182,7 @@ export async function renderExperiment(app, params, ctx) {
                 ${card("Checkpoint", r.checkpoint ? "saved" : "-", r.checkpoint ? `<span class="mono small">${esc(r.checkpoint.split("/").slice(-5).join("/"))}</span>` : esc(r.error || ""))}</div>
               ${lineChart({ loss: t.loss }, "Training loss", { x: `logged every ${s.log_freq} steps`, height: 170 })}
               ${lineChart({ "learning rate": t.lr }, "Learning rate", { height: 110 })}
+              ${stepEvals(t.name)}
               ${t.log ? `<p><a href="#/log?path=${q(t.log)}">Open train.log</a></p>` : ""}
               <details><summary class="muted">last log lines</summary><pre class="log">${t.log_tail.map((l) => `<div>${esc(l)}</div>`).join("")}</pre></details>
               <details><summary class="muted">settings and command</summary>${jsonView(r, { open: 1 })}</details></div>`;

@@ -60,6 +60,8 @@ def evaluations(experiment: Experiment) -> list[dict[str, Any]]:
                 "student_label": students.label(student),
                 "suite": settings.get("suite"),
                 "checkpoint": meta.get("checkpoint_label", settings.get("policy")),
+                "training_run": meta.get("training_run"),
+                "checkpoint_step": meta.get("checkpoint_step"),
                 "scene_set": meta.get("scene_set"),
                 "status": progress.get("status"),
                 "done": progress.get("done"),
@@ -73,6 +75,36 @@ def evaluations(experiment: Experiment) -> list[dict[str, Any]]:
             }
         )
     return runs
+
+
+def split_evaluations(
+    evaluations: list[dict[str, Any]], suite: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """(teacher-vs-student columns, other evaluations, checkpoints during training).
+
+    The comparison with the teacher takes only the experiment's suite on the official scenes,
+    the scenes the teacher was measured on. A checkpoint saved during training goes to the
+    training curve, sorted by run, suite, scene set and step.
+    """
+    curve = [e for e in evaluations if e.get("checkpoint_step") is not None]
+    rest = [e for e in evaluations if e.get("checkpoint_step") is None]
+    main = [
+        e for e in rest if e["suite"] == suite and (e.get("scene_set") or "official") == "official"
+    ]
+    other = [
+        e
+        for e in rest
+        if not (e["suite"] == suite and (e.get("scene_set") or "official") == "official")
+    ]
+    curve.sort(
+        key=lambda e: (
+            str(e.get("training_run")),
+            str(e["suite"]),
+            str(e.get("scene_set")),
+            int(e["checkpoint_step"]),
+        )
+    )
+    return main, other, curve
 
 
 def trainings(experiment: Experiment) -> list[dict[str, Any]]:
@@ -151,8 +183,7 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
     ]
     official = report["teacher"].get("official")
-    main = [e for e in report["evaluations"] if e["suite"] == suite]
-    other = [e for e in report["evaluations"] if e["suite"] != suite]
+    main, other, curve = split_evaluations(report["evaluations"], suite)
 
     lines += ["## Same scenes: teacher vs student", ""]
     header = ["task", "teacher (official scenes)"] + [
@@ -187,15 +218,31 @@ def to_markdown(report: dict[str, Any]) -> str:
 
     if other:
         lines += [
-            "## Retention: other suites",
+            "## Retention and other scene sets",
             "",
-            "| evaluation | student | suite | checkpoint | success | 95% interval |",
-            "|---|---|---|---|---|---|",
+            "| evaluation | student | suite | scene set | checkpoint | success | 95% interval |",
+            "|---|---|---|---|---|---|---|",
         ]
         for e in other:
             interval = f"{percent(e['ci95'][0])}-{percent(e['ci95'][1])}" if e.get("ci95") else "-"
             lines.append(
-                f"| {e['name']} | {e['student_label']} | {e['suite']} | {e['checkpoint']} | {e['successes']}/{e['episodes']} ({percent(e['mean'])}) | {interval} |"
+                f"| {e['name']} | {e['student_label']} | {e['suite']} | {e.get('scene_set') or '-'} | {e['checkpoint']} | {e['successes']}/{e['episodes']} ({percent(e['mean'])}) | {interval} |"
+            )
+        lines.append("")
+    if curve:
+        lines += [
+            "## Checkpoints during training",
+            "",
+            "Each checkpoint a training run saved (`train --save-freq`), evaluated on its own "
+            "(`t2v.sh eval-steps`). Choose a step on the dev scenes, then report the official ones.",
+            "",
+            "| training run | student | suite | scene set | step | success | failures |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for e in curve:
+            lines.append(
+                f"| {e['training_run']} | {e['student_label']} | {e['suite']} | {e.get('scene_set') or '-'} | {e['checkpoint_step']} | "
+                f"{e['successes']}/{e['episodes']} ({percent(e['mean'])}) | {family_text(e['failure_families']) or '-'} |"
             )
         lines.append("")
 
