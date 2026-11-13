@@ -85,6 +85,8 @@ function taskDetail(t) {
 }
 
 function bindTasks(tasks) {
+  // A session with no episode yet (just started) has no task table and no toolbar.
+  if (!document.getElementById("task-expand")) return;
   const rows = [...document.querySelectorAll("tr.task-row")];
   const open = (row, on) => {
     const detail = document.querySelector(`tr.task-detail[data-for="${row.dataset.i}"]`);

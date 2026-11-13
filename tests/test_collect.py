@@ -319,3 +319,73 @@ def test_a_dataset_takes_training_scenes_only(experiment, capsys) -> None:
     code = cli.main(["dataset", str(experiment.root), "--demos", "dev-3x", "--name", "d"])
     assert code == 2 and "choosing checkpoints (dev)" in capsys.readouterr().err
     assert json.loads((demos / "source.json").read_text()) == {"scene_set": "dev"}
+
+
+# ------------------------------------------------------------------ after the live checks --
+def test_an_agent_that_stopped_before_it_finished_is_named_so_once_the_session_ended(
+    tmp_path,
+) -> None:
+    session = tmp_path / "session"
+    agent(session, 3, finished=False)
+    entry = collect.agent_programs(session, SUITE)[3]
+    assert collect.judge(entry, 0.5)[0] == "agent_running"
+    assert collect.judge(entry, 0.5, session_over=True)[0] == "agent_stopped"
+
+
+def test_background_logs_have_their_own_folder_and_the_status_names_the_session(
+    experiment, tmp_path, monkeypatch
+) -> None:
+    FakeTeacher(monkeypatch)
+    session = tmp_path / "session"
+    agent(session, 2)
+    write_json(session / "session.json", {"status": "complete"})
+    run, _ = collector(experiment, tmp_path, monkeypatch, session=session)
+    run.run()
+    status = read_json(experiment.root / "collect.json")
+    assert status["programs_from"] == str(session.resolve())
+    assert status["programs"]["2"]["workspace"].endswith(f"llm-libero-pro-{SUITE}-2")
+    logs = sorted(p.name for p in (experiment.root / "logs" / "collect").glob("*.log"))
+    assert any("-prepare-a-train-task00.log" in n for n in logs)
+    assert any("-final-a-train.log" in n for n in logs)
+    assert status["cells"]["a-train/0"]["prepare_log"].startswith("logs/collect/")
+    assert not list((experiment.root / "logs").glob("*prepare*.log"))  # none at the top level
+
+
+def test_a_task_taken_from_its_agent_counts_in_the_time_left_at_once(
+    experiment, tmp_path, monkeypatch
+) -> None:
+    FakeTeacher(monkeypatch)
+    session = tmp_path / "session"
+    agent(session, 2)
+    run, _ = collector(experiment, tmp_path, monkeypatch, session=session)
+    run.take_programs()
+    assert run.cells[("a-train", 2)].missing == 3 and run.cells[("b-train", 2)].missing == 2
+
+
+def test_status_orders_the_layouts_as_collected(experiment, tmp_path, monkeypatch, capsys) -> None:
+    FakeTeacher(monkeypatch)
+    run, _ = collector(experiment, tmp_path, monkeypatch, sets=("b-train", "a-train"))
+    run.run()
+    table = cli._collect_table(experiment)
+    header = next(line for line in table.splitlines() if "a-train" in line and "b-train" in line)
+    assert header.index("b-train") < header.index("a-train")
+    assert cli._duration(600) == ", about 10 min" and cli._duration(7200) == ", about 2.0 h"
+
+
+def test_converting_when_the_teacher_solved_nothing_is_not_an_error(
+    experiment, monkeypatch, capsys
+) -> None:
+    from cap_harness.trace2vla import convert
+
+    monkeypatch.setattr(
+        convert, "convert_scene_set",
+        lambda *a, **k: {"accepted": 0, "rejected": 0, "tasks": [], "failed": []},
+    )  # fmt: skip
+    root = str(experiment.root)
+    assert cli.main(["convert", root, "--scenes", "a-train"]) == 0
+    assert "nothing to convert yet" in capsys.readouterr().out
+    monkeypatch.setattr(
+        convert, "convert_scene_set",
+        lambda *a, **k: {"accepted": 0, "rejected": 2, "tasks": [], "failed": []},
+    )  # fmt: skip
+    assert cli.main(["convert", root, "--scenes", "a-train"]) == 1  # every demo rejected

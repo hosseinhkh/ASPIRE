@@ -26,7 +26,7 @@ const CELL = { recording: ["ok", "recording ●"], recorded: ["ok", "recorded"],
 const PREP = { queued: ["muted", "conversion queued"], running: ["ok", "converting ●"], finished: ["ok", "converted"], problems: ["warn", "conversion: see log"] };
 const PROGRAM = {
   registered: ["ok", "registered"], taken: ["ok", "from its coding agent"], waiting: ["muted", "waiting"], agent_running: ["warn", "agent working ●"],
-  no_program: ["bad", "agent wrote none"], weak: ["bad", "too weak, not used"], unchecked: ["warn", "not checked on held-out scenes"],
+  no_program: ["bad", "agent wrote none"], agent_stopped: ["bad", "agent stopped early"], weak: ["bad", "too weak, not used"], unchecked: ["warn", "not checked on held-out scenes"],
 };
 const cardRate = (k, n) => {
   if (!n) return '<span class="muted">-</span>';
@@ -152,7 +152,7 @@ export async function renderExperiment(app, params, ctx) {
     if (!sets.length && !c.status)
       return `<p class="muted">Nothing collected yet. One command records the teacher on every scene set, task by task, and grades and converts each finished one in the background (add <span class="mono">--programs-from SESSION --follow</span> to take each task's program from its coding agent as it finishes):</p>${start}`;
     const banner = c.status
-      ? `<div class="panel"><div class="panel-head"><b>t2v.sh collect</b> ${statusBadge(c.status)} <span class="muted small">started ${esc(when(c.started))} · updated ${esc(when(c.updated))}${c.programs_from ? ` · programs from <span class="mono">${esc(c.programs_from)}</span>` : ""}${c.follow ? " · following" : ""}</span></div>
+      ? `<div class="panel"><div class="panel-head"><b>t2v.sh collect</b> ${statusBadge(c.status)} <span class="muted small">started ${esc(when(c.started))} · updated ${esc(when(c.updated))}${c.programs_from ? ` · programs from ${c.session_path ? `<a href="#/session?path=${q(c.session_path)}">${esc(c.session_path.split("/").pop())}</a>` : `<span class="mono">${esc(c.programs_from)}</span>`}` : ""}${c.follow ? " · following" : ""}${c.log_path ? ` · <a href="#/log?path=${q(c.log_path)}">full log</a>` : ""}</span></div>
         ${now.stage === "teacher" ? `<p>Recording <b>${esc(now.scene_set)}</b>, task <b>${esc(now.task)}</b>: ${rate(now.done || 0, now.total || 0)}</p>` : now.detail ? `<p>${esc(now.detail)}</p>` : ""}
         ${c.status === "failed" ? `<div class="alert bad">${esc(c.error || "failed")}. Run the same command again: it continues where it stopped.</div>` : ""}
         ${c.status === "died" ? `<div class="alert bad">Its process is gone without a word (killed, or the machine restarted). Run the same command again: it continues where it stopped.</div>` : ""}
@@ -195,7 +195,7 @@ export async function renderExperiment(app, params, ctx) {
       ${pipe.tasks.map((t) => {
         const g = pipe.programs[String(t)] || {};
         const state = g.registered ? (g.state === "taken" ? "taken" : "registered") : g.state || "waiting";
-        return `<tr><td>${taskName(t)}</td><td>${tag(PROGRAM, state)} <span class="mono small">${esc((g.sha256 || "").slice(0, 10))}</span></td><td class="small">${esc(g.note && g.note !== "registered" ? g.note : g.registered ? g.source || "" : "t2v.sh teacher-add, or collect --programs-from SESSION")}</td></tr>`;
+        return `<tr><td>${taskName(t)}</td><td>${tag(PROGRAM, state)} <span class="mono small">${esc((g.sha256 || "").slice(0, 10))}</span>${g.agent_path ? ` <a class="small" href="#/agent?path=${q(g.agent_path)}">agent's conversation</a>` : ""}</td><td class="small">${esc(g.note && g.note !== "registered" ? g.note : g.registered ? g.source || "" : "t2v.sh teacher-add, or collect --programs-from SESSION")}</td></tr>`;
       }).join("")}</tbody></table>`;
     const active = `<h3>Running now</h3>${
       pipe.background.length || pipe.claims.length

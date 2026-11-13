@@ -428,6 +428,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return code
 
 
+def _duration(seconds: float) -> str:
+    return (
+        f", about {seconds / 3600:.1f} h" if seconds >= 5400 else f", about {seconds / 60:.0f} min"
+    )
+
+
 def _collect_table(experiment: Experiment) -> str:
     """Scene sets x tasks: teacher episodes counted/planned, solved, demos kept."""
     from cap_harness.trace2vla import progress
@@ -447,7 +453,7 @@ def _collect_table(experiment: Experiment) -> str:
             f"collect: {status.get('status')}"
             + (f", now {doing}" if doing else "")
             + (f", {status.get('episodes_left')} episodes left" if status.get("episodes_left") else "")
-            + (f", about {eta / 3600:.1f} h" if eta and status.get("status") in ("running", "waiting") else "")
+            + (_duration(eta) if eta and status.get("status") in ("running", "waiting") else "")
             + (f" ({status['error']})" if status.get("error") and status.get("status") == "failed" else "")
         )  # fmt: skip
         waiting = {t: p for t, p in view["programs"].items() if not p.get("registered")}
@@ -459,8 +465,13 @@ def _collect_table(experiment: Experiment) -> str:
             f"teacher episodes {totals['recorded']}/{totals['planned']}, solved {totals['solved']}, "
             f"graded {totals['graded']}, demos kept {totals['kept']} (rejected {totals['rejected']})"
         )
-        # One row per task, one column per scene set: recorded/planned, solved, demos kept.
-        sets = view["scene_sets"]
+        # One row per task, one column per scene set (the collection's order first): recorded/planned,
+        # solved, demos kept.
+        order = status.get("scene_sets") or []
+        sets = sorted(
+            view["scene_sets"],
+            key=lambda s: order.index(s["name"]) if s["name"] in order else len(order),
+        )
         width = max([16, *(len(s["name"]) + 2 for s in sets)])
         lines.append("  task" + "".join(f"{s['name']:>{width}}" for s in sets))
         for index, task in enumerate(view["tasks"]):
@@ -587,6 +598,11 @@ def _convert_one(
         )
     if summary["failed"]:
         print(f"  failed (rerun to retry): {', '.join(summary['failed'])}")
+    if not summary["accepted"] and not summary["rejected"] and not summary["failed"]:
+        # Only the teacher's successes are converted: none yet is not an error of conversion.
+        print("  nothing to convert yet: the teacher solved none of these episodes")
+        return 0
+    # Exit 1: a conversion failed, or every demo was rejected.
     return 0 if summary["accepted"] and not summary["failed"] else 1
 
 

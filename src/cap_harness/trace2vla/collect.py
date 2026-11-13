@@ -73,9 +73,18 @@ def agent_programs(session: Path, suite: str) -> dict[int, dict[str, Any]]:
     return found
 
 
-def judge(entry: dict[str, Any], min_heldout: float) -> tuple[str, str]:
-    """(state, why) for an agent's program: ready, agent_running, no_program, unchecked, weak."""
+def judge(
+    entry: dict[str, Any], min_heldout: float, *, session_over: bool = False
+) -> tuple[str, str]:
+    """(state, why) for an agent's program: ready, agent_running, agent_stopped, no_program,
+    unchecked, weak.
+    """
     if not entry["finished"]:
+        if session_over:
+            return "agent_stopped", (
+                "its coding agent stopped before it finished (see the session); check its "
+                "program_best.py, then t2v.sh teacher-add NAME --program FILE --task N"
+            )
         return "agent_running", "its coding agent is still working"
     if entry["program"] is None:
         return "no_program", "its coding agent finished without a program (program_best.py)"
@@ -152,7 +161,7 @@ class Collector:
             prepare_workers,
             prepare_jobs,
         )
-        self.session = Path(session) if session else None
+        self.session = Path(session).resolve() if session else None
         self.min_heldout, self.follow, self.poll = min_heldout, follow, poll
         self.attempts, self.videos, self.service_wait = attempts, videos, service_wait
         self.out, self.sleep = log, sleep
@@ -173,6 +182,7 @@ class Collector:
             "workers": workers,
             "prepare_workers": prepare_workers,
             "programs_from": str(self.session) if self.session else None,
+            "log_file": _own_log(),
             "follow": follow,
             "now": None,
             "log": [],
@@ -213,6 +223,7 @@ class Collector:
 
         registered = self._registered
         agents = agent_programs(self.session, self.experiment.suite) if self.session else {}
+        over = self.session is not None and self.session_over()
         for task in self.tasks:
             previous = self.program_states.get(task, {}).get("state")
             if task in registered:
@@ -230,14 +241,20 @@ class Collector:
                     ),
                 )
             else:
-                state, note = judge(entry, self.min_heldout)
+                state, note = judge(entry, self.min_heldout, session_over=over)
                 if state == "ready":
                     teacher.register_program(self.experiment, task, entry["program"])
                     state, note = "taken", f"from its coding agent ({note})"
                     self.log(f"task {task}: program taken from {entry['workspace']} ({note})")
+                    for scenes in self.sets:  # its scenes count in the time left from now on
+                        self.cells[(scenes.name, task)].missing = len(
+                            teacher.missing_seeds(self.experiment, scenes, task)
+                        )
             if state not in (previous, "taken"):
                 self.log(f"task {task}: {note}")
             self.program_states[task] = {"state": state, "note": note}
+            if entry is not None:
+                self.program_states[task]["workspace"] = str(entry["workspace"])
 
     def waiting_for_programs(self) -> list[int]:
         return [t for t in self.tasks if t not in self._registered]
@@ -397,9 +414,7 @@ class Collector:
         return environment
 
     def _start(self, cell: Cell) -> None:
-        folder = self.experiment.root / "logs"
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{time.strftime('%Y%m%d-%H%M%S')}-collect-prepare-{cell.scene_set}-task{cell.task:02d}.log"  # fmt: skip
+        path = self.logs / f"{time.strftime('%Y%m%d-%H%M%S')}-prepare-{cell.scene_set}-task{cell.task:02d}.log"  # fmt: skip
         stream = path.open("wb")
         process = subprocess.Popen(
             self.prepare_command(cell.scene_set, [cell.task]),
@@ -440,7 +455,7 @@ class Collector:
             return
         for scenes in self.sets:
             self.save(now={"stage": "prepare", "detail": f"final pass over '{scenes.name}'", "since": now_iso()})  # fmt: skip
-            path = self.experiment.root / "logs" / f"{time.strftime('%Y%m%d-%H%M%S')}-collect-final-{scenes.name}.log"  # fmt: skip
+            path = self.logs / f"{time.strftime('%Y%m%d-%H%M%S')}-final-{scenes.name}.log"
             with path.open("wb") as stream:
                 code = subprocess.call(
                     self.prepare_command(scenes.name, registered),
@@ -449,6 +464,13 @@ class Collector:
                 )  # fmt: skip
             if code:
                 self.log(f"final pass over '{scenes.name}': exit {code} ({self.experiment.rel(path)})")  # fmt: skip
+
+    @property
+    def logs(self) -> Path:
+        """The background jobs' logs: their own folder, so logs/ keeps the stages' logs."""
+        folder = self.experiment.root / "logs" / "collect"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
 
     # ---------------------------------------------------------------------------- run --
     def summary(self) -> dict[str, Any]:
@@ -516,6 +538,17 @@ class Collector:
             if summary["without_program"]:
                 self.log(f"no program, not collected: tasks {compact(summary['without_program'])}")
             return 1 if summary["incomplete"] or summary["without_program"] else 0
+
+
+def _own_log() -> str | None:
+    """The file this process's output goes to (t2v.sh --detach writes it to the experiment's
+    logs/), for the dashboard to link; None on a terminal.
+    """
+    try:
+        target = os.readlink("/proc/self/fd/1")
+    except OSError:
+        return None
+    return target if target.startswith("/") and target.endswith(".log") else None
 
 
 def tuple_key(key: str) -> tuple[str, int]:

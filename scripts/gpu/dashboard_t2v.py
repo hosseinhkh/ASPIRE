@@ -215,6 +215,28 @@ class T2vStore:
             )
         return sets
 
+    def _rel_or_none(self, path: str | Path) -> str | None:
+        try:
+            return self.store.rel(Path(path))
+        except (ValueError, OSError):
+            return None
+
+    def _pipeline(self, root: Path) -> dict[str, Any]:
+        """progress.overview, with links the dashboard can open: the session the programs come
+        from, each coding agent's conversation, the collection's own log.
+        """
+        pipeline = progress.overview(root)
+        collect = pipeline["collect"]
+        if collect.get("programs_from"):
+            collect["session_path"] = self._rel_or_none(collect["programs_from"])
+        if collect.get("log_file"):
+            collect["log_path"] = self._rel_or_none(collect["log_file"])
+        for program in pipeline["programs"].values():
+            transcript = Path(program.get("workspace") or "/nonexistent") / "transcript.jsonl"
+            if transcript.is_file():
+                program["agent_path"] = self._rel_or_none(transcript)
+        return pipeline
+
     # ------------------------------------------------------------------------- list --
     def experiments(self) -> dict[str, Any]:
         items = []
@@ -299,7 +321,7 @@ class T2vStore:
             "datasets": self._datasets(root),
             "training": self._training(root),
             "evals": self._evals(root),
-            "pipeline": progress.overview(root),
+            "pipeline": self._pipeline(root),
             "ledger": _events(root)[-LEDGER_TAIL:],
             "logs": [
                 {"path": self.store.rel(p), "name": p.name, "bytes": p.stat().st_size}

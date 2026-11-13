@@ -211,14 +211,39 @@ have one.
 The LeRobot dataset is built once at the end, from the demo sets an experiment uses (section 6):
 which layouts go into a dataset is a choice per experiment, not part of the collection.
 
-Commands: the light test and the full run are in the reply of 13 November and below.
+### One command per step: `scripts/gpu/object_collection.sh`
 
-```bash
-scripts/gpu/t2v.sh check object-full          # also loads every task on each sibling layout
-scripts/gpu/t2v.sh collect --detach object-full --scenes alt1-train,alt2-train,alt3-train,alt4-train,train --programs-from "$SESSION" --follow --workers 2 --prepare-workers 6
-scripts/gpu/t2v.sh status object-full
-scripts/gpu/t2v.sh stop object-full collect   # stops it and its background jobs; rerun to continue
-```
+Each step prints every command before it runs it, stops at the first error, and keeps its log in
+the experiment's `logs/` (`<time>-object_collection-<step>.log`):
+
+| Step | What it does |
+|---|---|
+| `pilot` | Light test, in the terminal (about 20–30 min): experiment `object-pilot`, tasks 0–1 × 5 layouts × 3 scenes through `collect`, a dataset, and a verdict (every cell recorded; the teacher solves most episodes on each layout; demos kept) |
+| `setup` | Experiment `object-full`: 10 tasks, 25 scenes on each layout (`--replace`, so it also fixes an existing one), programs of tasks 0–1 from preflight2, `t2v.sh check` (a missing program is expected) |
+| `start` | In the background: one session of coding agents for the tasks without a program (`session.sh`, log `logs/<time>-agents.log`), then `collect --follow` taking each program as its agent finishes. Refuses when a collection already runs |
+| `status` | The collection table, and each agent: working, or finished with its held-out score |
+| `stop` | Stops the collection (and its background jobs) and the agents' session; finished work is kept; `start` continues |
+| `datasets` | After the collection: `main-25` (alt1–3), `control-25` (official partner's layout), and their π0.5 copies |
+
+Where things are, per experiment (`outputs/trace2vla/<name>/`): `logs/` holds the steps' logs,
+the agents' log and `collect`'s own log; `logs/collect/` one log per background grading and
+conversion job (`<time>-prepare-<scene set>-task<NN>.log`) and the final pass; `collect.json` the
+state; `teacher/<scene set>/task_<NN>/` the teacher's runs; `demos/<scene set>-3x/`;
+`datasets/<name>/`. The agents' session is `outputs/sessions/<time>-objagents/`, linked from the
+Pipeline tab, as is each agent's conversation.
+
+Checked for real (13 November, CPU, stand-in programs and services; the agents' session a
+stand-in): `pilot` (30 episodes on all five layouts, background jobs, final pass, verdict);
+`setup`; `start` with an agent finishing mid-run (its program taken, its task recorded on all
+layouts); a second `start` refused; `stop` in the middle (status "stopped", no process left,
+every claim released) and `start` again (only the 13 missing episodes recorded; the episode cut
+off by the stop kept on disk and not counted); the Pipeline tab and its links (session, agent
+conversation, full log, each job's log).
+
+Pulling while things run is safe: `git pull` writes new files instead of editing them in
+place, so a running shell script keeps reading its old copy (checked), and running Python
+processes keep the code they loaded. The services' and reservation scripts do not change.
+Restart the dashboard after a pull to get the new pages.
 
 Start the model services yourself (`scripts/gpu/services.sh start`) before the session and the
 collection: a session that started the services stops them when it ends, and the collection
