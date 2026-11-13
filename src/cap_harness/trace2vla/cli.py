@@ -793,6 +793,63 @@ def cmd_eval_steps(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_checkpoints(args: argparse.Namespace) -> int:
+    """Where training checkpoints are kept; set that place; move existing ones there."""
+    from cap_harness.trace2vla import checkpoints
+
+    experiments = Experiment.open(args.name).root.parent if args.name else OUTPUTS
+    if args.set_root is not None:
+        root = None if args.set_root.lower() in ("", "none") else Path(args.set_root)
+        chosen = checkpoints.set_root(experiments, root)
+        if chosen is None:
+            print("checkpoint root cleared: new training runs keep checkpoints in their run folder")
+        else:
+            free = shutil.disk_usage(chosen).free
+            print(f"checkpoint root: {chosen} ({checkpoints.human(free)} free)")
+            print("new training runs write their checkpoints there; their run folder links to them")
+    root = Path(args.to) if args.to else checkpoints.checkpoint_root(experiments)
+    source = (
+        f"{checkpoints.ENV} environment variable"
+        if checkpoints.ENV in os.environ
+        else str(experiments / checkpoints.SETTING)
+    )
+    if args.set_root is None:
+        print(
+            f"checkpoint root: {root or 'none (checkpoints stay in each run folder)'}  [{source}]"
+        )
+    if not args.name:
+        return 0
+    experiment = Experiment.open(args.name)
+    runs = sorted(p.parent for p in experiment.root.glob("training/*/run.json"))
+    if not runs:
+        print(f"no training runs in {experiment.root}")
+        return 0
+    if args.move and root is None:
+        print(
+            "error: no checkpoint root: set one with --set-root DIR (or pass --to DIR)",
+            file=sys.stderr,
+        )
+        return 2
+    failed = 0
+    for run in runs:
+        where = checkpoints.location(run)
+        line = f"  {run.name:<24} {where['kind']:<8} {checkpoints.human(where['bytes']):>9}  {where['path'] or '-'}"
+        if not args.move:
+            print(line)
+            continue
+        result = checkpoints.move(run, root, dry_run=args.dry_run)  # type: ignore[arg-type]
+        print(f"  {run.name:<24} {result['action']}: {result['detail']}", flush=True)
+        if result["action"] == "error":
+            failed += 1
+        if result["action"] == "moved":
+            experiment.log(
+                "checkpoints_moved", run=run.name, to=result["to"], bytes=result["bytes"]
+            )
+    if args.move and args.dry_run:
+        print("nothing moved (without --dry-run they would be)")
+    return 1 if failed else 0
+
+
 def cmd_grade_student(args: argparse.Namespace) -> int:
     """Label an existing student run: replay each episode's stored actions and grade it."""
     ensure_runtime_env()
@@ -1086,6 +1143,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="skip step 0 (the checkpoint the run started from)",
     )
+
+    c = add("checkpoints", cmd_checkpoints, needs_name=False)
+    c.add_argument("name", nargs="?", help="an experiment: list (or --move) its runs' checkpoints")
+    c.add_argument(
+        "--set-root", help="where checkpoints go from now on (an absolute path; none clears)"
+    )
+    c.add_argument("--move", action="store_true", help="move existing checkpoints to the root")
+    c.add_argument("--to", help="move to this folder instead of the root")
+    c.add_argument("--dry-run", action="store_true", help="with --move: show, change nothing")
 
     c = add("grade-student", cmd_grade_student, needs_name=False)
     c.add_argument("run", help="a student benchmark run folder")

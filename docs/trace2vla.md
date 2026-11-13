@@ -109,6 +109,7 @@ inputs.
 | Path | What |
 |---|---|
 | `src/cap_harness/vla/` | The student: SmolVLA or π0.5 through ASPIRE's simulator, benchmark runner, offline grader, parity check |
+| `src/cap_harness/trace2vla/checkpoints.py` | Where training checkpoints are kept (`t2v.sh checkpoints`): a bigger disk, linked from each run folder |
 | `src/cap_harness/vla/students.py` | The two students: checkpoint, environment, camera names, training defaults, reference numbers; which student an old record belongs to |
 | `scripts/bootstrap_pi05.sh` | Builds `.venv-pi05` for π0.5 (`vla.sh setup-pi05`) without touching SmolVLA's environment |
 | `src/cap_harness/trace2vla/` | The pipeline: experiment store and ledger, scene sets, teacher stage, converter, dataset writer, trainer wrapper, report, command line |

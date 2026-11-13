@@ -33,6 +33,7 @@ import sys
 import time
 from typing import Any
 
+from cap_harness.trace2vla import checkpoints
 from cap_harness.trace2vla.store import atomic_write, now_iso, read_json, sha256_file, write_json
 from cap_harness.vla import students
 
@@ -258,12 +259,18 @@ def train(
     student = students.get(resolved["student"])
     check_student(dataset_root, checkpoint, student)
     run_dir.mkdir(parents=True, exist_ok=True)
+    # With a checkpoint root (checkpoints.py) LeRobot writes there; run_dir/lerobot links to it.
+    output_dir = checkpoints.prepare_output(
+        run_dir, checkpoints.checkpoint_root(run_dir.parent.parent.parent)
+    )
+    if output_dir != run_dir / checkpoints.LINK:
+        print(f"checkpoints in {output_dir} (linked from {run_dir / checkpoints.LINK})", flush=True)
     command = build_command(
         python=python,
         checkpoint=checkpoint,
         dataset_root=dataset_root,
         repo_id=manifest.get("repo_id", f"trace2vla/{dataset_root.name}"),
-        output_dir=run_dir / "lerobot",
+        output_dir=output_dir,
         name=run_dir.name,
         settings=resolved,
     ) + list(extra_args or [])
@@ -274,6 +281,8 @@ def train(
         "command": command,
         "student": student.describe(),
         "base_checkpoint": str(checkpoint),
+        # Where LeRobot writes: run_dir/lerobot, or the checkpoint root it links to.
+        "checkpoint_dir": str(output_dir),
         "dataset": str(dataset_root),
         "dataset_manifest_sha256": sha256_file(dataset_root / "manifest.json")
         if (dataset_root / "manifest.json").is_file()

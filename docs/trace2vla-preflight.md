@@ -217,6 +217,41 @@ scripts/gpu/t2v.sh eval-steps --detach preflight --checkpoint ft-curve --follow 
 * A rerun skips steps already evaluated (and resumes one that was stopped);
   `t2v.sh stop preflight eval-steps` stops only the probes.
 
+### Where checkpoints are kept (a bigger disk)
+
+A checkpoint is large: about 2 GB for full SmolVLA, about 20 GB for full π0.5 (LoRA: tens of MB).
+Keep them on a big disk: set the place once per machine, and every training run from then on
+writes there, with its run folder linking to it.
+
+```bash
+scripts/gpu/t2v.sh checkpoints --set-root /data/hossein/aspire-checkpoints
+```
+
+Move the checkpoints of runs that already exist (finished runs only: a run whose training, or
+an evaluation of one of its checkpoints, is still running is skipped; run it again later):
+
+```bash
+scripts/gpu/t2v.sh checkpoints preflight --move --dry-run
+```
+
+```bash
+scripts/gpu/t2v.sh checkpoints preflight --move
+```
+
+```bash
+scripts/gpu/t2v.sh checkpoints preflight
+```
+
+* Layout: `<root>/<experiment>/<run>/checkpoints/<step>/…`, the same folders LeRobot writes.
+* `training/<run>/lerobot` becomes a link to that folder. Every path already recorded (in
+  `run.json`, `eval.json`, the ledger) keeps working through it, `eval --checkpoint RUN@STEP` and
+  `eval-steps` find the checkpoints as before, and the dashboard's downloads skip them.
+* The move copies, checks every file's size and every link, and only then replaces the folder;
+  a failed copy changes nothing. Each moved run gets a `checkpoints-moved.json`, and the ledger a
+  `checkpoints_moved` event.
+* `ASPIRE_CHECKPOINT_ROOT` overrides the setting for one shell (empty: keep checkpoints in the
+  run folder). The setting itself is `outputs/trace2vla/checkpoint-root.txt`.
+
 ## Step 8: student after training, and the report
 
 ```bash

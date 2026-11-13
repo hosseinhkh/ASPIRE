@@ -17,6 +17,8 @@
 #   scripts/gpu/t2v.sh grade-student RUN_DIR      failure labels for an existing student run
 #   scripts/gpu/t2v.sh report NAME                teacher vs student before vs after
 #   scripts/gpu/t2v.sh status [NAME]              what exists, what is running, last events
+#   scripts/gpu/t2v.sh checkpoints [NAME] [--set-root DIR] [--move]   where checkpoints are kept;
+#                                                 move them to a bigger disk (a link stays)
 #   scripts/gpu/t2v.sh logs NAME                  the newest log of the experiment, followed
 #   scripts/gpu/t2v.sh stop NAME [STAGE]          stop its background stages (or only STAGE: train, eval, ...)
 #
@@ -78,7 +80,7 @@ run_stage() {  # run_stage STAGE ARGS...
 }
 
 case "$cmd" in
-  init|check|teacher-add|teacher-import|report|status)
+  init|check|teacher-add|teacher-import|report|status|checkpoints)
     run_stage "$cmd" "$@" ;;
   teacher-run)
     echo "teacher-run uses the conda env's GPU (ASPIRE_GPU=${ASPIRE_GPU:-unset}) and the model services" >&2
