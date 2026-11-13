@@ -136,11 +136,13 @@ def overview(root: Path) -> dict[str, Any]:
         )
     # Totals: the scene sets that become demonstrations (test scenes are graded, never converted),
     # of this collection when there is one.
+    wanted = {int(t) for t in status.get("tasks") or tasks}
     counted = [
         c
         for s in sets
         if s["role"] != "test" and (s["in_collection"] or not collected)
         for c in s["cells"]
+        if c["task"] in wanted
     ]
     totals = {
         "planned": sum(c["planned"] for c in counted),

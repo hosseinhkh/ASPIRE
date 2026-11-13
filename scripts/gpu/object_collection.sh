@@ -2,23 +2,31 @@
 # The libero_object_swap data collection, one command per step. Each step prints every command
 # before running it, stops at the first error, and keeps its log in the experiment's logs/.
 #
-#   scripts/gpu/object_collection.sh pilot      light test (~20-30 min, in this terminal): tasks 0-1
-#                                               x 5 layouts x 3 scenes through the whole pipeline
-#                                               (experiment object-pilot), a dataset, a verdict
+#   scripts/gpu/object_collection.sh agent-test TASK
+#                                               one coding agent writes task TASK's program against
+#                                               all five layouts (in this terminal, ~45-75 min, one
+#                                               agent's LLM cost), then the program records 3 new
+#                                               scenes of each layout (experiment object-agent-test)
+#                                               and a verdict says whether it is good enough
+#   scripts/gpu/object_collection.sh pilot      pipeline test (~20-30 min): tasks 0-1 x 5 layouts x
+#                                               3 scenes with the preflight's programs (experiment
+#                                               object-pilot), a dataset, a verdict
 #   scripts/gpu/object_collection.sh setup      the experiment object-full: 10 tasks, 25 scenes on
-#                                               each of the 5 layouts, the programs of tasks 0-1,
-#                                               then t2v.sh check
+#                                               each of the 5 layouts, then t2v.sh check
 #   scripts/gpu/object_collection.sh start      in the background: the coding agents for the tasks
-#                                               without a program (one session), and t2v.sh collect,
-#                                               which takes each program as its agent finishes
+#                                               without a program (one session; each agent develops
+#                                               against all five layouts), and t2v.sh collect, which
+#                                               takes each program as its agent finishes
 #   scripts/gpu/object_collection.sh status     where it stands (also: the dashboard's Pipeline tab)
 #   scripts/gpu/object_collection.sh stop       stop both; finished work is kept, start continues
 #   scripts/gpu/object_collection.sh datasets   after the collection: main-25 (alt1-3), control-25
 #                                               (the official partner's layout), their pi0.5 copies
 #
 # Settings (environment variables): EXP=object-full TASKS=0-9 PILOT=object-pilot SCENES=25
-# WORKERS=2 PREPARE_WORKERS=6 DATASET_WORKERS=4 PROGRAMS=outputs/trace2vla/preflight2/teacher/programs
-# LLM_BUDGET=25 LLM_TOTAL_BUDGET=200 AGENTS_NAME=objagents; COLLECT_FLAGS="--no-videos" adds flags
+# WORKERS=2 PREPARE_WORKERS=6 DATASET_WORKERS=4 PROGRAMS= (a folder of task_NN.py for setup to
+# register; default none: every program comes from an agent) PILOT_PROGRAMS=preflight2's
+# AGENT_TEST=object-agent-test AGENT_LAYOUTS=all ("" = the official layout only)
+# LLM_BUDGET=25 LLM_TOTAL_BUDGET=250 AGENTS_NAME=objagents; COLLECT_FLAGS="--no-videos" adds flags
 # to t2v.sh collect; SKIP_CHECK=1 skips t2v.sh check;
 # SESSION_SH replaces scripts/gpu/session.sh (tests).
 # The model services must be up first (scripts/gpu/services.sh start). Started by you, they stay
@@ -34,9 +42,14 @@ SCENES="${SCENES:-25}"
 WORKERS="${WORKERS:-2}"
 PREPARE_WORKERS="${PREPARE_WORKERS:-6}"
 DATASET_WORKERS="${DATASET_WORKERS:-4}"
-PROGRAMS="${PROGRAMS:-outputs/trace2vla/preflight2/teacher/programs}"
+PROGRAMS="${PROGRAMS:-}"
+PILOT_PROGRAMS="${PILOT_PROGRAMS:-outputs/trace2vla/preflight2/teacher/programs}"
+AGENT_TEST="${AGENT_TEST:-object-agent-test}"
+AGENT_LAYOUTS="${AGENT_LAYOUTS-all}"
 LLM_BUDGET="${LLM_BUDGET:-25}"
-LLM_TOTAL_BUDGET="${LLM_TOTAL_BUDGET:-200}"
+LLM_TOTAL_BUDGET="${LLM_TOTAL_BUDGET:-250}"
+#: Minutes one agent may need (the Bedrock key must outlive them all).
+AGENT_MINUTES=75
 AGENTS_NAME="${AGENTS_NAME:-objagents}"
 SESSION_SH="${SESSION_SH:-scripts/gpu/session.sh}"
 read -r -a COLLECT_EXTRA <<< "${COLLECT_FLAGS:-}"
@@ -107,15 +120,32 @@ make_scenes() {  # make_scenes EXP FIRST-LAST: the five training layouts, that m
   run $T2V scenes "$1" --add train --replace --seeds "$2" --role train
 }
 
-add_programs() {  # tasks 0 and 1 from the preflight, unless they have one already
-  local missing
-  missing=" $(missing_programs "$1") "
-  if [[ "$missing" == *" 0 "* || "$missing" == *" 1 "* ]]; then
-    [[ -d "$PROGRAMS" ]] || die "no programs folder $PROGRAMS (set PROGRAMS=...)"
-    run $T2V teacher-add "$1" --from "$PROGRAMS"
-  else
-    echo "tasks 0 and 1 have their programs"
+add_programs() {  # add_programs EXP FOLDER: register FOLDER's task_NN.py for tasks without one
+  [[ -n "$2" ]] || { echo "no programs registered here: each task's program comes from its coding agent"; return; }
+  [[ -d "$2" ]] || die "no programs folder $2"
+  local missing task
+  missing="$(missing_programs "$1")"
+  for task in $missing; do
+    if [[ -f "$2/task_$(printf %02d "$task").py" ]]; then
+      run $T2V teacher-add "$1" --from "$2"
+      return
+    fi
+  done
+  echo "the tasks with a program in $2 have theirs already"
+}
+
+bedrock_ready() {  # bedrock_ready AGENTS: credentials set, and the key outlives that many agents
+  [[ -n "${ANTHROPIC_MODEL:-}" && "${CLAUDE_CODE_USE_BEDROCK:-}" == 1 ]] \
+    || die "Bedrock is not configured: scripts/gpu/set_credentials.sh, then conda deactivate && conda activate aspire"
+  if [[ -n "${AWS_BEARER_TOKEN_BEDROCK:-}" ]]; then
+    local need=$((AGENT_MINUTES * $1)) status=0
+    "$PY" scripts/gpu/bedrock_key_info.py --min-minutes "$need" || status=$?
+    ((status != 2)) || die "the Bedrock key expires before the agents finish (~$need min): scripts/gpu/set_credentials.sh --api-key"
   fi
+}
+
+layouts_args() {  # the session's --llm-layouts, from AGENT_LAYOUTS
+  [[ -z "$AGENT_LAYOUTS" ]] || printf '%s\n' --llm-layouts "$AGENT_LAYOUTS"
 }
 
 check() {  # check EXP [programs-later]: t2v.sh check; stop on any FAIL (programs may come later)
@@ -144,16 +174,18 @@ from cap_harness.trace2vla.progress import overview
 view = overview(Path(sys.argv[1]))
 tot, status = view["totals"], view["collect"]
 print(f"teacher episodes {tot['recorded']}/{tot['planned']}, solved {tot['solved']}, graded "
-      f"{tot['graded']}, demos kept {tot['kept']} (rejected {tot['rejected']})")
+      f"{tot['graded']}, demos kept {tot['kept']} (rejected {tot['rejected']}), all tasks")
 problems = []
+wanted = set(status.get("tasks") or view["tasks"])
 for s in view["scene_sets"]:
     if not s["in_collection"]:
         continue
-    recorded = sum(c["recorded"] for c in s["cells"])
-    solved = sum(c["solved"] for c in s["cells"])
-    kept = sum(c["kept"] for c in s["cells"])
+    cells = [c for c in s["cells"] if c["task"] in wanted]
+    recorded = sum(c["recorded"] for c in cells)
+    solved = sum(c["solved"] for c in cells)
+    kept = sum(c["kept"] for c in cells)
     print(f"  {s['name']:<12} recorded {recorded:>3}, solved {solved:>3}, kept {kept:>3}")
-    for c in s["cells"]:
+    for c in cells:
         if c["recorded"] < c["planned"]:
             problems.append(f"{s['name']} task {c['task']}: {c['recorded']}/{c['planned']} recorded {c.get('note') or ''}")
         elif c["solved"] < 0.6 * c["recorded"]:
@@ -163,8 +195,9 @@ for s in view["scene_sets"]:
 problems += [f"conversion problem: {k} (its log in logs/collect/)" for k in (status.get("summary") or {}).get("prepare_problems", [])]
 for p in problems:
     print("  PROBLEM:", p)
-print("RESULT: passed" if not problems and tot["kept"] else "RESULT: look at the problems above")
-sys.exit(0 if not problems and tot["kept"] else 1)
+kept_here = sum(c["kept"] for s in view["scene_sets"] if s["in_collection"] for c in s["cells"] if c["task"] in wanted)
+print("RESULT: passed" if not problems and kept_here else "RESULT: look at the problems above")
+sys.exit(0 if not problems and kept_here else 1)
 PY
 }
 
@@ -176,11 +209,11 @@ cmd_pilot() {
   step "Experiment $exp: tasks 0 and 1, scenes 1001-1003 on each of the 5 layouts"
   [[ -f "$OUT/$exp/experiment.json" ]] || run $T2V init "$exp" --suite "$SUITE" --tasks 0,1 --train-seeds 1001-1003
   make_scenes "$exp" 1001-1003
-  add_programs "$exp"
+  add_programs "$exp" "$PILOT_PROGRAMS"
   step "Checks"
   check "$exp"
   step "Collection: the teacher, then grading and conversion in the background (30 episodes)"
-  run $T2V collect "$exp" --scenes "$LAYOUTS" --workers "$WORKERS" --prepare-workers 4 \
+  run $T2V collect "$exp" --scenes "$LAYOUTS" --tasks 0,1 --workers "$WORKERS" --prepare-workers 4 \
     "${COLLECT_EXTRA[@]+"${COLLECT_EXTRA[@]}"}" || true
   step "A dataset from all five layouts"
   if [[ -f "$OUT/$exp/datasets/pilot/manifest.json" ]]; then
@@ -192,13 +225,43 @@ cmd_pilot() {
   verdict "$exp"
 }
 
+cmd_agent_test() {
+  local task="${1:-}"
+  [[ "$task" =~ ^[0-9]$ ]] || die "agent-test needs a task id 0-9 (scripts/gpu/object_collection.sh agent-test 0)"
+  local exp="$AGENT_TEST"
+  log_to "$exp" "agent-test-task$task"
+  need_services
+  bedrock_ready 1
+  step "Experiment $exp: all 10 tasks, scenes 1001-1003 on each of the 5 layouts (made once)"
+  [[ -f "$OUT/$exp/experiment.json" ]] || run $T2V init "$exp" --suite "$SUITE" --tasks 0-9 --train-seeds 1001-1003
+  make_scenes "$exp" 1001-1003
+  local name="agent-task$task" marker="$OUT/$exp/logs/.agent-test-start" layouts=()
+  mapfile -t layouts < <(layouts_args)
+  touch "$marker"
+  step "Coding agent for task $task, developing against ${AGENT_LAYOUTS:-the official layout only} (this terminal; ~45-75 min)"
+  run "$SESSION_SH" run --name "$name" --tasks quick --no-preflight --llm "libero-pro:$SUITE:$task" \
+    "${layouts[@]+"${layouts[@]}"}" --llm-budget "$LLM_BUDGET" || true
+  local session program
+  session="$(find outputs/sessions -maxdepth 1 -type d -name "*-$name" -newer "$marker" 2>/dev/null | sort | tail -n 1 || true)"
+  [[ -n "$session" ]] || die "the agent's session made no folder (its output above)"
+  program="$session/agents/llm-libero-pro-$SUITE-$task/program_best.py"
+  [[ -f "$program" ]] || die "the agent wrote no program_best.py ($session; scripts/gpu/session.sh why $session)"
+  step "Its program on 3 new scenes of each layout (scenes it never saw)"
+  run $T2V teacher-add "$exp" --program "$program" --task "$task" --force
+  run $T2V collect "$exp" --scenes "$LAYOUTS" --tasks "$task" --workers "$WORKERS" --prepare-workers 4 \
+    "${COLLECT_EXTRA[@]+"${COLLECT_EXTRA[@]}"}" || true
+  step "Verdict for task $task"
+  echo "agent session: $session"
+  verdict "$exp"
+}
+
 cmd_setup() {
   log_to "$EXP" setup
   local last=$((1000 + SCENES))
   step "Experiment $EXP: tasks $TASKS, scenes 1001-$last on each of the 5 layouts"
   [[ -f "$OUT/$EXP/experiment.json" ]] || run $T2V init "$EXP" --suite "$SUITE" --tasks "$TASKS" --train-seeds "1001-$last"
   make_scenes "$EXP" "1001-$last"
-  add_programs "$EXP"
+  add_programs "$EXP" "$PROGRAMS"
   step "Checks (tasks without a program get theirs from the coding agents: start)"
   check "$EXP" programs-later
   echo
@@ -221,22 +284,17 @@ cmd_start() {
     else
       local agents=() task
       for task in $missing; do agents+=(--llm "libero-pro:$SUITE:$task"); done
-      step "Coding agents for tasks $missing (\$$LLM_BUDGET each, \$$LLM_TOTAL_BUDGET in all), in the background"
-      [[ -n "${ANTHROPIC_MODEL:-}" && "${CLAUDE_CODE_USE_BEDROCK:-}" == 1 ]] \
-        || die "Bedrock is not configured: scripts/gpu/set_credentials.sh, then conda deactivate && conda activate aspire"
-      if [[ -n "${AWS_BEARER_TOKEN_BEDROCK:-}" ]]; then
-        # Agents run one after another, up to ~45 min each: the key must outlive them all.
-        local need=$((45 * $(wc -w <<< "$missing"))) status=0
-        "$PY" scripts/gpu/bedrock_key_info.py --min-minutes "$need" || status=$?
-        ((status != 2)) || die "the Bedrock key expires before the agents finish (~$need min): scripts/gpu/set_credentials.sh --api-key"
-      fi
+      step "Coding agents for tasks $missing (\$$LLM_BUDGET each, \$$LLM_TOTAL_BUDGET in all; layouts: ${AGENT_LAYOUTS:-official only}), in the background"
+      bedrock_ready "$(wc -w <<< "$missing")"
+      local layouts=()
+      mapfile -t layouts < <(layouts_args)
       local marker="$OUT/$EXP/logs/.agents-start" log
       touch "$marker"
       log="$OUT/$EXP/logs/$(date +%Y%m%d-%H%M%S)-agents.log"
-      printf '+ %s\n' "$SESSION_SH run --name $AGENTS_NAME --tasks quick --no-preflight ${agents[*]} --llm-budget $LLM_BUDGET --llm-total-budget $LLM_TOTAL_BUDGET"
+      printf '+ %s\n' "$SESSION_SH run --name $AGENTS_NAME --tasks quick --no-preflight ${agents[*]} ${layouts[*]} --llm-budget $LLM_BUDGET --llm-total-budget $LLM_TOTAL_BUDGET"
       setsid nohup "$SESSION_SH" run --name "$AGENTS_NAME" --tasks quick --no-preflight \
-        "${agents[@]}" --llm-budget "$LLM_BUDGET" --llm-total-budget "$LLM_TOTAL_BUDGET" \
-        > "$log" 2>&1 < /dev/null &
+        "${agents[@]}" "${layouts[@]+"${layouts[@]}"}" --llm-budget "$LLM_BUDGET" \
+        --llm-total-budget "$LLM_TOTAL_BUDGET" > "$log" 2>&1 < /dev/null &
       pid=$!
       echo "$pid" > "$OUT/$EXP/logs/agents.pid"
       echo "agents' session started (pid $pid); its terminal output: $log"
@@ -318,6 +376,7 @@ cmd_datasets() {
 }
 
 case "${1:-}" in
+  agent-test) shift; cmd_agent_test "$@" ;;
   pilot) cmd_pilot ;;
   setup) cmd_setup ;;
   start) cmd_start ;;

@@ -9,9 +9,11 @@
 #   scripts/gpu/demo.sh llm       [--benchmark libero-pro|robosuite] [--suite S] [--task-id N]
 #                                 [--dev-seeds "51 52 53"] [--heldout-seeds "1 2 3"]
 #                                 [--max-versions 4] [--max-turns 120] [--budget-usd 20]
-#                                 [--out DIR] [--write-skills]
+#                                 [--out DIR] [--write-skills] [--layouts all|S1,S2,...]
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
+#       --layouts: one program for several layouts of the task (all: the suite and its sibling
+#       layouts); every batch runs each layout (default seeds then 51 52 / 1 2 per layout).
 #
 #   scripts/gpu/demo.sh campaign  [--tasks FILE | --suite SUITE] [--run | --headless]
 #                                 [--budget-usd 30] [--max-turns 400] [--dev-seeds "51 52 53"]
@@ -42,7 +44,7 @@ GPU="${ASPIRE_GPU:-0}"
 PY="${CAP_HARNESS_PYTHON:-python3}"
 cd "$REPO_ROOT"
 
-usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 
@@ -245,8 +247,8 @@ PY
 }
 
 cmd_llm() {
-  local benchmark="libero-pro" suite="" task_id=0 dev="" heldout="1 2 3"
-  local max_versions=4 max_turns=120 budget=20 init_mode="" out="" write_skills=0
+  local benchmark="libero-pro" suite="" task_id=0 dev="" heldout=""
+  local max_versions=4 max_turns=120 budget=20 init_mode="" out="" write_skills=0 layouts=""
   while (($#)); do
     case "$1" in
       --benchmark) benchmark="$2"; shift 2 ;;
@@ -259,6 +261,7 @@ cmd_llm() {
       --budget-usd) budget="$2"; shift 2 ;;
       --out) out="$2"; shift 2 ;;
       --write-skills) write_skills=1; shift ;;
+      --layouts) layouts="$2"; shift 2 ;;
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
@@ -271,6 +274,49 @@ cmd_llm() {
       init_mode=saved; venv=.venv-robosuite ;;
     *) echo "error: --benchmark must be libero-pro or robosuite" >&2; exit 2 ;;
   esac
+  # --layouts: the program must solve the task in several layouts (LIBERO-Pro's suite and its
+  # sibling layouts); every batch runs them all (scripts/gpu/layouts_batch.py).
+  if [[ -n "$layouts" ]]; then
+    [[ "$benchmark" == libero-pro ]] || { echo "error: --layouts is for libero-pro" >&2; exit 2; }
+    if [[ "$layouts" == all ]]; then
+      layouts="$("$REPO_ROOT/.venv-libero/bin/python" - "$suite" <<'PY'
+import sys
+from cap_harness.libero import layouts
+print(",".join([sys.argv[1], *sorted(n for n, s in layouts.suites().items() if s.get("base") == sys.argv[1])]))
+PY
+)"
+    fi
+    [[ "$layouts" == *,* ]] || { echo "error: no sibling layouts of $suite (--layouts LIST)" >&2; exit 2; }
+    # Two scenes per layout keep a batch short; it runs every layout.
+    dev="${dev:-51 52}"; heldout="${heldout:-1 2}"
+  fi
+  heldout="${heldout:-1 2 3}"
+  local batch layouts_note=""
+  if [[ -n "$layouts" ]]; then
+    batch="$venv/bin/python scripts/gpu/layouts_batch.py --layouts $layouts --task-id $task_id --init-mode $init_mode --workers 2"
+    local count list
+    count="$(tr ',' '\n' <<< "$layouts" | wc -l | tr -d ' ')"
+    list="$(sed 's/,/`, `/g' <<< "$layouts")"
+    layouts_note="$(cat <<'NOTE'
+
+This task is solved in @COUNT@ layouts, and one program must solve all of them: the target object
+stands in a different place in each (the same objects, the same instruction). The layouts are the
+suites `@LIST@`; the first is the official one. Every development and held-out batch below runs
+each layout and adds them up in one `batch.json`: each layout's own runs and `batch.json` are in
+`<output-root>/<layout>/`, and the combined file's `layouts` section gives each layout's result.
+Find everything from what the program observes; never hard-code a position or an approach
+direction that works in one layout only. When a version fails in some layouts, open the
+keyframes of a failing and a passing layout side by side before changing anything. To look at
+another layout in step 2, run the probe with `--suite` set to that layout (it counts toward the 4
+probe runs).
+NOTE
+)"
+    layouts_note="${layouts_note//@COUNT@/$count}"
+    layouts_note="${layouts_note//@LIST@/$list}
+"
+  else
+    batch="$venv/bin/cap-harness run-batch --benchmark $benchmark --suite $suite --task-id $task_id --init-mode $init_mode --workers 1"
+  fi
   require_runtime_env
   require_services
   set_claude_flags 75
@@ -317,7 +363,7 @@ cmd_llm() {
     "CAP_HARNESS=$venv/bin/cap-harness" "PYTHON=$venv/bin/python" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
     "INIT_MODE=$init_mode" "MAX_VERSIONS=$max_versions" "FIRST_DEV_SEED=${dev%% *}" \
     "CUROBO_NOTE=$curobo_note" "SKILLS_DIR=$skills_dir" "LESSONS_LINE=$lessons_line" \
-    "SKILLS_STEP=$skills_step"
+    "SKILLS_STEP=$skills_step" "BATCH=$batch" "LAYOUTS_NOTE=$layouts_note"
   local extra=(--max-turns "$max_turns")
   # Capture first: `| grep -q` under pipefail fails when grep exits before the writer.
   if [[ "$(claude --help 2>/dev/null)" == *--max-budget-usd* ]]; then
@@ -327,6 +373,7 @@ cmd_llm() {
   step "Claude Code ($ANTHROPIC_MODEL) on $benchmark/$suite task $task_id"
   echo "workspace: $ws"
   echo "dev seeds: $dev | held-out seeds: $heldout | max versions: $max_versions | budget: \$$budget"
+  [[ -z "$layouts" ]] || echo "layouts (every batch runs each): ${layouts//,/, }"
   echo "full transcript: $ws/transcript.jsonl  (Ctrl-C stops the agent)"
   echo
   local status=0

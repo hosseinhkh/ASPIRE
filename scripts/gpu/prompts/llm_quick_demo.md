@@ -13,7 +13,7 @@ Write a Code-as-Policy program for {{BENCHMARK}} suite `{{SUITE}}`, task id {{TA
 The suite name is the benchmark variant, not the task: in LIBERO-Pro, a suffix such as `_swap`
 names how the scene layout is perturbed. Do what the instruction says, and keep reading it from
 `get_task_context().language` inside the program rather than hard-coding it.
-
+{{LAYOUTS_NOTE}}
 1. Read `docs/api-reference.md` and `docs/run-artifacts.md`, then
    `{{SKILLS_DIR}}/README.md` and the skill files it indexes.
    Do NOT read `examples/` or any `*_fix_code.py`: write your own program.
@@ -45,9 +45,8 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    seeds:
 
    ```
-   {{CAP_HARNESS}} run-batch --benchmark {{BENCHMARK}} --suite {{SUITE}} --task-id {{TASK_ID}} \
-     --seeds {{DEV_SEEDS}} --init-mode {{INIT_MODE}} --program {{WS}}/program_v01.py \
-     --output-root {{WS}}/dev_v01 --workers 1
+   {{BATCH}} \
+     --seeds {{DEV_SEEDS}} --program {{WS}}/program_v01.py --output-root {{WS}}/dev_v01
    ```
 
    Keep run-batch's defaults for the cameras (800x512) and the episode length: they are the

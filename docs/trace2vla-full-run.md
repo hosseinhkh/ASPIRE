@@ -83,6 +83,7 @@ Anchors that show the setup is right (each base model on the standard suites):
 | C7 | Collection needed one command per stage and per scene set, and waited for every program first | **Built 13 November:** `t2v.sh collect` (section 7): programs taken from the session as each agent finishes, teacher task by task, grading and conversion of each finished (scene set, task) in the background, retries, a status file. Tested with stand-ins (15 tests) and run for real with recorded episodes (background jobs, final pass, status, a second collection refused) |
 | C8 | A dataset could be built from test or dev scenes | **Fixed:** `dataset` refuses demo sets made from a test or dev scene set (`--allow-heldout` to override) |
 | C9 | `check` loaded only the experiment's own suite | **Fixed:** it also loads every task on each sibling layout a scene set uses |
+| P10 | The preflight's programs fail on the new layouts (pilot: task 0 solved 0/12 on alt1–4, 3/3 on the official partner's; task 1 failed on alt2; perception right in all 30) | **Being addressed:** agents develop one program per task against all five layouts (`--llm-layouts all`); `setup` no longer reuses the preflight's programs; test one task first with `object_collection.sh agent-test N`. Details: findings P10 |
 | C10 | The dashboard showed no collection progress | **Built:** Pipeline tab (per task and scene set), a "Now running" card, a Collection column on the experiment list, the demo sets behind each dataset |
 
 ## 3. Built for the full run (13 November): sibling layouts
@@ -218,9 +219,10 @@ the experiment's `logs/` (`<time>-object_collection-<step>.log`):
 
 | Step | What it does |
 |---|---|
-| `pilot` | Light test, in the terminal (about 20–30 min): experiment `object-pilot`, tasks 0–1 × 5 layouts × 3 scenes through `collect`, a dataset, and a verdict (every cell recorded; the teacher solves most episodes on each layout; demos kept) |
-| `setup` | Experiment `object-full`: 10 tasks, 25 scenes on each layout (`--replace`, so it also fixes an existing one), programs of tasks 0–1 from preflight2, `t2v.sh check` (a missing program is expected) |
-| `start` | In the background: one session of coding agents for the tasks without a program (`session.sh`, log `logs/<time>-agents.log`), then `collect --follow` taking each program as its agent finishes. Refuses when a collection already runs |
+| `agent-test N` | One coding agent writes task N's program against all five layouts (in the terminal, about 45–75 min, one agent's LLM cost), then the program records 3 new scenes of each layout (experiment `object-agent-test`) and a verdict says whether it works on every layout |
+| `pilot` | Pipeline test (about 20–30 min): experiment `object-pilot`, tasks 0–1 × 5 layouts × 3 scenes with the preflight's programs through `collect`, a dataset, and a verdict |
+| `setup` | Experiment `object-full`: 10 tasks, 25 scenes on each layout (`--replace`, so it also fixes an existing one), `t2v.sh check` (missing programs are expected). It registers no program unless `PROGRAMS=folder` is set: every program comes from an agent that saw all five layouts |
+| `start` | In the background: one session of coding agents for the tasks without a program, each developing against all five layouts (`AGENT_LAYOUTS=all`; log `logs/<time>-agents.log`), then `collect --follow` taking each program as its agent finishes. Refuses when a collection already runs |
 | `status` | The collection table, and each agent: working, or finished with its held-out score |
 | `stop` | Stops the collection (and its background jobs) and the agents' session; finished work is kept; `start` continues |
 | `datasets` | After the collection: `main-25` (alt1–3), `control-25` (official partner's layout), and their π0.5 copies |

@@ -24,6 +24,7 @@ Last updated: 12 November 2026 (evening).
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
 | S1 | Fine-tuned SmolVLA: 0% → 86% on the swap suite, 89% → ~0% on the standard layouts, forgetting complete by step 500 | Open: most likely a position shortcut; next: replay mixing, LoRA, π0.5 for comparison |
+| P10 | The preflight's teacher programs do not transfer to the new layouts: in the pilot (13 November) task 0 solved 0 of 12 episodes on alt1–4 (3 of 3 on the official partner's layout), task 1 failed on alt2; perception was right in all 30 | **Open, being addressed:** a coding agent now develops one program per task against all five layouts (`session.sh --llm-layouts all`); `object_collection.sh agent-test N` tests one task |
 | P6 | The dataset step rejected successful demos for a state drift of 1–5×10⁻⁵ (`d50`: 77 of 98 kept, all 21 rejections in task 1) | **Fixed 12 November** (cause: float32 rounding of the stored actions). A dataset built before the fix is valid, only smaller; the preflight trains on `d50` as it is |
 
 ## Teacher (the ASPIRE agent and its programs)
@@ -380,6 +381,43 @@ re-execution had not succeeded by then stopped the whole `convert` command (seen
 episode replayed from another seed's starting state). The loop now stops there and the demo is
 rejected as `re-execution_failed`, like any other failed re-execution. Conversion and grading also
 report a failing episode and go on with the others (`--workers`, P9's test run).
+
+### P10. Programs written on the official layout fail where the target has moved (13 November)
+
+The pilot (`object_collection.sh pilot`: tasks 0–1, the five layouts, 3 scenes each, the
+preflight's programs) recorded 30 episodes. The teacher found the right object in all 30 (graded
+`chosen` is the target every time), so perception is not the problem. What failed is physical:
+
+| Layout | Task 0 (alphabet soup) | Task 1 (cream cheese) |
+|---|---|---|
+| official partner's (`train`) | 3/3 | 3/3 |
+| alt1 | 0/3: "grasp descent failed": the soup stands between other objects and the open gripper stops on one | 3/3 |
+| alt2 | 0/3: lifted, then dropped 3 cm from where it stood | 0/3: never lifted (one "closed on nothing") |
+| alt3 | 0/3: lifted, then dropped | 3/3 solved, all 3 rejected at conversion (below) |
+| alt4 | 0/3: lifted, then dropped | 3/3 |
+
+Task 0's program grasps straight down at the soup's point-cloud median plus 1 cm with a fixed
+gripper yaw (its grasp-planner call returns candidates below the table, T1, so it always used
+this fallback). On the layout it was written on the gripper closes to 0.60 and holds the can; on
+alt2–4 it closes to 0.64–0.70 and the can slips out in transit. The program was debugged on one
+layout only (development seeds 51–53 of the official swap), so nothing pushed it to work where the
+target stands elsewhere. Evidence: `object-pilot/teacher/*/task_00/*/run-*/source/program-result.json`,
+`trace/calls/call-000024-move-to-pose/input.json` (the grasp pose), `close-gripper/output.json`
+(`gripper_position`), `grades/*/task_00/seed_*.json` (`target_lifted`, `moved_m`).
+
+Alt3, task 1: the teacher solved all 3, but the conversion's 3× re-execution lost the cream cheese
+(8 mm mean tracking lag, 21 mm worst). At 2× it failed too; at 1× two of three passed but took
+395–400 steps, over the student's 280. The teacher's grasp there is marginal: it works only when
+the hand follows the recording within about a millimetre. `convert --fallback-speeds 2` now
+exists (each demo records its speed), off by default.
+
+Response: the coding agent develops one program per task against all five layouts. `demo.sh llm
+--layouts all` (and `session.sh --llm-layouts all`) runs every development and held-out batch on
+each layout (`scripts/gpu/layouts_batch.py`, one combined `batch.json` with each layout's result)
+and tells the agent that one program must solve all of them and never hard-code a position. One
+agent per task rather than one per (task, layout): ten sessions instead of fifty, one program per
+task, and a teacher that does not need re-programming for each placement. A task whose program
+still fails on some layout can get a per-layout agent afterwards.
 
 ### P4. Facts that shaped the design
 

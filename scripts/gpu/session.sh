@@ -7,7 +7,8 @@
 #                              [--llm-budget USD] [--llm-total-budget USD]
 #                              [--llm-max-turns N] [--llm-max-versions N] [--llm-write-skills]
 #                              [--llm-dev-seeds "51 52"]
-#                              [--llm-heldout-seeds "1 2 3"] [--no-preflight] [--no-curobo]
+#                              [--llm-heldout-seeds "1 2 3"] [--llm-layouts all|S1,S2,...]
+#                              [--no-preflight] [--no-curobo]
 #                              [--keep-services] [--graspnet-cpu] [--reserve GIB]
 #                              [--wandb offline|online|off] [--gpu N]
 #   scripts/gpu/session.sh report SESSION_DIR [--wandb offline|online|off]
@@ -36,7 +37,7 @@ SERVICE_LOG_DIR="${CAP_HARNESS_SERVICE_LOG_DIR:-$REPO_ROOT/validation-artifacts/
 TOOLS_VENV="${ASPIRE_TOOLS_VENV:-$REPO_ROOT/.venv-tools}"
 declare -A PORTS=([sam3]=8114 [contact_graspnet]=8115 [pyroki]=8116 [curobo]=8118)
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 port_up() { curl --fail --silent --max-time 2 "http://127.0.0.1:$1/openapi.json" >/dev/null; }
 now() { printf '%s' "${EPOCHREALTIME:-$(date +%s.%N)}"; }
@@ -335,6 +336,8 @@ run_agent() {  # run_agent BENCHMARK:SUITE:TASK
   [[ -n "$LLM_MAX_VERSIONS" ]] && args+=(--max-versions "$LLM_MAX_VERSIONS")
   [[ -n "$LLM_DEV_SEEDS" ]] && args+=(--dev-seeds "$LLM_DEV_SEEDS")
   [[ -n "$LLM_HELDOUT_SEEDS" ]] && args+=(--heldout-seeds "$LLM_HELDOUT_SEEDS")
+  # One program for every layout of the task: each batch runs them all (demo.sh --layouts).
+  [[ -n "$LLM_LAYOUTS" ]] && args+=(--layouts "$LLM_LAYOUTS")
   ((LLM_WRITE_SKILLS)) && args+=(--write-skills)
   local status=0
   scripts/gpu/demo.sh llm "${args[@]}" || status=$?
@@ -435,7 +438,7 @@ cmd_run() {
   local name="tasks" tasks="standard" seeds="1" preflight=1 curobo=1 wandb_mode=offline
   local graspnet_cpu=0
   local -a llm=()
-  KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_MAX_VERSIONS="" LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS=""
+  KEEP_SERVICES=0 LLM_BUDGET=10 LLM_MAX_TURNS=120 LLM_MAX_VERSIONS="" LLM_DEV_SEEDS="" LLM_HELDOUT_SEEDS="" LLM_LAYOUTS=""
   LLM_WRITE_SKILLS=0
   local llm_total="" llm_spent=0
   while (($#)); do
@@ -455,6 +458,7 @@ cmd_run() {
       --llm-write-skills) LLM_WRITE_SKILLS=1; shift ;;
       --llm-dev-seeds) LLM_DEV_SEEDS="$2"; shift 2 ;;
       --llm-heldout-seeds) LLM_HELDOUT_SEEDS="$2"; shift 2 ;;
+      --llm-layouts) LLM_LAYOUTS="$2"; shift 2 ;;
       --no-preflight) preflight=0; shift ;;
       --no-curobo) curobo=0; shift ;;
       --keep-services) KEEP_SERVICES=1; shift ;;

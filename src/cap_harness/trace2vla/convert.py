@@ -24,6 +24,7 @@ For each successful teacher episode:
 from __future__ import annotations
 
 import atexit
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
@@ -41,6 +42,11 @@ from cap_harness.vla.rollout import write_video
 NOOP_THRESHOLD = 0.05
 #: Idle frames put back after each gripper change, tried in this order.
 DWELL_OPTIONS: tuple[int, ...] = (0, 4, 8)
+#: Slower speeds to try, in order, when following the teacher at the set speed loses the object.
+#: Off by default: on the one case seen (a marginal teacher grasp on a far layout, 13 November)
+#: 2x failed too and 1x passed only beyond the student's step limit, and mixing speeds in one
+#: demo set makes the demonstrations less uniform. A demo records the speed it used.
+FALLBACK_SPEEDS: tuple[float, ...] = ()
 
 
 @dataclass
@@ -50,6 +56,7 @@ class ConvertSettings:
     dwell_options: tuple[int, ...] = DWELL_OPTIONS
     image_size: int = IMAGE_SIZE
     drop_idle: bool = True
+    fallback_speeds: tuple[float, ...] = FALLBACK_SPEEDS
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,7 +65,25 @@ class ConvertSettings:
             "dwell_options": list(self.dwell_options),
             "image_size": self.image_size,
             "drop_idle": self.drop_idle,
+            "fallback_speeds": list(self.fallback_speeds),
         }
+
+    def speeds(self) -> list[float]:
+        """The set speed, then each slower fallback."""
+        speed = self.track.speed
+        return [speed, *[s for s in self.fallback_speeds if s < speed]]
+
+
+def same_demo_set(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Whether a demo set made with ``stored`` settings may take demos made with ``current``.
+    The fallback speeds are not part of a demo set's identity: they only rescue episodes the set
+    speed loses, and each demo records the speed it used.
+    """
+
+    def identity(settings: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in settings.items() if k != "fallback_speeds"}
+
+    return identity(stored) == identity(current)
 
 
 def idle_frames(actions: np.ndarray, threshold: float = NOOP_THRESHOLD) -> np.ndarray:
@@ -111,8 +136,17 @@ def convert_episode(
     }
     if not episode.success:
         return {**summary, "rejected": "teacher_failed"}
-    tracked = replay.track_in_osc(fast, episode, settings.track)
-    summary.update(tracked_steps=tracked.steps, tracking=tracked.stats)
+    tries = []
+    for speed in settings.speeds():
+        tracked = replay.track_in_osc(
+            fast, episode, dataclasses.replace(settings.track, speed=speed)
+        )
+        tries.append({"speed": speed, "success": tracked.success, "steps": tracked.steps})
+        if tracked.success:
+            break
+    summary.update(
+        tracked_steps=tracked.steps, tracking=tracked.stats, speed=speed, speed_tries=tries
+    )
     if not tracked.success:
         return {**summary, "rejected": "re-execution_failed", "labels": tracked.labels}
 
@@ -255,7 +289,7 @@ def convert_scene_set(
     root = experiment.demo_dir(name)
     root.mkdir(parents=True, exist_ok=True)
     stored = read_json(root / "settings.json")
-    if stored and stored != settings.to_dict():
+    if stored and not same_demo_set(stored, settings.to_dict()):
         raise ValueError(f"demo set {name!r} was made with other settings; choose another --name")
     keys = [f"demos-{name}-task{task_id:02d}" for task_id in tasks]
     with experiment.hold(keys, f"convert of '{scene_set}' into '{name}'"):

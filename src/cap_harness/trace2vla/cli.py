@@ -456,7 +456,10 @@ def _collect_table(experiment: Experiment) -> str:
             + (_duration(eta) if eta and status.get("status") in ("running", "waiting") else "")
             + (f" ({status['error']})" if status.get("error") and status.get("status") == "failed" else "")
         )  # fmt: skip
-        waiting = {t: p for t, p in view["programs"].items() if not p.get("registered")}
+        wanted = {str(t) for t in status.get("tasks") or view["tasks"]}
+        waiting = {
+            t: p for t, p in view["programs"].items() if not p.get("registered") and t in wanted
+        }
         for task, program in waiting.items():
             lines.append(f"  task {task}: {program.get('note') or 'no program yet'}")
     totals = view["totals"]
@@ -474,7 +477,10 @@ def _collect_table(experiment: Experiment) -> str:
         )
         width = max([16, *(len(s["name"]) + 2 for s in sets)])
         lines.append("  task" + "".join(f"{s['name']:>{width}}" for s in sets))
+        collected = set(status.get("tasks") or view["tasks"])
         for index, task in enumerate(view["tasks"]):
+            if task not in collected:
+                continue
             row = ""
             for s in sets:
                 c = s["cells"][index]
@@ -553,7 +559,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
     experiment = Experiment.open(args.name)
     settings = convert.ConvertSettings(
-        track=replay.TrackSettings(speed=args.speed), drop_idle=not args.keep_idle
+        track=replay.TrackSettings(speed=args.speed),
+        drop_idle=not args.keep_idle,
+        fallback_speeds=tuple(float(s) for s in str(args.fallback_speeds).split(",") if s.strip()),
     )
     sets = _scene_list(experiment, args.scenes)
     if args.demos and len(sets) > 1:
@@ -1387,6 +1395,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--scenes", required=True, help="a scene set, or several: a,b,c")
     c.add_argument("--speed", type=float, default=3.0, help="speed-up over the teacher (default 3)")
     c.add_argument(
+        "--fallback-speeds", default="",
+        help="slower speeds to try, in order, when --speed loses the object (e.g. 2; default none)",
+    )  # fmt: skip
+    c.add_argument(
         "--keep-idle", action="store_true", help="keep frames where the robot stands still"
     )
     c.add_argument("--tasks")
@@ -1398,6 +1410,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--demos", help="name of the demo set (default <scenes>-<speed>x)")
     c.add_argument("--workers", type=int, default=1, help=workers_help)
     c.add_argument("--speed", type=float, default=3.0, help="speed-up over the teacher (default 3)")
+    c.add_argument(
+        "--fallback-speeds", default="",
+        help="slower speeds to try, in order, when --speed loses the object (e.g. 2; default none)",
+    )  # fmt: skip
     c.add_argument(
         "--keep-idle", action="store_true", help="keep frames where the robot stands still"
     )
