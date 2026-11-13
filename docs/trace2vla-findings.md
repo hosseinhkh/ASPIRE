@@ -24,7 +24,7 @@ Last updated: 12 November 2026 (evening).
 | I2 | A busy machine makes episodes 3–15× slower; CPU load is not recorded | Open. How to check is documented |
 | I4 | Bedrock's daily token quota | Outside the repository. Teacher collection and all student stages use no LLM |
 | S1 | Fine-tuned SmolVLA: 0% → 86% on the swap suite, 89% → ~0% on the standard layouts, forgetting complete by step 500 | Open: most likely a position shortcut; next: replay mixing, LoRA, π0.5 for comparison |
-| P10 | The preflight's teacher programs do not transfer to the new layouts: in the pilot (13 November) task 0 solved 0 of 12 episodes on alt1–4 (3 of 3 on the official partner's layout), task 1 failed on alt2; perception was right in all 30 | **Open, being addressed:** a coding agent now develops one program per task against all five layouts (`session.sh --llm-layouts all`); `object_collection.sh agent-test N` tests one task |
+| P10 | The preflight's teacher programs do not transfer to the new layouts: in the pilot (13 November) task 0 solved 0 of 12 episodes on alt1–4 (3 of 3 on the official partner's layout), task 1 failed on alt2; perception was right in all 30 | **Partly fixed:** an agent developing against all five layouts solved 4 of 5 for task 0 (held-out 8/10); alt1 fails because a finger lands on the neighbouring milk carton (not reach, as the agent thought). Prompt now explains stalls; repair mode (`agent-fix`) to fix alt1 from the current program |
 | P6 | The dataset step rejected successful demos for a state drift of 1–5×10⁻⁵ (`d50`: 77 of 98 kept, all 21 rejections in task 1) | **Fixed 12 November** (cause: float32 rounding of the stored actions). A dataset built before the fix is valid, only smaller; the preflight trains on `d50` as it is |
 
 ## Teacher (the ASPIRE agent and its programs)
@@ -418,6 +418,41 @@ and tells the agent that one program must solve all of them and never hard-code 
 agent per task rather than one per (task, layout): ten sessions instead of fifty, one program per
 task, and a teacher that does not need re-programming for each placement. A task whose program
 still fails on some layout can get a per-layout agent afterwards.
+
+#### P10, continued: one agent against all five layouts (task 0, 13 November)
+
+`object_collection.sh agent-test 0`: one agent, every batch on the five layouts (development
+seeds 51–53, held-out 1–2 on each), 26 minutes, 191 turns, \$15.75.
+
+| | official | alt1 | alt2 | alt3 | alt4 |
+|---|---|---|---|---|---|
+| preflight program (pilot) | 3/3 | 0/3 | 0/3 | 0/3 | 0/3 |
+| v01, development | 3/3 | 0/3 | 3/3 | 3/3 | 3/3 |
+| v03 (a "disambiguation" that picked wrong objects) | 2/3 | 0/3 | 0/3 | 0/3 | 3/3 |
+| best (v01), held-out | 2/2 | 0/2 | 2/2 | 2/2 | 2/2 |
+
+Developing against every layout fixed three of the four layouts the old program failed on,
+in its first version. Its remaining versions all went to alt1, and none fixed it, because the
+agent misread the cause: it reported a reach limit at x = 0.667 m. The trace says otherwise: the
+inverse kinematics for the grasp pose solved (`call-*-pyroki-solve-ik`, `ok`), and the descent
+stalled 0.036 rad short (`stalled: true`). The wrist camera at the stall shows why: in alt1 the
+soup stands between the milk carton and a tall bottle, the open fingers span the image's
+left-right direction, and that direction points at the carton; the finger comes down on it.
+Front and back of the can are free. Turning the gripper 90 degrees about the vertical axis lets
+the fingers straddle the can without touching a neighbour. Evidence: the held-out runs
+`heldout/libero_object_swap_alt1/.../run-*/media/keyframes/00000{4,6}-after-move-to-pose/robot0_eye_in_hand.png`
+and `trace/calls/call-000019-move-to-pose/output.json`.
+
+Responses:
+
+* The agent prompt now says how to read such a stall: reachable (the IK solved) means contact;
+  look at the wrist image after the move; turn the gripper about the vertical axis so the
+  fingers open toward free table, chosen from where the neighbours are, never per layout.
+* Repair instead of rewrite: `demo.sh llm --start-from PROGRAM` (`session.sh --llm-start-from`,
+  `object_collection.sh agent-fix TASK`). The existing program runs first as version 1 (no new
+  program written); the agent then fixes what fails and keeps every scene it solves. This is the
+  incremental way to extend a program to a new layout or to repair one layout: the LLM is paid
+  only for what fails, and the program stays one program for every layout.
 
 ### P4. Facts that shaped the design
 

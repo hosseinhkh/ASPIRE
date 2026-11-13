@@ -8,6 +8,11 @@
 #                                               agent's LLM cost), then the program records 3 new
 #                                               scenes of each layout (experiment object-agent-test)
 #                                               and a verdict says whether it is good enough
+#   scripts/gpu/object_collection.sh agent-fix TASK [PROGRAM]
+#                                               the same, but the agent repairs an existing program
+#                                               (default: TASK's program from the last agent-test or
+#                                               agent-fix): it runs it first, then fixes only what
+#                                               fails, keeping every layout it solves
 #   scripts/gpu/object_collection.sh pilot      pipeline test (~20-30 min): tasks 0-1 x 5 layouts x
 #                                               3 scenes with the preflight's programs (experiment
 #                                               object-pilot), a dataset, a verdict
@@ -225,22 +230,35 @@ cmd_pilot() {
   verdict "$exp"
 }
 
-cmd_agent_test() {
-  local task="${1:-}"
+cmd_agent_test() {  # cmd_agent_test TASK [START_PROGRAM]: a new agent, or a repair of START_PROGRAM
+  local task="${1:-}" start="${2:-}" kind=test
   [[ "$task" =~ ^[0-9]$ ]] || die "agent-test needs a task id 0-9 (scripts/gpu/object_collection.sh agent-test 0)"
   local exp="$AGENT_TEST"
-  log_to "$exp" "agent-test-task$task"
+  [[ -z "$start" ]] || kind=fix
+  if [[ "$start" == registered ]]; then
+    start="$OUT/$exp/teacher/programs/task_$(printf %02d "$task").py"
+    [[ -f "$start" ]] || die "task $task has no program in $exp yet: run agent-test $task first, or name one (agent-fix $task FILE)"
+  fi
+  if [[ -n "$start" ]]; then
+    [[ -f "$start" ]] || die "no such program: $start"
+    start="$(cd "$(dirname "$start")" && pwd)/$(basename "$start")"
+    # The registered copy is replaced when the repair is registered: keep the one repaired.
+    mkdir -p "$OUT/$exp/logs"
+    cp "$start" "$OUT/$exp/logs/agent-fix-task$task-start-$(date +%Y%m%d-%H%M%S).py"
+  fi
+  log_to "$exp" "agent-$kind-task$task"
   need_services
   bedrock_ready 1
   step "Experiment $exp: all 10 tasks, scenes 1001-1003 on each of the 5 layouts (made once)"
   [[ -f "$OUT/$exp/experiment.json" ]] || run $T2V init "$exp" --suite "$SUITE" --tasks 0-9 --train-seeds 1001-1003
   make_scenes "$exp" 1001-1003
-  local name="agent-task$task" marker="$OUT/$exp/logs/.agent-test-start" layouts=()
+  local name="agent-$kind-task$task" marker="$OUT/$exp/logs/.agent-test-start" layouts=() repair=()
+  [[ -z "$start" ]] || repair=(--llm-start-from "$start")
   mapfile -t layouts < <(layouts_args)
   touch "$marker"
-  step "Coding agent for task $task, developing against ${AGENT_LAYOUTS:-the official layout only} (this terminal; ~45-75 min)"
+  step "Coding agent for task $task${start:+, repairing $start}, developing against ${AGENT_LAYOUTS:-the official layout only} (this terminal; ~30-75 min)"
   run "$SESSION_SH" run --name "$name" --tasks quick --no-preflight --llm "libero-pro:$SUITE:$task" \
-    "${layouts[@]+"${layouts[@]}"}" --llm-budget "$LLM_BUDGET" || true
+    "${layouts[@]+"${layouts[@]}"}" "${repair[@]+"${repair[@]}"}" --llm-budget "$LLM_BUDGET" || true
   local session program
   session="$(find outputs/sessions -maxdepth 1 -type d -name "*-$name" -newer "$marker" 2>/dev/null | sort | tail -n 1 || true)"
   [[ -n "$session" ]] || die "the agent's session made no folder (its output above)"
@@ -376,7 +394,8 @@ cmd_datasets() {
 }
 
 case "${1:-}" in
-  agent-test) shift; cmd_agent_test "$@" ;;
+  agent-test) shift; cmd_agent_test "${1:-}" ;;
+  agent-fix) shift; cmd_agent_test "${1:-}" "${2:-registered}" ;;
   pilot) cmd_pilot ;;
   setup) cmd_setup ;;
   start) cmd_start ;;

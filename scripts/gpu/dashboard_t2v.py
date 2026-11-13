@@ -264,7 +264,7 @@ class T2vStore:
         agent-test and start record the session.sh output, which names the session folder.
         """
         sessions: list[Path] = []
-        logs = sorted((root / "logs").glob("*-object_collection-agent-test-*.log")) + sorted(
+        logs = sorted((root / "logs").glob("*-object_collection-agent-*.log")) + sorted(
             (root / "logs").glob("*-agents.log")
         )
         for log in logs:

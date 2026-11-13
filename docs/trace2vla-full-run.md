@@ -220,6 +220,7 @@ the experiment's `logs/` (`<time>-object_collection-<step>.log`):
 | Step | What it does |
 |---|---|
 | `agent-test N` | One coding agent writes task N's program against all five layouts (in the terminal, about 45–75 min, one agent's LLM cost), then the program records 3 new scenes of each layout (experiment `object-agent-test`) and a verdict says whether it works on every layout |
+| `agent-fix N [PROGRAM]` | The same, but the agent repairs an existing program (default: task N's program from the last `agent-test` or `agent-fix`): it runs it first as version 1, then fixes only what fails, keeping every layout it solves. The LLM is paid only for what fails |
 | `pilot` | Pipeline test (about 20–30 min): experiment `object-pilot`, tasks 0–1 × 5 layouts × 3 scenes with the preflight's programs through `collect`, a dataset, and a verdict |
 | `setup` | Experiment `object-full`: 10 tasks, 25 scenes on each layout (`--replace`, so it also fixes an existing one), `t2v.sh check` (missing programs are expected). It registers no program unless `PROGRAMS=folder` is set: every program comes from an agent that saw all five layouts |
 | `start` | In the background: one session of coding agents for the tasks without a program, each developing against all five layouts (`AGENT_LAYOUTS=all`; log `logs/<time>-agents.log`), then `collect --follow` taking each program as its agent finishes. Refuses when a collection already runs |

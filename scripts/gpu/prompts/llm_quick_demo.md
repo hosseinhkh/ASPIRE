@@ -13,7 +13,7 @@ Write a Code-as-Policy program for {{BENCHMARK}} suite `{{SUITE}}`, task id {{TA
 The suite name is the benchmark variant, not the task: in LIBERO-Pro, a suffix such as `_swap`
 names how the scene layout is perturbed. Do what the instruction says, and keep reading it from
 `get_task_context().language` inside the program rather than hard-coding it.
-{{LAYOUTS_NOTE}}
+{{LAYOUTS_NOTE}}{{START_NOTE}}
 1. Read `docs/api-reference.md` and `docs/run-artifacts.md`, then
    `{{SKILLS_DIR}}/README.md` and the skill files it indexes.
    Do NOT read `examples/` or any `*_fix_code.py`: write your own program.
@@ -76,6 +76,17 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
    nothing (12 of 12), because the planner is run on points in the robot's base frame and its
    pose is the gripper base, not the fingertip point. Use it only for an object a top-down
    grasp cannot take, and then verify the grasp before lifting.
+
+   When a `move_to_pose` stops short with the arm no longer moving (the batch warning
+   "stopped short of its target ... something is in the way", or `stalled` in the call's
+   error details), the pose is reachable and something is touching: if that move's
+   `*-solve-ik` call in `trace/calls/` returned `ok`, it is not a reach limit. Open
+   `robot0_eye_in_hand.png` in the keyframe after that move. The two fingers are the dark pads
+   at the bottom edge of that image, so the open gripper spans the image's left-right
+   direction. If a neighbouring object stands along that direction, a finger lands on it: turn
+   the gripper about the vertical axis (change the grasp orientation's yaw, often by 90
+   degrees) so the fingers open toward free table, and choose that yaw from what the program
+   observes (where the neighbours are), never per layout or per seed.
 4. Diagnose failures in this order, and fix the failure mode, not the seed:
    a. `{{WS}}/dev_vNN/batch.json`: the `warnings` list first (run-batch also prints it). It
       names causes that the program's own error does not: a guessed or ambiguous object, a

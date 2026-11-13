@@ -12,6 +12,8 @@
 #                                 [--out DIR] [--write-skills] [--layouts all|S1,S2,...]
 #       Claude Opus 4.6 (Bedrock, via Claude Code) writes, runs and debugs a program for one task
 #       on a few development seeds, then evaluates it once on held-out seeds. ~20-60 min.
+#       --start-from PROGRAM: repair an existing program instead of writing one: it is run
+#       first as version 1, then fixed where it fails without breaking what it solves.
 #       --layouts: one program for several layouts of the task (all: the suite and its sibling
 #       layouts); every batch runs each layout (development 51 52 53 and held-out 1 2, each layout).
 #
@@ -249,6 +251,7 @@ PY
 cmd_llm() {
   local benchmark="libero-pro" suite="" task_id=0 dev="" heldout=""
   local max_versions=4 max_turns=120 budget=20 init_mode="" out="" write_skills=0 layouts=""
+  local start_from=""
   while (($#)); do
     case "$1" in
       --benchmark) benchmark="$2"; shift 2 ;;
@@ -262,6 +265,7 @@ cmd_llm() {
       --out) out="$2"; shift 2 ;;
       --write-skills) write_skills=1; shift ;;
       --layouts) layouts="$2"; shift 2 ;;
+      --start-from) start_from="$2"; shift 2 ;;
       *) echo "error: unknown option: $1" >&2; exit 2 ;;
     esac
   done
@@ -318,12 +322,36 @@ NOTE
   else
     batch="$venv/bin/cap-harness run-batch --benchmark $benchmark --suite $suite --task-id $task_id --init-mode $init_mode --workers 1"
   fi
+  if [[ -n "$start_from" ]]; then
+    [[ -f "$start_from" ]] || { echo "error: --start-from: no such program: $start_from" >&2; exit 2; }
+    start_from="$(cd "$(dirname "$start_from")" && pwd)/$(basename "$start_from")"
+  fi
   require_runtime_env
   require_services
   set_claude_flags 75
   local ws="${out:-$OUT_BASE/llm-$benchmark-$suite-$task_id-$STAMP}"
   mkdir -p "$ws"
   ws="$(cd "$ws" && pwd)"
+  # --start-from: the earlier program is version 1; the agent repairs it.
+  local start_note=""
+  if [[ -n "$start_from" ]]; then
+    cp "$start_from" "$ws/program_v01.py"
+    cp "$start_from" "$ws/program_start.py"
+    start_note="$(cat <<'NOTE'
+
+Repair, do not rewrite. An earlier program for this task is already in `@WS@/program_v01.py`
+(a copy is in `program_start.py`; it came from `@FROM@`). It solves some scenes and fails others.
+Do not write a new program from scratch: in step 3, skip writing program_v01.py and run the
+existing one as version 1 (same command, output `dev_v01`). Read its results, then fix what
+fails in the next versions while keeping everything it solves solved: each version must still
+pass the scenes the previous one passed. Step 2's probe is optional; use it only on a scene that
+fails.
+NOTE
+)"
+    start_note="${start_note//@WS@/$ws}"
+    start_note="${start_note//@FROM@/$start_from}
+"
+  fi
   local curobo_note=""
   ((CUROBO_UP)) && curobo_note=", cuRobo :8118 (first plan ~50 s while it warms up)"
   local instruction="" task_note
@@ -364,7 +392,7 @@ NOTE
     "CAP_HARNESS=$venv/bin/cap-harness" "PYTHON=$venv/bin/python" "DEV_SEEDS=$dev" "HELDOUT_SEEDS=$heldout" \
     "INIT_MODE=$init_mode" "MAX_VERSIONS=$max_versions" "FIRST_DEV_SEED=${dev%% *}" \
     "CUROBO_NOTE=$curobo_note" "SKILLS_DIR=$skills_dir" "LESSONS_LINE=$lessons_line" \
-    "SKILLS_STEP=$skills_step" "BATCH=$batch" "LAYOUTS_NOTE=$layouts_note"
+    "SKILLS_STEP=$skills_step" "BATCH=$batch" "LAYOUTS_NOTE=$layouts_note" "START_NOTE=$start_note"
   local extra=(--max-turns "$max_turns")
   # Capture first: `| grep -q` under pipefail fails when grep exits before the writer.
   if [[ "$(claude --help 2>/dev/null)" == *--max-budget-usd* ]]; then
@@ -375,6 +403,7 @@ NOTE
   echo "workspace: $ws"
   echo "dev seeds: $dev | held-out seeds: $heldout | max versions: $max_versions | budget: \$$budget"
   [[ -z "$layouts" ]] || echo "layouts (every batch runs each): ${layouts//,/, }"
+  [[ -z "$start_from" ]] || echo "repairing: $start_from (its copy is program_v01.py)"
   echo "full transcript: $ws/transcript.jsonl  (Ctrl-C stops the agent)"
   echo
   local status=0
