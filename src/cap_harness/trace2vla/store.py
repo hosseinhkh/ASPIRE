@@ -160,3 +160,15 @@ class Experiment:
 
     def eval_dir(self, name: str) -> Path:
         return self.root / "evals" / name
+
+
+def is_probe(name: str, meta: Mapping[str, Any]) -> bool:
+    """True for a short evaluation of one saved training step (``t2v.sh eval-steps``).
+
+    eval.json says so; evaluations written before it did are recognised by the name
+    eval-steps gives them, ``RUN@STEP-TAG``.
+    """
+    if "probe" in meta:
+        return bool(meta["probe"])
+    run, step = meta.get("training_run"), meta.get("checkpoint_step")
+    return run is not None and step is not None and name.startswith(f"{run}@{step}-")

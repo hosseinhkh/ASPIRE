@@ -595,6 +595,15 @@ def _checkpoint(
             if path is None:
                 raise FileNotFoundError(f"training run '{run_name}' has no checkpoint yet")
             label = f"training/{run_name}"
+        elif step == 0:
+            # Step 0 is where the run started: the base checkpoint, or the run it continued.
+            start = (read_json(run / "run.json") or {}).get("base_checkpoint")
+            if not start or not Path(start).is_dir():
+                raise FileNotFoundError(
+                    f"training run '{run_name}' does not record the checkpoint it started from"
+                )
+            path = Path(start)
+            label = f"training/{run_name}@0"
         else:
             path = checkpoint_at(run, step)
             if path is None:
@@ -650,6 +659,9 @@ def cmd_eval(args: argparse.Namespace) -> int:
             "checkpoint": policy,
             "training_run": training_run,
             "checkpoint_step": checkpoint_step,
+            # A short evaluation of one checkpoint among many (eval-steps), not a result to
+            # put next to the teacher.
+            "probe": bool(args.probe),
             "scene_set": scenes.name,
             "suite": suite,
             "student": student.key,
@@ -719,9 +731,12 @@ def cmd_eval_steps(args: argparse.Namespace) -> int:
     )
 
     def pending() -> list[int]:
+        # Step 0, the checkpoint the run started from, gives the curve its starting point on
+        # the same scenes.
+        steps = ([0] if args.start else []) + saved_steps(run)
         return [
             s
-            for s in saved_steps(run)
+            for s in steps
             if s not in done
             and (wanted is None or s in wanted)
             and (not args.every or s % args.every == 0)
@@ -737,6 +752,7 @@ def cmd_eval_steps(args: argparse.Namespace) -> int:
                     sys.executable, "-m", "cap_harness.trace2vla", "eval", str(experiment.root),
                     "--name", name, "--checkpoint", f"{run.name}@{step}",
                     "--scenes", scenes.name, "--seeds", args.seeds, "--video", args.video,
+                    "--probe",
                 ]  # fmt: skip
                 for flag, value in (
                     ("--suite", args.suite),
@@ -1048,6 +1064,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--tasks")
     c.add_argument("--video", default="all", choices=("all", "failures", "none"))
     c.add_argument("--device")
+    c.add_argument("--probe", action="store_true", help=argparse.SUPPRESS)
 
     c = add("eval-steps", cmd_eval_steps)
     c.add_argument("--checkpoint", "--run", dest="checkpoint", required=True, help="a training run")
@@ -1063,6 +1080,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--device")
     c.add_argument("--tag", help="end of each evaluation's name (default: the scene set)")
     c.add_argument("--poll", type=float, default=30.0, help="seconds between looks (--follow)")
+    c.add_argument(
+        "--no-start",
+        dest="start",
+        action="store_false",
+        help="skip step 0 (the checkpoint the run started from)",
+    )
 
     c = add("grade-student", cmd_grade_student, needs_name=False)
     c.add_argument("run", help="a student benchmark run folder")

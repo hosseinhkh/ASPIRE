@@ -2,7 +2,7 @@
 // Experiments live in outputs/trace2vla/<name>/ and are written by scripts/gpu/t2v.sh.
 import { api, esc, q, num, fileUrl, when, pct } from "../lib/util.js";
 import { card, jsonView, rate, tabs, bindTabs } from "../lib/ui.js";
-import { lineChart, moveMarkers } from "../lib/charts.js";
+import { lineChart, moveMarkers, stepChart } from "../lib/charts.js";
 
 const REFRESH_MS = 10000;
 const FAMILY = {
@@ -63,12 +63,13 @@ export async function renderExperiment(app, params, ctx) {
   const d = await api(`/api/t2v/experiment?path=${q(path)}`);
   const suite = d.settings.suite, tasks = d.settings.tasks || [];
   const official = d.teacher.official;
-  // Next to the teacher: the experiment's suite on the official scenes only. A checkpoint saved
-  // during training is shown on its training run's curve (Training tab).
+  // Next to the teacher: full evaluations of the experiment's suite on the official scenes (a
+  // chosen training step evaluated in full included). Short probes of each saved checkpoint
+  // (t2v.sh eval-steps) appear only on their training run's curve (Training tab).
   const isStep = (e) => e.checkpoint_step !== null && e.checkpoint_step !== undefined;
-  const isMain = (e) => e.suite === suite && (e.scene_set || "official") === "official";
-  const main = d.evals.filter((e) => !isStep(e) && isMain(e));
-  const other = d.evals.filter((e) => !isStep(e) && !isMain(e));
+  const isOfficial = (e) => e.suite === suite && (e.scene_set || "official") === "official";
+  const main = d.evals.filter((e) => isOfficial(e) && !e.probe);
+  const other = d.evals.filter((e) => !isOfficial(e) && !isStep(e) && !e.probe);
   // Before and after training, per student (SmolVLA and pi0.5 are compared separately).
   const studentLabels = [...new Set(main.map((e) => e.student_label || "SmolVLA"))];
   const progressCards = studentLabels.length
@@ -160,14 +161,27 @@ export async function renderExperiment(app, params, ctx) {
       <h3>Episodes</h3><div id="demo-list"><p class="muted">Loading...</p></div>`;
   };
 
-  // Evaluations of the checkpoints a run saved during training (t2v.sh eval-steps).
+  // Evaluations of the checkpoints a run saved during training (t2v.sh eval-steps): one column
+  // and one line per probe (suite and scene set), one row per step; step 0 is where it started.
   const stepEvals = (run) => {
-    const rows = d.evals
-      .filter((e) => e.training_run === run && e.checkpoint_step !== null && e.checkpoint_step !== undefined)
-      .sort((a, b) => `${a.suite} ${a.scene_set}`.localeCompare(`${b.suite} ${b.scene_set}`) || a.checkpoint_step - b.checkpoint_step);
+    const rows = d.evals.filter((e) => e.training_run === run && e.checkpoint_step !== null && e.checkpoint_step !== undefined);
     if (!rows.length) return "";
-    return `<h3>Checkpoints during training</h3><table class="table compact"><thead><tr><th>Step</th><th>Suite</th><th>Scene set</th><th>Success</th><th>Failures</th><th>Evaluation</th></tr></thead><tbody>
-      ${rows.map((e) => `<tr class="click" data-href="#/vla/run?path=${q(e.path)}"><td><b>${esc(e.checkpoint_step)}</b></td><td class="mono small">${esc(e.suite)}</td><td class="small">${esc(e.scene_set || "")}</td><td>${rate(e.successes || 0, e.episodes || 0)} ${e.progress.status === "finished" ? "" : statusBadge(e.progress.status)}</td><td class="small">${families(e.failure_families)}</td><td class="small">${esc(e.name)}</td></tr>`).join("")}</tbody></table>`;
+    const probeOf = (e) => `${e.suite} · ${e.scene_set || "?"}${e.scene_list ? ` (${e.scene_list.length} scenes)` : ""}${e.probe ? "" : " · full"}`;
+    const probes = [...new Set(rows.map(probeOf))].sort();
+    const steps = [...new Set(rows.map((e) => e.checkpoint_step))].sort((a, b) => a - b);
+    const at = (probe, step) => rows.find((e) => probeOf(e) === probe && e.checkpoint_step === step);
+    const series = Object.fromEntries(
+      probes.map((p) => [p, rows.filter((e) => probeOf(e) === p && e.episodes).map((e) => [e.checkpoint_step, 100 * (e.mean || 0), `${e.successes}/${e.episodes}`])]),
+    );
+    const cell = (e) =>
+      e
+        ? `<td class="click-cell"><a href="#/vla/run?path=${q(e.path)}">${rate(e.successes || 0, e.episodes || 0)}</a> ${e.progress.status === "finished" ? "" : statusBadge(e.progress.status)}<div class="small">${families(e.failure_families)}</div></td>`
+        : '<td class="muted">-</td>';
+    return `<h3>Checkpoints during training</h3>
+      <p class="muted small">Each saved checkpoint on short probes (<span class="mono">t2v.sh eval-steps</span>); step 0 is the checkpoint the run started from. Rising on the swap suite and falling on the standard one is the trade-off between learning the new layouts and forgetting the old skill. Choose a step here, then evaluate it in full on the official scenes.</p>
+      ${stepChart(series, "Success by training step")}
+      <table class="table compact"><thead><tr><th>Step</th>${probes.map((p) => `<th>${esc(p)}</th>`).join("")}</tr></thead><tbody>
+      ${steps.map((step) => `<tr><td><b>${step}</b>${step === 0 ? ' <span class="muted small">start</span>' : ""}</td>${probes.map((p) => cell(at(p, step))).join("")}</tr>`).join("")}</tbody></table>`;
   };
   const training = () =>
     d.training.length

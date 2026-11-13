@@ -44,6 +44,39 @@ export function lineChart(series, title, { width = 900, height = 190, bands = []
   return s + "</svg>";
 }
 
+// Success (%) against the training step, one line per series. A series is a list of
+// [step, percent, label] and may miss steps the others have.
+export function stepChart(series, title, { width = 900, height = 210, x = "training step" } = {}) {
+  const names = Object.keys(series).filter((k) => series[k] && series[k].length);
+  if (!names.length) return "";
+  const steps = [...new Set(names.flatMap((k) => series[k].map((p) => p[0])))].sort((a, b) => a - b);
+  const xMax = Math.max(...steps, 1);
+  const L = 50, T = 22, B = 30, W = width - L - 16, H = height - T - B;
+  const X = (v) => L + W * (v / xMax);
+  const Y = (v) => T + H * (1 - v / 100);
+  const legendRows = Math.ceil(names.length / 3);
+  let s = `<svg class="chart" viewBox="0 0 ${width} ${height + 16 * legendRows}">`;
+  s += `<text x="${L}" y="14" class="c-title">${esc(title)}</text>`;
+  [0, 50, 100].forEach((v) => {
+    s += `<line x1="${L}" y1="${Y(v)}" x2="${L + W}" y2="${Y(v)}" class="c-grid"/><text x="6" y="${Y(v) + 4}" class="c-axis">${v}%</text>`;
+  });
+  steps.forEach((v) => {
+    s += `<text x="${X(v)}" y="${T + H + 13}" text-anchor="middle" class="c-axis">${v}</text>`;
+  });
+  s += `<text x="${L + W}" y="${T + H + 26}" text-anchor="end" class="c-axis">${esc(x)}</text>`;
+  names.forEach((k, j) => {
+    const color = PALETTE[j % 8];
+    const pts = [...series[k]].sort((a, b) => a[0] - b[0]);
+    s += `<polyline fill="none" stroke="${color}" stroke-width="2" points="${pts.map((p) => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ")}"/>`;
+    pts.forEach((p) => {
+      s += `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="3.5" fill="${color}"><title>${esc(k)}, step ${p[0]}: ${p[1].toFixed(0)}%${p[2] ? ` (${esc(p[2])})` : ""}</title></circle>`;
+    });
+    const lx = L + (j % 3) * 280, ly = height + 10 + 16 * Math.floor(j / 3);
+    s += `<rect x="${lx}" y="${ly - 9}" width="10" height="10" rx="2" fill="${color}"/><text x="${lx + 14}" y="${ly}" class="c-legend">${esc(k)}</text>`;
+  });
+  return s + "</svg>";
+}
+
 // Move the vertical marker of every chart with data-n to a fraction (0..1) of its x range.
 export function moveMarkers(root, fraction) {
   root.querySelectorAll("svg.chart").forEach((svg) => {

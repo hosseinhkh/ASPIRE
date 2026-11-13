@@ -89,7 +89,11 @@ def experiment(tmp_path, monkeypatch) -> Experiment:
         },
     )
     run = exp.training_dir("ft")
-    write_json(run / "run.json", {"name": "ft", "student": students.SMOLVLA.describe()})
+    start = tmp_path / "base-checkpoint"
+    start.mkdir()
+    (start / "config.json").write_text('{"type": "smolvla"}')
+    record = {"name": "ft", "student": students.SMOLVLA.describe(), "base_checkpoint": str(start)}
+    write_json(run / "run.json", record)
     _checkpoints(run, [500, 1000], last=1000)
     return exp
 
@@ -142,13 +146,13 @@ def test_eval_steps_evaluates_each_saved_step_once(experiment, monkeypatch, caps
     root = str(experiment.root)
     assert cli.main(["eval-steps", root, "--checkpoint", "ft"]) == 0
     names = [c[c.index("--name") + 1] for c in calls]
-    assert names == ["ft@500-dev", "ft@1000-dev"]
-    assert [c[c.index("--checkpoint") + 1] for c in calls] == ["ft@500", "ft@1000"]
-    assert all(c[c.index("--scenes") + 1] == "dev" for c in calls)
+    assert names == ["ft@0-dev", "ft@500-dev", "ft@1000-dev"]
+    assert [c[c.index("--checkpoint") + 1] for c in calls] == ["ft@0", "ft@500", "ft@1000"]
+    assert all(c[c.index("--scenes") + 1] == "dev" and "--probe" in c for c in calls)
     assert "step 1000: 3/20 (15%)" in capsys.readouterr().out
     # A rerun skips finished evaluations; another suite gets its own names.
     assert cli.main(["eval-steps", root, "--checkpoint", "ft"]) == 0
-    assert len(calls) == 2
+    assert len(calls) == 3
     args = ["--suite", "libero_object", "--scenes", "official", "--scene-list", "1-10"]
     assert cli.main(["eval-steps", root, "--checkpoint", "ft", "--steps", "1000", *args]) == 0
     assert calls[-1][calls[-1].index("--name") + 1] == "ft@1000-libero_object-official"
@@ -173,7 +177,8 @@ def test_eval_steps_follows_a_running_training_to_its_last_checkpoint(
     monkeypatch.setattr(cli.subprocess, "call", _fake_eval(experiment, calls, training_moves_on))
     monkeypatch.setattr(cli.time, "sleep", lambda _s: None)
     root = str(experiment.root)
-    assert cli.main(["eval-steps", root, "--checkpoint", "ft", "--follow", "--poll", "0"]) == 0
+    command = ["eval-steps", root, "--checkpoint", "ft", "--follow", "--poll", "0", "--no-start"]
+    assert cli.main(command) == 0
     assert [c[c.index("--checkpoint") + 1] for c in calls] == ["ft@500", "ft@1000", "ft@1500"]
 
 
@@ -185,7 +190,7 @@ def test_eval_steps_stops_when_the_filter_leaves_nothing_to_wait_for(
     root = str(experiment.root)
     # 500 is filtered out by --every 1000 and the training is not running: no endless wait.
     assert cli.main(["eval-steps", root, "--checkpoint", "ft", "--follow", "--every", "1000"]) == 0
-    assert [c[c.index("--checkpoint") + 1] for c in calls] == ["ft@1000"]
+    assert [c[c.index("--checkpoint") + 1] for c in calls] == ["ft@0", "ft@1000"]
 
 
 def test_eval_steps_without_saved_checkpoints_says_how_to_get_them(
@@ -193,26 +198,63 @@ def test_eval_steps_without_saved_checkpoints_says_how_to_get_them(
 ) -> None:
     write_json(experiment.training_dir("bare") / "run.json", {"name": "bare"})
     monkeypatch.setattr(cli.subprocess, "call", lambda _c: pytest.fail("nothing to evaluate"))
-    assert cli.main(["eval-steps", str(experiment.root), "--checkpoint", "bare"]) == 1
+    command = ["eval-steps", str(experiment.root), "--checkpoint", "bare", "--no-start"]
+    assert cli.main(command) == 1
     assert "--save-freq" in capsys.readouterr().err
     assert cli.main(["eval-steps", str(experiment.root), "--checkpoint", "nope"]) == 2
 
 
 # --------------------------------------------------------------------------- report --
-def test_report_keeps_the_teacher_comparison_to_official_scenes() -> None:
-    def evaluation(name, suite, scene_set, step=None, run=None):
+def test_report_keeps_the_teacher_comparison_to_full_official_evaluations() -> None:
+    def evaluation(name, suite, scene_set, step=None, run=None, probe=False):
         return {"name": name, "suite": suite, "scene_set": scene_set, "checkpoint_step": step,
-                "training_run": run}  # fmt: skip
+                "training_run": run, "probe": probe}  # fmt: skip
 
+    swap = "libero_object_swap"
     evals = [
-        evaluation("before-official", "libero_object_swap", "official"),
-        evaluation("legacy", "libero_object_swap", None),
+        evaluation("before-official", swap, "official"),
+        evaluation("legacy", swap, None),
         evaluation("before-standard", "libero_object", "official"),
-        evaluation("dev-check", "libero_object_swap", "dev"),
-        evaluation("ft@1000-dev", "libero_object_swap", "dev", 1000, "ft"),
-        evaluation("ft@500-dev", "libero_object_swap", "dev", 500, "ft"),
+        evaluation("dev-check", swap, "dev"),
+        evaluation("ft@1000-dev", swap, "dev", 1000, "ft", probe=True),
+        evaluation("ft@0-dev", swap, "dev", 0, "ft", probe=True),
+        evaluation("ft@500-libero_object-official", "libero_object", "official", 500, "ft", True),
+        # A step chosen on the curve, then evaluated in full on the official scenes.
+        evaluation("chosen-official", swap, "official", 1000, "ft"),
     ]
-    main, other, curve = report.split_evaluations(evals, "libero_object_swap")
-    assert [e["name"] for e in main] == ["before-official", "legacy"]
+    main, other, curve = report.split_evaluations(evals, swap)
+    assert [e["name"] for e in main] == ["before-official", "legacy", "chosen-official"]
     assert [e["name"] for e in other] == ["before-standard", "dev-check"]
-    assert [e["name"] for e in curve] == ["ft@500-dev", "ft@1000-dev"]
+    assert [e["name"] for e in curve] == [
+        "ft@500-libero_object-official",
+        "ft@0-dev",
+        "ft@1000-dev",
+        "chosen-official",
+    ]
+
+
+def test_step_zero_is_where_the_run_started(experiment, monkeypatch) -> None:
+    from cap_harness.vla import benchmark
+
+    seen = []
+    monkeypatch.setattr(benchmark, "main", lambda argv: seen.append(argv) or 0)
+    root = str(experiment.root)
+    command = ["eval", root, "--name", "start", "--checkpoint", "ft@0", "--probe"]
+    assert cli.main(command) == 0
+    meta = read_json(experiment.eval_dir("start") / "eval.json")
+    assert meta["checkpoint_label"] == "training/ft@0" and meta["checkpoint_step"] == 0
+    assert meta["probe"] is True and meta["student"] == "smolvla"
+    assert seen[0][seen[0].index("--policy") + 1].endswith("base-checkpoint")
+    # A plain evaluation is not a probe.
+    assert cli.main(["eval", root, "--name", "full", "--checkpoint", "ft@500"]) == 0
+    assert read_json(experiment.eval_dir("full") / "eval.json")["probe"] is False
+
+
+def test_probes_written_before_the_probe_field_are_recognised_by_name() -> None:
+    from cap_harness.trace2vla.store import is_probe
+
+    old = {"training_run": "ft-curve", "checkpoint_step": 500}
+    assert is_probe("ft-curve@500-dev", old)
+    assert not is_probe("curve500-official", old)  # named by hand: a full evaluation
+    assert not is_probe("before-official", {"checkpoint_step": None})
+    assert is_probe("anything", {"probe": True}) and not is_probe("ft@500-dev", {"probe": False})

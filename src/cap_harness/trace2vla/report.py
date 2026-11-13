@@ -12,7 +12,14 @@ from typing import Any
 
 from cap_harness.trace2vla import teacher
 from cap_harness.trace2vla.convert import demo_summary
-from cap_harness.trace2vla.store import Experiment, atomic_write, now_iso, read_json, write_json
+from cap_harness.trace2vla.store import (
+    Experiment,
+    atomic_write,
+    is_probe,
+    now_iso,
+    read_json,
+    write_json,
+)
 from cap_harness.vla import students
 from cap_harness.vla.benchmark import family_text
 
@@ -62,6 +69,7 @@ def evaluations(experiment: Experiment) -> list[dict[str, Any]]:
                 "checkpoint": meta.get("checkpoint_label", settings.get("policy")),
                 "training_run": meta.get("training_run"),
                 "checkpoint_step": meta.get("checkpoint_step"),
+                "probe": is_probe(root.name, meta),
                 "scene_set": meta.get("scene_set"),
                 "status": progress.get("status"),
                 "done": progress.get("done"),
@@ -82,19 +90,21 @@ def split_evaluations(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """(teacher-vs-student columns, other evaluations, checkpoints during training).
 
-    The comparison with the teacher takes only the experiment's suite on the official scenes,
-    the scenes the teacher was measured on. A checkpoint saved during training goes to the
-    training curve, sorted by run, suite, scene set and step.
+    Next to the teacher: full evaluations of the experiment's suite on the official scenes, the
+    scenes the teacher was measured on (a chosen step evaluated in full included). The training
+    curve: every evaluation of a step, sorted by run, suite, scene set and step. The short
+    probes ``eval-steps`` runs appear only on the curve.
     """
+
+    def official(e: dict[str, Any]) -> bool:
+        return e["suite"] == suite and (e.get("scene_set") or "official") == "official"
+
     curve = [e for e in evaluations if e.get("checkpoint_step") is not None]
-    rest = [e for e in evaluations if e.get("checkpoint_step") is None]
-    main = [
-        e for e in rest if e["suite"] == suite and (e.get("scene_set") or "official") == "official"
-    ]
+    main = [e for e in evaluations if official(e) and not e.get("probe")]
     other = [
         e
-        for e in rest
-        if not (e["suite"] == suite and (e.get("scene_set") or "official") == "official")
+        for e in evaluations
+        if not official(e) and e.get("checkpoint_step") is None and not e.get("probe")
     ]
     curve.sort(
         key=lambda e: (

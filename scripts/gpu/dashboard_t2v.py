@@ -15,6 +15,7 @@ from typing import Any
 from dashboard_store import Store, downsample, read_json, read_npz
 from dashboard_vla import EPISODE_SERIES, progress_of, student_of
 
+from cap_harness.trace2vla.store import is_probe
 from cap_harness.trace2vla.train import repair_steps
 
 LEDGER_TAIL = 300
@@ -88,6 +89,8 @@ class T2vStore:
                     "checkpoint": meta.get("checkpoint_label") or settings.get("policy"),
                     "training_run": meta.get("training_run"),
                     "checkpoint_step": meta.get("checkpoint_step"),
+                    "probe": is_probe(run.name, meta),
+                    "scene_list": settings.get("scenes"),
                     "scene_set": meta.get("scene_set"),
                     "progress": progress_of(run),
                     "mean": results.get("mean"),
