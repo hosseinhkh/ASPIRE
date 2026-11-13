@@ -10,6 +10,42 @@ the teacher's check on the new layouts). **Not yet ready** for the full student 
 dataset for the main experiment needs the new layouts collected, and replay mixing and faster
 dataset and evaluation steps are still to build (section 4).
 
+## Decisions (13 November)
+
+* **Both suites, one after the other:** `libero_object_swap` first, finished for **both students
+  (SmolVLA and π0.5)**, then `libero_goal_swap`.
+* **Training data:** 50 seeds per training layout, used as 25 and 50 (the demo-count curve).
+  More seeds cost no LLM money: the LLM is used only to write each task's teacher program, once.
+  More seeds cost simulator time only (section 5).
+* **Evaluation:** the standard LIBERO protocol below, so every number is comparable with
+  published ones.
+
+## Standard evaluation: what every reported number means
+
+The protocol of OpenVLA, LeRobot and LIBERO-Pro, which ours already matches (parity with
+LeRobot's LIBERO environment checked; `src/cap_harness/vla/protocol.py`):
+
+| | Standard |
+|---|---|
+| Episodes | **All 10 tasks of the suite × the 50 fixed initial states each = 500 per suite**, per policy seed |
+| Initial states | The suite's own saved ones (`official` scene set; LIBERO-Pro's for the swap suite). Never seeded layouts |
+| Step limit | The suite's: 280 for LIBERO-Object, 300 for LIBERO-Goal (and their swaps); 10 still steps after reset, not counted |
+| Success | The task's own predicate, checked after every step |
+| Policy | 256 × 256 images (both cameras), 8-number state, the benchmark's instruction, 10 actions per prediction |
+| Seeds | **3 policy seeds (1,500 episodes) for every number in a table**; 1 seed (500) while developing |
+| Reported | Success over the 500 (or 1,500) episodes, per task and mean, with the 95% interval |
+| Suites | The swap suite (the problem) **and** the standard suite (retention), for every model |
+
+Not part of the standard, and reported as our own diagnostics only: the sibling layouts
+(`alt1…4`), the `dev` probes, and the failure families.
+
+Anchors that show the setup is right (each base model on the standard suites):
+
+| Model | Standard LIBERO-Object | LIBERO-Pro object swap |
+|---|---|---|
+| SmolVLA (`smolvla_libero`) | 462 / 500 = 92.4% (paper 96%) | 0 / 1,500 |
+| π0.5 (`pi05_libero_finetuned_v044`) | to run: LeRobot reports 99% | to run: LIBERO-PRO reports 17% for openpi's checkpoint; ours was 60% on tasks 0–1 |
+
 ## 1. What the preflight taught
 
 | # | Finding | Consequence for the full run |
@@ -67,6 +103,7 @@ Which partner each layout uses, per task: `configs/libero_layouts/manifest.json`
 | **Replay mixing** | Retention (experiment S2): mix original LIBERO-Object demonstrations into training | Medium: LeRobot's dataset merge, feature names already match |
 | **Faster dataset building** | One writer renders ~30 s per demo: 1,500 demos is about 12 hours | Medium: build per task in parallel, then merge |
 | **Parallel evaluation** | One process: ~15 s per episode; 10 tasks × 50 scenes × 3 seeds = 1,500 episodes per model and suite | Medium: split by task across processes, one result table |
+| **A dataset from several layouts** | The main experiment trains on `alt1`, `alt2` and `alt3` together, 25 or 50 per layout; `dataset` takes one demo set today | Small: several `--demos`, `--per-task` per layout |
 | **An experiment over ten tasks** | `preflight2` has tasks 0 and 1 | Commands only: `t2v.sh init` with `--tasks 0-9`, register the programs |
 | Accept-or-roll-back gate, M2 labels from images, round script | M2 and M3 | Later; not needed for the M1 tables |
 
