@@ -562,6 +562,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
         track=replay.TrackSettings(speed=args.speed),
         drop_idle=not args.keep_idle,
         fallback_speeds=tuple(float(s) for s in str(args.fallback_speeds).split(",") if s.strip()),
+        limit_speeds=tuple(float(s) for s in str(args.limit_speeds).split(",") if s.strip()),
     )
     sets = _scene_list(experiment, args.scenes)
     if args.demos and len(sets) > 1:
@@ -1399,6 +1400,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="slower speeds to try, in order, when --speed loses the object (e.g. 2; default none)",
     )  # fmt: skip
     c.add_argument(
+        "--limit-speeds", default="4,5",
+        help="faster speeds to try for a demo over the student's step limit (default 4,5; '' none)",
+    )  # fmt: skip
+    c.add_argument(
         "--keep-idle", action="store_true", help="keep frames where the robot stands still"
     )
     c.add_argument("--tasks")
@@ -1413,6 +1418,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument(
         "--fallback-speeds", default="",
         help="slower speeds to try, in order, when --speed loses the object (e.g. 2; default none)",
+    )  # fmt: skip
+    c.add_argument(
+        "--limit-speeds", default="4,5",
+        help="faster speeds to try for a demo over the student's step limit (default 4,5; '' none)",
     )  # fmt: skip
     c.add_argument(
         "--keep-idle", action="store_true", help="keep frames where the robot stands still"

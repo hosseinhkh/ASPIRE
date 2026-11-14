@@ -419,6 +419,22 @@ agent per task rather than one per (task, layout): ten sessions instead of fifty
 task, and a teacher that does not need re-programming for each placement. A task whose program
 still fails on some layout can get a per-layout agent afterwards.
 
+#### P10, the pilot with the repaired program (14 November)
+
+`object_collection.sh pilot` with task 0's repaired program: **15/15 on all five layouts**, alt1
+included (it chose the 90-degree yaw from the neighbours, corrected the centre by 1.5 cm toward
+the far side, and needed no retry). Task 1 still ran the preflight's program (alt2 0/3; alt3's 3
+successes rejected at conversion) and gets a new agent in the full run.
+
+Alt1's three demos came out at 283-293 steps, over the student's 280: the teacher episodes there
+are 771-803 steps (the wrist turn makes each move slow at the arm's fixed joint speed), and 3x
+replay is not enough. Fix: `convert` now tries 4x, then 5x, for a demo over the student's step
+limit and keeps the first that still solves the task and fits (`--limit-speeds`, default 4,5;
+each demo records its speed and tries). Checked on the pilot's alt1 episodes: 233-241 steps at
+4x, all three kept. A tracker change made at the same time (a wrist turn counts as motion, and
+the playhead waits for a lagging turn) left every pilot demo's length unchanged: the hand moves
+during these turns, so they were already played at 3x.
+
 #### P10, alt1 settled by replaying the contacts (13 November, late)
 
 The repair agent (`agent-fix 0`, 32 min, \$17.55) turned the gripper 90 degrees as advised and

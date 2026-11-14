@@ -47,6 +47,10 @@ DWELL_OPTIONS: tuple[int, ...] = (0, 4, 8)
 #: 2x failed too and 1x passed only beyond the student's step limit, and mixing speeds in one
 #: demo set makes the demonstrations less uniform. A demo records the speed it used.
 FALLBACK_SPEEDS: tuple[float, ...] = ()
+#: Faster speeds tried, in order, for a demo longer than the student's step limit (a long
+#: teacher episode, e.g. a 90-degree wrist turn: 771-803 teacher steps became 283-293 at 3x, the
+#: limit being 280). The first that still solves the task and fits is kept; else the original.
+LIMIT_SPEEDS: tuple[float, ...] = (4.0, 5.0)
 
 
 @dataclass
@@ -57,6 +61,7 @@ class ConvertSettings:
     image_size: int = IMAGE_SIZE
     drop_idle: bool = True
     fallback_speeds: tuple[float, ...] = FALLBACK_SPEEDS
+    limit_speeds: tuple[float, ...] = LIMIT_SPEEDS
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +71,7 @@ class ConvertSettings:
             "image_size": self.image_size,
             "drop_idle": self.drop_idle,
             "fallback_speeds": list(self.fallback_speeds),
+            "limit_speeds": list(self.limit_speeds),
         }
 
     def speeds(self) -> list[float]:
@@ -76,12 +82,12 @@ class ConvertSettings:
 
 def same_demo_set(stored: dict[str, Any], current: dict[str, Any]) -> bool:
     """Whether a demo set made with ``stored`` settings may take demos made with ``current``.
-    The fallback speeds are not part of a demo set's identity: they only rescue episodes the set
-    speed loses, and each demo records the speed it used.
+    The fallback and limit speeds are not part of a demo set's identity: they only rescue
+    episodes the set speed loses or makes too long, and each demo records the speed it used.
     """
 
     def identity(settings: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in settings.items() if k != "fallback_speeds"}
+        return {k: v for k, v in settings.items() if k not in ("fallback_speeds", "limit_speeds")}
 
     return identity(stored) == identity(current)
 
@@ -136,31 +142,31 @@ def convert_episode(
     }
     if not episode.success:
         return {**summary, "rejected": "teacher_failed"}
-    tries = []
+    tries: list[dict[str, Any]] = []
+    picked = None
     for speed in settings.speeds():
-        tracked = replay.track_in_osc(
-            fast, episode, dataclasses.replace(settings.track, speed=speed)
-        )
-        tries.append({"speed": speed, "success": tracked.success, "steps": tracked.steps})
-        if tracked.success:
+        attempt = _follow(fast, episode, settings, speed)
+        tries.append(attempt.record())
+        if attempt.tracked.success:
+            picked = attempt
             break
-    summary.update(
-        tracked_steps=tracked.steps, tracking=tracked.stats, speed=speed, speed_tries=tries
-    )
-    if not tracked.success:
-        return {**summary, "rejected": "re-execution_failed", "labels": tracked.labels}
-
-    chosen, dwell, tried = np.arange(tracked.steps), "all", []
-    if settings.drop_idle:
-        for option in settings.dwell_options:
-            indices = kept_indices(tracked.actions, settings.noop_threshold, option)
-            if len(indices) == tracked.steps:
-                continue
-            check = replay.open_loop(fast, episode.scene, tracked.actions[indices])
-            tried.append({"dwell": option, "steps": int(len(indices)), "success": check.success})
-            if check.success:
-                chosen, dwell = indices, option
+    if picked is None:
+        summary.update(
+            tracked_steps=attempt.tracked.steps, tracking=attempt.tracked.stats, speed=speed,
+            speed_tries=tries,
+        )  # fmt: skip
+        return {**summary, "rejected": "re-execution_failed", "labels": attempt.tracked.labels}
+    if len(picked.chosen) > limit:
+        for faster in (s for s in settings.limit_speeds if s > picked.speed):
+            attempt = _follow(fast, episode, settings, faster)
+            tries.append(attempt.record())
+            if attempt.tracked.success and len(attempt.chosen) <= limit:
+                picked = attempt
                 break
+    tracked, chosen, dwell, tried = picked.tracked, picked.chosen, picked.dwell, picked.tried
+    summary.update(
+        tracked_steps=tracked.steps, tracking=tracked.stats, speed=picked.speed, speed_tries=tries
+    )
     # Replay exactly what steps.npz stores (float32): the recorded states then match any later
     # replay of the stored actions bit for bit. Replaying the float64 actions instead gave states
     # that a replay of their float32 copy misses by up to 5e-5 after contact.
@@ -206,6 +212,43 @@ def convert_episode(
     )
     write_json(out_dir / "episode.json", summary)  # last: its presence marks a finished demo
     return summary
+
+
+@dataclass
+class _Attempt:
+    """The teacher followed at one speed, and the frames kept once idle ones are dropped."""
+
+    speed: float
+    tracked: Any
+    chosen: np.ndarray
+    dwell: Any
+    tried: list[dict[str, Any]]
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "speed": self.speed,
+            "success": bool(self.tracked.success),
+            "steps": int(self.tracked.steps),
+            "stored": int(len(self.chosen)) if self.tracked.success else None,
+        }
+
+
+def _follow(
+    fast: Any, episode: TeacherEpisode, settings: ConvertSettings, speed: float
+) -> _Attempt:
+    tracked = replay.track_in_osc(fast, episode, dataclasses.replace(settings.track, speed=speed))
+    chosen, dwell, tried = np.arange(tracked.steps), "all", []
+    if tracked.success and settings.drop_idle:
+        for option in settings.dwell_options:
+            indices = kept_indices(tracked.actions, settings.noop_threshold, option)
+            if len(indices) == tracked.steps:
+                continue
+            check = replay.open_loop(fast, episode.scene, tracked.actions[indices])
+            tried.append({"dwell": option, "steps": int(len(indices)), "success": check.success})
+            if check.success:
+                chosen, dwell = indices, option
+                break
+    return _Attempt(speed, tracked, chosen, dwell, tried)
 
 
 def convert_run(

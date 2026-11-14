@@ -111,3 +111,49 @@ def test_each_speed_tried_is_recorded_when_all_lose_the_object(monkeypatch, tmp_
     assert tried == [3.0, 2.0]
     assert summary["rejected"] == "re-execution_failed"
     assert [t["speed"] for t in summary["speed_tries"]] == [3.0, 2.0]
+
+
+def test_a_demo_over_the_students_limit_is_tried_faster_and_kept_if_it_fits(
+    monkeypatch, tmp_path
+) -> None:
+    lengths = {3.0: 293, 4.0: 241}
+    tried = []
+
+    def track(adapter, episode, settings):
+        tried.append(settings.speed)
+        steps = lengths[settings.speed]
+        return replay.Rollout(success=True, steps=steps, actions=np.zeros((steps, 7)), stats={})
+
+    def open_loop(adapter, scene, actions, record=False):  # the recording: stop before writing
+        return replay.Rollout(success=False, steps=len(actions), actions=actions, labels={})
+
+    monkeypatch.setattr(replay, "track_in_osc", track)
+    monkeypatch.setattr(replay, "open_loop", open_loop)
+    monkeypatch.setattr(convert, "sha256_file", lambda path: "x")
+    monkeypatch.setattr(convert, "task_language", lambda suite, task: "pick it up")
+    monkeypatch.setattr(convert, "max_steps_for", lambda suite: 280)
+
+    class Episode:
+        run_dir, scene, steps, success, suite, task_id = (
+            tmp_path,
+            {},
+            803,
+            True,
+            "libero_object_swap",
+            0,
+        )
+
+    settings = convert.ConvertSettings(drop_idle=False)
+    summary = convert.convert_episode(
+        Episode(), tmp_path / "out", fast=None, recorder=None, settings=settings
+    )
+    assert tried == [3.0, 4.0]  # 293 > 280 at 3x; 4x fits, so 5x is not tried
+    assert summary["speed"] == 4.0 and summary["tracked_steps"] == 241
+    assert [t["stored"] for t in summary["speed_tries"]] == [293, 241]
+    # Within the limit at 3x: nothing else is tried.
+    tried.clear()
+    lengths[3.0] = 200
+    convert.convert_episode(
+        Episode(), tmp_path / "out2", fast=None, recorder=None, settings=settings
+    )
+    assert tried == [3.0]
