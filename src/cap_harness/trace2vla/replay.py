@@ -38,6 +38,10 @@ class TrackSettings:
     lookahead: float = 3.0  # teacher steps ahead of the playhead the hand aims at
     hold_error_m: float = 0.02  # the playhead waits while the hand is this far behind it
     idle_step_m: float = 2e-4  # teacher hand motion per step below this is "standing still"
+    # ... and so is a turn below this (rad per step). A wrist turn with the hand in place is
+    # motion: counted as standing still, it played at 1x (a 90-degree turn: ~230 teacher steps).
+    idle_turn_rad: float = 2e-3
+    hold_error_rad: float = 0.15  # the playhead also waits while the hand's turn lags this much
     slow_window: int = 12  # teacher steps around a gripper change that play at 1x
     tail_steps: int = 40  # steps to hold the last pose while waiting for success
     max_steps: int = 1500
@@ -163,10 +167,13 @@ def track_in_osc(
     slerp = Slerp(np.arange(n + 1), rotations)
     grippers = episode.gripper_commands
     step_length = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+    step_turn = (rotations[1:] * rotations[:-1].inv()).magnitude()
     slow = np.zeros(n + 1, dtype=bool)
     for change in np.flatnonzero(np.diff(grippers) != 0) + 1:
         slow[max(change - settings.slow_window, 0) : change + settings.slow_window] = True
-    idle = np.concatenate([[False], step_length < settings.idle_step_m])
+    idle = np.concatenate(
+        [[False], (step_length < settings.idle_step_m) & (step_turn < settings.idle_turn_rad)]
+    )
 
     raw = adapter.raw_observation
     start_gap = float(np.linalg.norm(np.asarray(raw["robot0_eef_pos"]) - positions[0]))
@@ -207,12 +214,18 @@ def track_in_osc(
             success = True
             break
         lag = float(np.linalg.norm(np.asarray(raw["robot0_eef_pos"]) - positions[index]))
+        turn_lag = float(
+            (
+                rotations[index]
+                * Rotation.from_quat(np.asarray(raw["robot0_eef_quat"], dtype=np.float64)).inv()
+            ).magnitude()
+        )
         lags.append(lag)
         if playhead >= n:
             tail += 1
             if tail > settings.tail_steps:
                 break
-        elif lag < settings.hold_error_m:
+        elif lag < settings.hold_error_m and turn_lag < settings.hold_error_rad:
             playhead = min(
                 playhead + (1.0 if (slow[index] or idle[index]) else settings.speed), float(n)
             )

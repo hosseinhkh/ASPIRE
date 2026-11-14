@@ -104,6 +104,11 @@ names how the scene layout is perturbed. Do what the instruction says, and keep 
      its width across the line of sight.
    - The gripper is symmetric: keep the grasp yaw within -90 to 90 degrees. A yaw near 180
      degrees is the same grasp but often has no arm configuration (`ik_failed`).
+   - Turning the wrist is slow: the joints move at a fixed speed, so a 90-degree turn takes
+     about 230 steps. Among the yaws that leave room, prefer the one closest to the current
+     one. Your episodes become training demonstrations for a policy that must finish within
+     the suite's step limit (280 for LIBERO-Object), replayed about 3 times faster than you
+     ran them: keep an episode under about 750 steps, without needless waits or retries.
 4. Diagnose failures in this order, and fix the failure mode, not the seed:
    a. `{{WS}}/dev_vNN/batch.json`: the `warnings` list first (run-batch also prints it). It
       names causes that the program's own error does not: a guessed or ambiguous object, a
